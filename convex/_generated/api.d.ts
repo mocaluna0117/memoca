@@ -8,7 +8,10 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
+import type * as attachments from "../attachments.js";
 import type * as auth from "../auth.js";
+import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_hlc from "../lib/hlc.js";
@@ -17,7 +20,9 @@ import type * as lib_seq from "../lib/seq.js";
 import type * as lib_user from "../lib/user.js";
 import type * as notes from "../notes.js";
 import type * as sync from "../sync.js";
+import type * as trash from "../trash.js";
 import type * as users from "../users.js";
+import type * as vault from "../vault.js";
 
 import type {
   ApiFromModules,
@@ -26,7 +31,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
+  attachments: typeof attachments;
   auth: typeof auth;
+  crons: typeof crons;
   http: typeof http;
   "lib/constants": typeof lib_constants;
   "lib/hlc": typeof lib_hlc;
@@ -35,7 +43,9 @@ declare const fullApi: ApiFromModules<{
   "lib/user": typeof lib_user;
   notes: typeof notes;
   sync: typeof sync;
+  trash: typeof trash;
   users: typeof users;
+  vault: typeof vault;
 }>;
 
 /**

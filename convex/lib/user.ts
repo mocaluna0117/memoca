@@ -1,18 +1,24 @@
 import { ConvexError } from "convex/values";
 import type { Doc } from "../_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "../_generated/server";
-import { authComponent } from "../auth";
 import { DEFAULTS } from "./constants";
 
 export type AnyCtx = QueryCtx | MutationCtx;
 
-/** The signed-in person's app row, or null when signed out or not provisioned. */
+/**
+ * The signed-in person's app row, or null when signed out or not provisioned.
+ *
+ * The identity subject is the Better Auth user id, and Convex has already
+ * verified the JWT that carried it, so this can index straight into the app's
+ * own table. Going through the auth component instead would add two component
+ * queries to every single request for no extra safety.
+ */
 export async function getUser(ctx: AnyCtx): Promise<Doc<"users"> | null> {
-  const authUser = await authComponent.safeGetAuthUser(ctx);
-  if (!authUser) return null;
+  const identity = await ctx.auth.getUserIdentity();
+  if (!identity) return null;
   return await ctx.db
     .query("users")
-    .withIndex("by_authId", (q) => q.eq("authId", authUser._id as string))
+    .withIndex("by_authId", (q) => q.eq("authId", identity.subject))
     .unique();
 }
 

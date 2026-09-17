@@ -28,5 +28,10 @@ export const createAuth = (ctx: GenericCtx<DataModel>) =>
     account: {
       accountLinking: { enabled: true, trustedProviders: ["google"] },
     },
+    user: {
+      // Lets someone remove their account from the settings screen. App data is
+      // purged separately by users.deleteAccount before this runs.
+      deleteUser: { enabled: true },
+    },
     plugins: [convex({ authConfig })],
   });

@@ -1,6 +1,7 @@
 import { ConvexError, v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
-import { type MutationCtx, mutation, query } from "./_generated/server";
+import { internal } from "./_generated/api";
+import type { Doc, Id } from "./_generated/dataModel";
+import { type MutationCtx, internalMutation, mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
 import { DEFAULTS } from "./lib/constants";
 import { openSeq } from "./lib/seq";
@@ -201,5 +202,108 @@ export const signupStatus = query({
       userCount: config.userCount,
       maxUsers: config.maxUsers,
     };
+  },
+});
+
+/**
+ * Removes every trace of the signed-in person's notes.
+ *
+ * Runs in scheduled batches because a full account can hold far more rows than
+ * one transaction may touch. The Better Auth account itself is deleted from the
+ * client afterwards, through the normal auth route.
+ */
+export const deleteAccount = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await requireUser(ctx);
+    const config = await ctx.db
+      .query("appConfig")
+      .withIndex("by_key", (q) => q.eq("key", "global"))
+      .unique();
+    if (config) {
+      await ctx.db.patch(config._id, { userCount: Math.max(0, config.userCount - 1) });
+    }
+    await ctx.scheduler.runAfter(0, internal.users.purgeAccount, { userId: user._id });
+    return { status: "scheduled" as const };
+  },
+});
+
+export const purgeAccount = internalMutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const BATCH = 200;
+    let work = BATCH;
+
+    type PurgeableId =
+      | Id<"noteUpdates">
+      | Id<"noteSnapshots">
+      | Id<"attachments">
+      | Id<"notes">
+      | Id<"folders">;
+
+    const drop = async (rows: { _id: PurgeableId }[]) => {
+      for (const row of rows) {
+        await ctx.db.delete(row._id);
+        work -= 1;
+      }
+    };
+
+    const updates = await ctx.db
+      .query("noteUpdates")
+      .withIndex("by_user_seq", (q) => q.eq("userId", userId))
+      .take(work);
+    await drop(updates);
+
+    if (work > 0) {
+      const snapshots = await ctx.db
+        .query("noteSnapshots")
+        .withIndex("by_user_seq", (q) => q.eq("userId", userId))
+        .take(work);
+      for (const row of snapshots) {
+        if (row.storageId) await ctx.storage.delete(row.storageId);
+      }
+      await drop(snapshots);
+    }
+    if (work > 0) {
+      const attachments = await ctx.db
+        .query("attachments")
+        .withIndex("by_user_seq", (q) => q.eq("userId", userId))
+        .take(work);
+      for (const row of attachments) {
+        if (row.storageId) await ctx.storage.delete(row.storageId);
+      }
+      await drop(attachments);
+    }
+    if (work > 0) {
+      const notes = await ctx.db
+        .query("notes")
+        .withIndex("by_user_seq", (q) => q.eq("userId", userId))
+        .take(work);
+      await drop(notes);
+    }
+    if (work > 0) {
+      const folders = await ctx.db
+        .query("folders")
+        .withIndex("by_user_seq", (q) => q.eq("userId", userId))
+        .take(work);
+      await drop(folders);
+    }
+
+    if (work <= 0) {
+      await ctx.scheduler.runAfter(0, internal.users.purgeAccount, { userId });
+      return;
+    }
+
+    const vault = await ctx.db
+      .query("vaults")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (vault) await ctx.db.delete(vault._id);
+    const head = await ctx.db
+      .query("syncHeads")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .unique();
+    if (head) await ctx.db.delete(head._id);
+    await ctx.db.delete(userId);
   },
 });
