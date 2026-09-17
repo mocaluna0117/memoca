@@ -145,3 +145,26 @@ export function canMoveFolder(
   if (targetParentId === null) return true;
   return !subtreeIds(folders, folderId).includes(targetParentId);
 }
+
+/** The ordered siblings of a folder, including the folder itself. */
+export function siblingsOf(tree: FolderNode[], folderId: string): FolderNode[] {
+  const search = (nodes: FolderNode[]): FolderNode[] | null => {
+    if (nodes.some((node) => node.folderId === folderId)) return nodes;
+    for (const node of nodes) {
+      const found = search(node.children);
+      if (found) return found;
+    }
+    return null;
+  };
+  return search(tree) ?? [];
+}
+
+/** Finds a node anywhere in the tree. */
+export function findNode(tree: FolderNode[], folderId: string): FolderNode | null {
+  for (const node of tree) {
+    if (node.folderId === folderId) return node;
+    const inner = findNode(node.children, folderId);
+    if (inner) return inner;
+  }
+  return null;
+}
