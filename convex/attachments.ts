@@ -10,8 +10,6 @@ import { sealedV } from "./lib/ops";
 import { openSeq } from "./lib/seq";
 import { getConfig, requireUser } from "./lib/user";
 
-const isVideo = (mime: string) => mime.startsWith("video/");
-
 /**
  * Reserves quota and hands back an upload URL.
  *

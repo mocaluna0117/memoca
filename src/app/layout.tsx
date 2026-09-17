@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { SerwistProvider } from "@serwist/turbopack/react";
 import { AppProviders } from "@/components/providers/app-providers";
 import { getToken } from "@/lib/auth/server";
 import { t } from "@/lib/i18n/ja";
@@ -36,7 +37,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="bg-background text-foreground flex min-h-full flex-col overscroll-y-none">
-        <AppProviders initialToken={initialToken}>{children}</AppProviders>
+        <SerwistProvider swUrl="/serwist/sw.js" cacheOnNavigation>
+          <AppProviders initialToken={initialToken}>{children}</AppProviders>
+        </SerwistProvider>
       </body>
     </html>
   );

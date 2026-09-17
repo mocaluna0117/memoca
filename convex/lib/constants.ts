@@ -1,7 +1,19 @@
-/** Defaults for a fresh deployment; all of these are editable from /app/admin. */
+const envNumber = (name: string, fallback: number): number => {
+  const raw = process.env[name];
+  const parsed = raw === undefined ? Number.NaN : Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+};
+
+/**
+ * Defaults for a fresh deployment; all of these are editable from /app/admin.
+ *
+ * The environment can raise the registration cap, which is how the end-to-end
+ * suite creates a throwaway account per test without tripping the guard that
+ * protects the free tier in production.
+ */
 export const DEFAULTS = {
   signupOpen: true,
-  maxUsers: 50,
+  maxUsers: envNumber("MAX_USERS", 50),
   /** 100 MB per person. */
   defaultQuotaBytes: 100 * 1024 * 1024,
   /** Images are compressed in the browser before they get here. */

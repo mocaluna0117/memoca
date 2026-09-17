@@ -11,7 +11,7 @@ import {
 import { type Stamp, isFromTheFuture, isNewer } from "./lib/hlc";
 import { type Op, type OpResult, opV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
-import { requireUser } from "./lib/user";
+import { getUser, requireUser } from "./lib/user";
 
 /* -------------------------------------------------------------------------- */
 /*  Pull                                                                       */
@@ -29,7 +29,12 @@ import { requireUser } from "./lib/user";
 export const pull = query({
   args: { since: v.number(), limit: v.optional(v.number()) },
   handler: async (ctx, args) => {
-    const user = await requireUser(ctx);
+    // Returns null rather than throwing while the client is signed out or its
+    // token has not attached yet. A subscription that throws is a subscription
+    // that stops delivering, and this one runs from the moment the app starts,
+    // including before the auth token lands on a cold load.
+    const user = await getUser(ctx);
+    if (!user) return null;
     const limit = Math.min(Math.max(args.limit ?? PULL_PAGE_LIMIT, 1), 500);
     const since = Math.max(args.since, 0);
     const userId = user._id;

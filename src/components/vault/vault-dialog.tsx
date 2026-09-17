@@ -57,7 +57,11 @@ export function VaultDialog() {
   const [freshKey, setFreshKey] = useState<string | null>(null);
   const [biometricReady, setBiometricReady] = useState(false);
 
-  useEffect(() => {
+  // Clear the form the moment the dialog closes, so a password never lingers
+  // in memory behind a closed sheet.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (!open) {
       setPassword("");
       setConfirm("");
@@ -66,7 +70,7 @@ export function VaultDialog() {
       setError(null);
       setFreshKey(null);
     }
-  }, [open]);
+  }
 
   useEffect(() => {
     void platformAuthenticatorAvailable().then(setBiometricReady);

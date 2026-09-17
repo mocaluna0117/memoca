@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,9 +26,13 @@ export function RenameDialog({
   onSubmit: (value: string) => Promise<void> | void;
 }) {
   const [value, setValue] = useState(initialValue);
-  useEffect(() => {
+  // Re-seed when the dialog opens. Adjusting state during render is the
+  // documented way to derive from props without an extra render pass.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
     if (open) setValue(initialValue);
-  }, [open, initialValue]);
+  }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

@@ -3,9 +3,15 @@ import { defineConfig, devices } from "@playwright/test";
 export default defineConfig({
   testDir: "./e2e",
   fullyParallel: true,
+  // These drive a real browser against a real backend: sync round trips and
+  // service-worker startup take far longer than a unit test's budget.
+  timeout: 90_000,
+  expect: { timeout: 15_000 },
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
+  // Four browsers against one local backend starve each other and turn real
+  // assertions into timeouts.
+  workers: process.env.CI ? 1 : 2,
   reporter: "list",
   use: {
     baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",

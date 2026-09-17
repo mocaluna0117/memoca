@@ -22,11 +22,22 @@ export function useFolderTree(): FolderNode[] {
   return useMemo(() => buildTree(folders), [folders]);
 }
 
-export function useFolder(folderId: string | null): Folder | undefined {
-  return useLiveQuery(
-    async () => (folderId ? await db().folders.get(folderId) : undefined),
+/**
+ * `undefined` while loading, `null` when there is genuinely no such row.
+ *
+ * Dexie keeps returning the previous result while a re-query runs, so switching
+ * folders hands back the old row for a frame. Callers derive editable state
+ * from these rows, so a stale one has to read as "not loaded yet" rather than
+ * as the new folder's data.
+ */
+export function useFolder(folderId: string | null): Folder | null | undefined {
+  const row = useLiveQuery(
+    async () => (folderId ? ((await db().folders.get(folderId)) ?? null) : null),
     [folderId],
   );
+  if (row === undefined) return undefined;
+  if (row === null) return null;
+  return row.folderId === folderId ? row : undefined;
 }
 
 export type NoteScope =
@@ -55,11 +66,15 @@ export function useNotes(scope: NoteScope): Note[] {
   }, [notes, trashed, scope.kind]);
 }
 
-export function useNote(noteId: string | null): Note | undefined {
-  return useLiveQuery(
-    async () => (noteId ? await db().notes.get(noteId) : undefined),
+/** See {@link useFolder}: never return another note's row for this id. */
+export function useNote(noteId: string | null): Note | null | undefined {
+  const row = useLiveQuery(
+    async () => (noteId ? ((await db().notes.get(noteId)) ?? null) : null),
     [noteId],
   );
+  if (row === undefined) return undefined;
+  if (row === null) return null;
+  return row.noteId === noteId ? row : undefined;
 }
 
 export function useNoteText(noteId: string | null): string | null {
@@ -67,7 +82,7 @@ export function useNoteText(noteId: string | null): string | null {
     async () => (noteId ? await db().bodies.get(noteId) : undefined),
     [noteId],
   );
-  return body?.text ?? null;
+  return body && body.noteId === noteId ? (body.text ?? null) : null;
 }
 
 export type TrashEntry =

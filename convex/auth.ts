@@ -7,6 +7,13 @@ import authConfig from "./auth.config";
 
 const siteUrl = process.env.SITE_URL ?? "http://localhost:3000";
 
+/**
+ * Email and password exist only so local development and the end-to-end tests
+ * can sign in without a Google OAuth client. It is off unless the deployment
+ * explicitly opts in, and production never does.
+ */
+const allowPasswordAuth = process.env.ALLOW_PASSWORD_AUTH === "true";
+
 export const authComponent = createClient<DataModel>(components.betterAuth);
 
 /**
@@ -19,6 +26,9 @@ export const createAuth = (ctx: GenericCtx<DataModel>) =>
   betterAuth({
     baseURL: siteUrl,
     database: authComponent.adapter(ctx),
+    ...(allowPasswordAuth
+      ? { emailAndPassword: { enabled: true, requireEmailVerification: false } }
+      : {}),
     socialProviders: {
       google: {
         clientId: process.env.GOOGLE_CLIENT_ID ?? "",

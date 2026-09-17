@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { ctx } from "@/lib/crypto/context";
 import { open } from "@/lib/crypto/primitives";
 import { vault } from "@/lib/crypto/vault";
@@ -8,85 +8,94 @@ import type { Folder, Note } from "@/lib/types";
 
 /** Tracks whether the vault is currently open, for conditional rendering. */
 export function useVaultUnlocked(): boolean {
-  const [unlocked, setUnlocked] = useState(vault.isUnlocked);
-  useEffect(() => vault.subscribe(setUnlocked), []);
-  return unlocked;
+  return useSyncExternalStore(
+    (listener) => vault.subscribe(() => listener()),
+    () => vault.isUnlocked,
+    () => false,
+  );
 }
 
 const LOCKED_LABEL = "🔒 ロック中のメモ";
 const LOCKED_FOLDER_LABEL = "🔒 ロック中のフォルダ";
 
 /**
- * A note's title, decrypted only while the vault is open. Locked notes show a
- * placeholder rather than an empty row, so the list still makes sense at a
- * glance without exposing anything.
+ * A note's title, decrypted only while the vault is open.
+ *
+ * The placeholder is computed during render, so a locked note never flashes
+ * blank; the effect exists only for the asynchronous decryption, and its result
+ * is tagged with the note and epoch it belongs to so a stale answer arriving
+ * late cannot be shown against the wrong note.
  */
-export function useNoteTitle(note: Note | undefined): string {
+export function useNoteTitle(note: Note | null | undefined): string {
   const unlocked = useVaultUnlocked();
-  const [title, setTitle] = useState<string>(() => note?.title ?? "");
+  const [decrypted, setDecrypted] = useState<{ key: string; value: string } | null>(null);
+
+  const key = note ? `${note.noteId}:${note.keyEpoch}:${note.ts.title.t}` : "";
+  const needsDecrypt = Boolean(
+    note?.locked && unlocked && note.wrappedKey && note.titleSealed,
+  );
 
   useEffect(() => {
+    if (!needsDecrypt || !note) return;
     let cancelled = false;
-    if (!note) {
-      setTitle("");
-      return;
-    }
-    if (!note.locked) {
-      setTitle(note.title ?? "");
-      return;
-    }
-    if (!unlocked || !note.wrappedKey || !note.titleSealed) {
-      setTitle(LOCKED_LABEL);
-      return;
-    }
     void (async () => {
       try {
-        const key = await vault.noteKey(note.noteId, note.keyEpoch, note.wrappedKey!);
+        const noteKey = await vault.noteKey(note.noteId, note.keyEpoch, note.wrappedKey!);
         const plain = await open(
-          key,
+          noteKey,
           new Uint8Array(note.titleSealed!.ct),
           new Uint8Array(note.titleSealed!.iv),
           ctx.noteTitle(note.noteId, note.keyEpoch),
         );
-        if (!cancelled) setTitle(new TextDecoder().decode(plain));
+        if (!cancelled) setDecrypted({ key, value: new TextDecoder().decode(plain) });
       } catch {
-        if (!cancelled) setTitle(LOCKED_LABEL);
+        // Leave the placeholder in place; the vault may have closed mid-flight.
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [note?.noteId, note?.locked, note?.title, note?.keyEpoch, unlocked]);
+    // `key` already encodes the note, its epoch and its title stamp, so adding
+    // the note object itself would re-run this on every unrelated live-query
+    // emission.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, needsDecrypt]);
 
-  return title;
+  return useMemo(() => {
+    if (!note) return "";
+    if (!note.locked) return note.title ?? "";
+    if (needsDecrypt && decrypted?.key === key) return decrypted.value;
+    return LOCKED_LABEL;
+  }, [note, needsDecrypt, decrypted, key]);
 }
 
-export function useFolderName(folder: Folder | undefined): string {
+export function useFolderName(folder: Folder | null | undefined): string {
   const unlocked = useVaultUnlocked();
-  const [name, setName] = useState<string>(() => folder?.name ?? "");
+  const [decrypted, setDecrypted] = useState<{ key: string; value: string } | null>(null);
+
+  const key = folder ? `${folder.folderId}:${folder.ts.name.t}` : "";
+  const needsDecrypt = Boolean(folder?.locked && unlocked && folder.nameSealed);
 
   useEffect(() => {
+    if (!needsDecrypt || !folder) return;
     let cancelled = false;
-    if (!folder) {
-      setName("");
-      return;
-    }
-    if (!folder.locked) {
-      setName(folder.name ?? "");
-      return;
-    }
-    if (!unlocked || !folder.nameSealed) {
-      setName(LOCKED_FOLDER_LABEL);
-      return;
-    }
     void vault
-      .openFolderName(folder.folderId, folder.nameSealed)
-      .then((value) => !cancelled && setName(value))
-      .catch(() => !cancelled && setName(LOCKED_FOLDER_LABEL));
+      .openFolderName(folder.folderId, folder.nameSealed!)
+      .then((value) => {
+        if (!cancelled) setDecrypted({ key, value });
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [folder?.folderId, folder?.locked, folder?.name, unlocked]);
+    // See the note in useNoteTitle: `key` covers everything that matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key, needsDecrypt]);
 
-  return name;
+  return useMemo(() => {
+    if (!folder) return "";
+    if (!folder.locked) return folder.name ?? "";
+    if (needsDecrypt && decrypted?.key === key) return decrypted.value;
+    return LOCKED_FOLDER_LABEL;
+  }, [folder, needsDecrypt, decrypted, key]);
 }

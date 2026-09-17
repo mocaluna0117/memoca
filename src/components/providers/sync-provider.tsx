@@ -1,32 +1,38 @@
 "use client";
 
 import { useConvex, useQuery } from "convex/react";
+import { useLiveQuery } from "dexie-react-hooks";
 import {
   createContext,
   type ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { uuidv7 } from "uuidv7";
 import { api } from "@convex/_generated/api";
 import { vault } from "@/lib/crypto/vault";
-import { deviceId } from "@/lib/db/meta";
-import { SyncEngine, type SyncStatus } from "@/lib/sync/engine";
+import { db, getMeta, setMeta } from "@/lib/db";
+import { META, deviceId } from "@/lib/db/meta";
 import { flushAll } from "@/lib/sync/docs";
+import { SyncEngine, type SyncStatus } from "@/lib/sync/engine";
 
-type Me = NonNullable<ReturnType<typeof useMe>>;
-function useMe() {
-  return useQuery(api.users.me);
-}
+type ServerProfile = NonNullable<
+  Exclude<ReturnType<typeof useQuery<typeof api.users.me>>, undefined>
+>;
+
+/** Result of provisioning, which only matters before an account row exists. */
+type Provision = "pending" | "created" | "closed" | "badInvite";
 
 type SyncContextValue = {
-  engine: SyncEngine | null;
+  engine: () => SyncEngine | null;
   status: SyncStatus;
-  me: Me | null | undefined;
-  /** "provisioning" while the account row is being created on first sign-in. */
-  gate: "loading" | "ready" | "provisioning" | "closed" | "badInvite";
+  /** The account, from the server when reachable and from disk when not. */
+  me: ServerProfile | null;
+  gate: "loading" | "ready" | "closed" | "badInvite";
   submitInvite: (code: string) => Promise<void>;
 };
 
@@ -36,6 +42,25 @@ export function useSync(): SyncContextValue {
   const value = useContext(SyncContext);
   if (!value) throw new Error("useSync must be used inside SyncProvider");
   return value;
+}
+
+/**
+ * Creates the app-side account row for a freshly signed-in person. Kept outside
+ * the component so the only state change happens at the call site, after the
+ * network round trip.
+ */
+async function provisionAccount(
+  client: ReturnType<typeof useConvex>,
+  inviteCode?: string,
+): Promise<Provision> {
+  const result = await client.mutation(api.users.ensure, {
+    deviceId: await deviceId(),
+    inboxFolderId: uuidv7(),
+    ...(inviteCode ? { inviteCode } : {}),
+  });
+  if (result.status === "closed") return "closed";
+  if (result.status === "badInvite") return "badInvite";
+  return "created";
 }
 
 const IDLE: SyncStatus = {
@@ -48,57 +73,94 @@ const IDLE: SyncStatus = {
 /**
  * Starts the background sync once an account exists, and keeps the rest of the
  * app from having to know whether it is online.
+ *
+ * The account snapshot is cached on the device, because otherwise a reload with
+ * no network would hang on the server query and the app would show a spinner
+ * over data it already has.
  */
 export function SyncProvider({ children }: { children: ReactNode }) {
   const client = useConvex();
-  const me = useMe();
-  const [engine, setEngine] = useState<SyncEngine | null>(null);
+  const remote = useQuery(api.users.me);
   const [status, setStatus] = useState<SyncStatus>(IDLE);
-  const [gate, setGate] = useState<SyncContextValue["gate"]>("loading");
+  const [provision, setProvision] = useState<Provision>("pending");
+  const engineRef = useRef<SyncEngine | null>(null);
 
-  const ensure = async (inviteCode?: string) => {
-    setGate("provisioning");
-    const result = await client.mutation(api.users.ensure, {
-      deviceId: await deviceId(),
-      inboxFolderId: uuidv7(),
-      ...(inviteCode ? { inviteCode } : {}),
-    });
-    if (result.status === "closed") setGate("closed");
-    else if (result.status === "badInvite") setGate("badInvite");
-    else setGate("ready");
-  };
+  const cached = useLiveQuery(
+    async () => (await getMeta<ServerProfile | null>(META.profile, null)) ?? null,
+    [],
+    undefined,
+  );
 
+  // Keep the on-device copy in step whenever the server answers.
   useEffect(() => {
-    if (me === undefined) return;
-    if (me === null) {
-      void ensure();
-      return;
-    }
-    setGate("ready");
-  }, [me === undefined ? "loading" : me === null ? "missing" : "present"]);
+    if (remote) void setMeta(META.profile, remote);
+  }, [remote]);
 
+  const me = remote ?? cached ?? null;
+
+  const missing = remote === null && cached === null;
   useEffect(() => {
-    if (!me) return;
+    if (!missing) return;
+    let cancelled = false;
+    void (async () => {
+      const result = await provisionAccount(client);
+      if (!cancelled) setProvision(result);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [missing, client]);
+
+  const submitInvite = useCallback(
+    async (inviteCode: string) => {
+      setProvision(await provisionAccount(client, inviteCode));
+    },
+    [client],
+  );
+
+  const userKey = me?.userKey ?? null;
+  useEffect(() => {
+    if (!userKey) return;
     const next = new SyncEngine(client);
+    engineRef.current = next;
     const unsubscribe = next.subscribe(setStatus);
-    void next.start(me.userKey).then(() => next.prefetchBodies());
-    setEngine(next);
+    void next.start(userKey).then(() => next.prefetchBodies());
     return () => {
       unsubscribe();
       next.stop();
+      engineRef.current = null;
       void flushAll();
     };
-  }, [client, me?.userKey]);
+  }, [client, userKey]);
 
-  // Auto-lock uses the person's own setting rather than a fixed timeout.
+  const autoLockMinutes = me?.settings.autoLockMinutes;
   useEffect(() => {
-    if (me) vault.setAutoLockMinutes(me.settings.autoLockMinutes);
-  }, [me?.settings.autoLockMinutes]);
+    if (autoLockMinutes) vault.setAutoLockMinutes(autoLockMinutes);
+  }, [autoLockMinutes]);
+
+  const gate: SyncContextValue["gate"] = me
+    ? "ready"
+    : provision === "closed"
+      ? "closed"
+      : provision === "badInvite"
+        ? "badInvite"
+        : "loading";
 
   const value = useMemo<SyncContextValue>(
-    () => ({ engine, status, me, gate, submitInvite: (code) => ensure(code) }),
-    [engine, status, me, gate],
+    () => ({
+      engine: () => engineRef.current,
+      status,
+      me,
+      gate,
+      submitInvite,
+    }),
+    [status, me, gate, submitInvite],
   );
 
   return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;
+}
+
+/** Wipes the cached profile along with the rest of the device's data. */
+export async function clearCachedProfile(): Promise<void> {
+  await db().meta.delete(META.profile);
 }

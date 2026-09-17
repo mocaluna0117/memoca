@@ -37,12 +37,14 @@ export function SyncBadge({ className }: { className?: string }) {
     <Tooltip>
       <TooltipTrigger asChild>
         <span
+          role="status"
+          aria-live="polite"
+          aria-label={label}
           className={cn(
             "text-muted-foreground inline-flex items-center gap-1.5 text-xs",
             status.state === "error" && "text-destructive",
             className,
           )}
-          aria-live="polite"
         >
           <Icon
             className={cn("size-3.5", busy && Icon === Loader2 && "animate-spin")}
@@ -68,7 +70,7 @@ export function SyncRetryButton() {
   return (
     <button
       type="button"
-      onClick={() => engine?.kick(0)}
+      onClick={() => engine()?.kick(0)}
       className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
     >
       <RefreshCw className="size-3.5" aria-hidden />

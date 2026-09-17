@@ -157,3 +157,37 @@ export const recomputeUsage = internalMutation({
     return used;
   },
 });
+
+/**
+ * Raises the registration cap on a development deployment.
+ *
+ * The end-to-end suite creates a throwaway account per test, which would
+ * otherwise hit the free-tier cap after a few dozen runs. Refuses to run
+ * unless the deployment has explicitly opted into test mode.
+ */
+export const devRaiseCapacity = internalMutation({
+  args: { maxUsers: v.number() },
+  handler: async (ctx, { maxUsers }) => {
+    if (process.env.ALLOW_PASSWORD_AUTH !== "true") {
+      throw new Error("本番デプロイでは実行できません。");
+    }
+    const existing = await ctx.db
+      .query("appConfig")
+      .withIndex("by_key", (q) => q.eq("key", "global"))
+      .unique();
+    if (existing) {
+      await ctx.db.patch(existing._id, { maxUsers, signupOpen: true });
+    } else {
+      await ctx.db.insert("appConfig", {
+        key: "global",
+        signupOpen: true,
+        maxUsers,
+        userCount: 0,
+        defaultQuotaBytes: DEFAULTS.defaultQuotaBytes,
+        maxImageBytes: DEFAULTS.maxImageBytes,
+        maxVideoBytes: DEFAULTS.maxVideoBytes,
+      });
+    }
+    return maxUsers;
+  },
+});

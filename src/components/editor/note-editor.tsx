@@ -3,6 +3,7 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/shadcn/style.css";
 
+import { ja as blocknoteJa } from "@blocknote/core/locales";
 import { withCollaboration } from "@blocknote/core/yjs";
 import { useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
@@ -32,20 +33,23 @@ import { t } from "@/lib/i18n/ja";
  * network, which is why typing works the same with or without one.
  */
 export function NoteEditor({ noteId, locked }: { noteId: string; locked: boolean }) {
-  const [doc, setDoc] = useState<Y.Doc | null>(null);
+  // The loaded document is tagged with the note it belongs to, so a slow load
+  // for a note the user has already navigated away from cannot be shown.
+  const [loaded, setLoaded] = useState<{ noteId: string; doc: Y.Doc } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    setDoc(null);
-    void acquireDoc(noteId).then((next) => {
+    void acquireDoc(noteId).then((doc) => {
       if (cancelled) void releaseDoc(noteId);
-      else setDoc(next);
+      else setLoaded({ noteId, doc });
     });
     return () => {
       cancelled = true;
       void releaseDoc(noteId);
     };
   }, [noteId]);
+
+  const doc = loaded?.noteId === noteId ? loaded.doc : null;
 
   if (locked && !vault.isUnlocked) return null;
   if (!doc) {
@@ -103,6 +107,7 @@ function EditorSurface({
           // remote cursors, but undo/redo stays Yjs-aware.
           user: { name: me?.name ?? "自分", color: "#0ea5e9" },
         },
+        dictionary: blocknoteJa,
         uploadFile,
         resolveFileUrl,
       }),

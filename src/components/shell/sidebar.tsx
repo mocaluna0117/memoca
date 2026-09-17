@@ -27,6 +27,8 @@ type Props = {
   onSelectFolder: (folderId: string | null) => void;
   onRequestLock?: (folder: FolderNode) => void;
   onNavigate?: () => void;
+  /** Portal target for row menus; set only inside the mobile drawer. */
+  menuContainer?: HTMLElement | null;
 };
 
 export function Sidebar({
@@ -34,6 +36,7 @@ export function Sidebar({
   onSelectFolder,
   onRequestLock,
   onNavigate,
+  menuContainer,
 }: Props) {
   const { me } = useSync();
   const pathname = usePathname();
@@ -48,7 +51,7 @@ export function Sidebar({
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-3 py-3">
         <Link href="/app" className="text-sm font-semibold tracking-tight">
           {t.app.name}
@@ -85,6 +88,7 @@ export function Sidebar({
             onNavigate?.();
           }}
           onRequestLock={onRequestLock}
+          menuContainer={menuContainer}
         />
         <Button
           variant="ghost"

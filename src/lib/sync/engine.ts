@@ -12,8 +12,9 @@ import { db, getMeta, resetLocalData, setMeta } from "@/lib/db";
 import { META, deviceId as ensureDeviceId } from "@/lib/db/meta";
 import { type PullBatch, applyBatch } from "./apply";
 import { loadClock, syncClock } from "./clock";
+import { onOutboxChanged } from "./signal";
 import { applyRemote, reloadDoc, withDetachedDoc } from "./docs";
-import { extractText } from "./ydoc";
+import { extractText, firstLine } from "./ydoc";
 
 /** Bytes of operations to send in one push. The server accepts up to 4 MiB. */
 const PUSH_BYTE_BUDGET = 1_000_000;
@@ -48,6 +49,7 @@ export class SyncEngine {
   private leader = false;
   private releaseLock: (() => void) | null = null;
   private unwatch: (() => void) | null = null;
+  private unwatchOutbox: (() => void) | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private interval = IDLE_INTERVAL_MS;
   private draining = false;
@@ -63,7 +65,11 @@ export class SyncEngine {
 
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
-    listener(this.status);
+    // The first value arrives on a microtask rather than synchronously, so a
+    // React subscriber does not set state during its own effect.
+    queueMicrotask(() => {
+      if (this.listeners.has(listener)) listener(this.status);
+    });
     return () => this.listeners.delete(listener);
   }
 
@@ -96,6 +102,7 @@ export class SyncEngine {
 
     this.claimLeadership();
     this.attachWindowHooks();
+    this.unwatchOutbox = onOutboxChanged(() => this.kick(250));
   }
 
   stop(): void {
@@ -104,6 +111,8 @@ export class SyncEngine {
     this.unwatch = null;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;
+    this.unwatchOutbox?.();
+    this.unwatchOutbox = null;
     this.releaseLock?.();
     this.releaseLock = null;
     this.leader = false;
@@ -172,8 +181,16 @@ export class SyncEngine {
     const watch = this.client.watchQuery(api.sync.pull, { since });
 
     const consume = () => {
-      const result = watch.localQueryResult();
-      if (result) void this.receive(result);
+      try {
+        const result = watch.localQueryResult();
+        // `null` means the server does not recognise this client yet, which is
+        // normal for the moment between page load and the token attaching.
+        if (result) void this.receive(result);
+      } catch {
+        this.set({ state: "error" });
+        // Re-subscribe rather than leaving a dead subscription behind.
+        if (!this.stopped) setTimeout(() => void this.resubscribe(), 2_000);
+      }
     };
 
     this.unwatch = watch.onUpdate(consume);
@@ -185,7 +202,7 @@ export class SyncEngine {
     syncClock(batch.serverTime);
     this.set({ state: "syncing", catchingUp: !batch.complete });
 
-    const { needBodies, reload, incoming } = await applyBatch(batch, this.device);
+    const { needBodies, reload, incoming } = await applyBatch(batch);
 
     for (const update of incoming) {
       if (!update.iv) {
@@ -206,7 +223,11 @@ export class SyncEngine {
     }
 
     for (const noteId of reload) await reloadDoc(noteId);
-    if (needBodies.length > 0) await this.fetchBodies(needBodies);
+    if (needBodies.length > 0) {
+      // A failure here is recoverable: the notes stay marked as behind and the
+      // next batch asks for them again.
+      await this.fetchBodies(needBodies).catch(() => {});
+    }
 
     await setMeta(META.lastSyncAt, Date.now());
     this.set({ state: "idle", lastSyncAt: Date.now(), catchingUp: !batch.complete });
@@ -309,6 +330,14 @@ export class SyncEngine {
       text: locked ? null : text,
       updatedAt: Date.now(),
     });
+
+    // Keep the list row in step with the body this device just caught up on,
+    // without sending anything: the peer that made the edit already published
+    // its own preview.
+    if (note && !locked && text !== null) {
+      const preview = firstLine(text, 160);
+      if (preview !== note.preview) await database.notes.update(noteId, { preview });
+    }
   }
 
   /* --------------------------------------------------------------- pushing */

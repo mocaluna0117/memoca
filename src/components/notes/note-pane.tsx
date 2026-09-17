@@ -21,6 +21,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { SyncBadge } from "@/components/shell/sync-badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNote } from "@/lib/hooks/data";
@@ -58,18 +59,42 @@ export function NotePane({
   const requestUnlock = useVaultUi((s) => s.requestUnlock);
   const openSetup = useVaultUi((s) => s.openSetup);
 
-  const [draft, setDraft] = useState(title);
+  /**
+   * The title field is a controlled draft that knows which note it belongs to
+   * and whether the person has touched it.
+   *
+   * Both matter: switching notes while a debounce is in flight must not write
+   * the old title onto the new note, and a stored title arriving a moment later
+   * must not wipe what is already being typed.
+   */
+  const [draft, setDraft] = useState({ noteId, value: title, dirty: false });
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => setDraft(title), [title, noteId]);
+  if (draft.noteId !== noteId) {
+    setDraft({ noteId, value: note ? title : "", dirty: false });
+  } else if (note && !draft.dirty && draft.value !== title) {
+    // Adopt a title that changed elsewhere, but only while the field is idle.
+    setDraft({ noteId, value: title, dirty: false });
+  } else if (note && draft.dirty && draft.value === title) {
+    // The edit has been saved; allow remote changes to flow in again.
+    setDraft({ noteId, value: title, dirty: false });
+  }
 
   useEffect(() => {
-    if (!note || draft === title) return;
-    const handle = setTimeout(() => void renameNote(noteId, draft), 400);
+    if (!draft.dirty || draft.noteId !== noteId || draft.value === title) return;
+    const handle = setTimeout(() => void renameNote(draft.noteId, draft.value), 400);
     return () => clearTimeout(handle);
-  }, [draft, title, noteId, note]);
+  }, [draft, title, noteId]);
 
-  if (!note) {
+  if (note === undefined) {
+    return (
+      <div className="space-y-3 px-4 py-6 sm:px-10">
+        <Skeleton className="h-5 w-1/2" />
+        <Skeleton className="h-4 w-full" />
+      </div>
+    );
+  }
+  if (note === null) {
     return (
       <div className="text-muted-foreground flex flex-1 items-center justify-center text-sm">
         メモが見つかりません
@@ -121,13 +146,17 @@ export function NotePane({
         </Button>
 
         <Input
-          value={hidden ? t.empty.lockedNote : draft}
-          onChange={(event) => setDraft(event.target.value)}
+          value={hidden ? t.empty.lockedNote : draft.value}
+          onChange={(event) =>
+            setDraft({ noteId, value: event.target.value, dirty: true })
+          }
           disabled={hidden}
           placeholder="タイトル"
           aria-label="メモのタイトル"
           className="h-9 flex-1 border-0 bg-transparent px-2 text-base font-medium shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
+
+        <SyncBadge className="mr-1" />
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>

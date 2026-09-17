@@ -45,6 +45,15 @@ async function seedUser(
 
 const stamp = (t: number, d: string) => ({ t, d });
 
+type Caller = Pick<ReturnType<typeof setup>, "query" | "mutation">;
+
+/** Reads a pull batch, asserting the caller is recognised. */
+async function pull(as: Caller, args: { since: number; limit?: number }) {
+  const batch = await as.query(api.sync.pull, args);
+  expect(batch, "pull should be authenticated").not.toBeNull();
+  return batch!;
+}
+
 const folderOp = (
   opId: string,
   folderId: string,
@@ -66,9 +75,11 @@ const noteOp = (opId: string, noteId: string, extra: Record<string, unknown> = {
 });
 
 describe("authorisation", () => {
-  test("pull requires a signed-in account", async () => {
+  test("pull tells a signed-out client to wait instead of failing", async () => {
     const t = setup();
-    await expect(t.query(api.sync.pull, { since: 0 })).rejects.toThrow();
+    // It must not throw: this subscription is live from the moment the app
+    // starts, including before an auth token has attached.
+    expect(await t.query(api.sync.pull, { since: 0 })).toBeNull();
   });
 
   test("one user never sees another user's rows", async () => {
@@ -88,10 +99,10 @@ describe("authorisation", () => {
       ],
     });
 
-    const seenByB = await asB.query(api.sync.pull, { since: 0 });
+    const seenByB = await pull(asB, { since: 0 });
     expect(seenByB.folders).toHaveLength(0);
 
-    const seenByA = await asA.query(api.sync.pull, { since: 0 });
+    const seenByA = await pull(asA, { since: 0 });
     expect(seenByA.folders).toHaveLength(1);
     expect(seenByA.folders[0]!.name).toBe("A の秘密");
   });
@@ -137,7 +148,7 @@ describe("last-writer-wins", () => {
       ],
     });
 
-    const { folders } = await as.query(api.sync.pull, { since: 0 });
+    const { folders } = await pull(as, { since: 0 });
     const child = folders.find((f) => f.folderId === "child")!;
     expect(child.name).toBe("新しい名前");
     expect(child.parentId).toBe("parent");
@@ -168,7 +179,7 @@ describe("last-writer-wins", () => {
       ],
     });
 
-    const { folders } = await as.query(api.sync.pull, { since: 0 });
+    const { folders } = await pull(as, { since: 0 });
     expect(folders[0]!.name).toBe("新しい");
   });
 
@@ -217,7 +228,7 @@ describe("push", () => {
     const second = await as.mutation(api.sync.push, { deviceId: DEVICE_1, ops: [update] });
 
     expect(second.results[0]!.status).toBe("ok");
-    const { updates } = await as.query(api.sync.pull, { since: 0 });
+    const { updates } = await pull(as, { since: 0 });
     expect(updates).toHaveLength(1);
   });
 
@@ -242,7 +253,7 @@ describe("push", () => {
     });
 
     expect(res.results.map((r) => r.status)).toEqual(["ok", "rejected", "ok"]);
-    const { folders } = await as.query(api.sync.pull, { since: 0 });
+    const { folders } = await pull(as, { since: 0 });
     expect(folders.map((f) => f.folderId).sort()).toEqual(["f-ok", "f-ok-2"]);
   });
 
@@ -299,7 +310,7 @@ describe("push", () => {
       ],
     });
 
-    const { folders } = await as.query(api.sync.pull, { since: 0 });
+    const { folders } = await pull(as, { since: 0 });
     const parents = Object.fromEntries(folders.map((f) => [f.folderId, f.parentId]));
     // Whichever way it resolves, following parents must terminate.
     let node: string | null = "f1";
@@ -328,7 +339,7 @@ describe("pull cursor", () => {
       ],
     });
 
-    const first = await as.query(api.sync.pull, { since: 0, limit: 2 });
+    const first = await pull(as, { since: 0, limit: 2 });
     expect(first.folders).toHaveLength(2);
     expect(first.notes).toHaveLength(0);
     expect(first.complete).toBe(false);
@@ -337,7 +348,7 @@ describe("pull cursor", () => {
     const seenFolders = new Set(first.folders.map((f) => f.folderId));
     const seenNotes = new Set<string>();
     for (let i = 0; i < 10; i += 1) {
-      const page = await as.query(api.sync.pull, { since: cursor, limit: 2 });
+      const page = await pull(as, { since: cursor, limit: 2 });
       for (const f of page.folders) seenFolders.add(f.folderId);
       for (const n of page.notes) seenNotes.add(n.noteId);
       cursor = page.cursor;
@@ -372,7 +383,7 @@ describe("compaction", () => {
     }
 
     // A second device that is still behind, before compaction happens.
-    const behind = await as.query(api.sync.pull, { since: 0 });
+    const behind = await pull(as, { since: 0 });
     expect(behind.updates).toHaveLength(3);
     const lastUpdateSeq = Math.max(...behind.updates.map((u) => u.seq));
 
@@ -385,7 +396,7 @@ describe("compaction", () => {
     });
     expect(compacted.status).toBe("ok");
 
-    const after = await as.query(api.sync.pull, { since: 0 });
+    const after = await pull(as, { since: 0 });
     expect(after.updates).toHaveLength(0);
     expect(after.snapshots).toHaveLength(1);
     expect(after.snapshots[0]!.coversThroughSeq).toBe(lastUpdateSeq);
@@ -422,7 +433,7 @@ describe("compaction", () => {
         },
       ],
     });
-    const { updates } = await as.query(api.sync.pull, { since: 0 });
+    const { updates } = await pull(as, { since: 0 });
     const seq = updates[0]!.seq;
 
     // Another update lands while this client was preparing its snapshot.
@@ -450,7 +461,7 @@ describe("compaction", () => {
     expect(res.reason).toBe("behind");
 
     // Nothing was lost.
-    const after = await as.query(api.sync.pull, { since: 0 });
+    const after = await pull(as, { since: 0 });
     expect(after.updates).toHaveLength(2);
   });
 });
@@ -482,7 +493,7 @@ describe("vault", () => {
       ],
     });
 
-    const before = await as.query(api.sync.pull, { since: 0 });
+    const before = await pull(as, { since: 0 });
     const lastUpdateSeq = before.updates[0]!.seq;
 
     const locked = await as.mutation(api.vault.lockNote, {
@@ -497,7 +508,7 @@ describe("vault", () => {
     });
     expect(locked.status).toBe("ok");
 
-    const after = await as.query(api.sync.pull, { since: 0 });
+    const after = await pull(as, { since: 0 });
     const note = after.notes.find((n) => n.noteId === "note-1")!;
     expect(note.locked).toBe(true);
     expect(note.title).toBeNull();
@@ -551,7 +562,7 @@ describe("vault", () => {
     });
     expect(res.status).toBe("ok");
 
-    const after = await as.query(api.sync.pull, { since: 0 });
+    const after = await pull(as, { since: 0 });
     const note = after.notes.find((n) => n.noteId === "note-1")!;
     expect(note.locked).toBe(false);
     expect(note.title).toBe("もう秘密ではない");

@@ -2,6 +2,7 @@
 
 import { uuidv7 } from "uuidv7";
 import { db } from "@/lib/db";
+import { notifyOutboxChanged } from "./signal";
 
 export type QueuedOp = {
   opId: string;
@@ -26,6 +27,7 @@ export async function enqueue(op: Omit<QueuedOp, "opId"> & { opId?: string }): P
     createdAt: Date.now(),
     attempts: 0,
   });
+  notifyOutboxChanged();
   return opId;
 }
 

@@ -21,7 +21,7 @@ export function AccountGate({ children }: { children: ReactNode }) {
 
   if (gate === "ready") return <>{children}</>;
 
-  if (gate === "loading" || gate === "provisioning") {
+  if (gate === "loading") {
     return (
       <div className="flex min-h-dvh items-center justify-center">
         <Loader2 className="text-muted-foreground size-5 animate-spin" aria-hidden />

@@ -138,7 +138,28 @@ async function flush(handle: Handle): Promise<void> {
   if (!note.locked) {
     const preview = firstLine(text, 160);
     if (preview !== note.preview) {
-      await database.notes.update(handle.noteId, { preview, updatedAt: Date.now() });
+      // The preview travels with the title, so a device that has not downloaded
+      // this note's body yet can still show a meaningful list row. It only goes
+      // out when the first line actually changes, which is rare.
+      const { stamp } = await import("./clock");
+      const { deviceId } = await import("@/lib/db/meta");
+      const ts = stamp(await deviceId());
+      await database.notes.update(handle.noteId, {
+        preview,
+        updatedAt: Date.now(),
+        ts: { ...note.ts, title: ts },
+      });
+      await enqueue({
+        kind: "note",
+        entityId: handle.noteId,
+        payload: {
+          kind: "note",
+          noteId: handle.noteId,
+          title: { value: note.title, preview, ts },
+        },
+      });
+    } else {
+      await database.notes.update(handle.noteId, { updatedAt: Date.now() });
     }
   }
   announce(handle.noteId);

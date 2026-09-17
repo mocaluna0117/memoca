@@ -31,6 +31,17 @@ export function useWorkspace() {
       if (merged.noteId) search.set("n", merged.noteId);
       const query = search.toString();
       const href = query ? `/app?${query}` : "/app";
+
+      // The whole workspace is one route, so selecting a note is a URL change
+      // and nothing more. Going through the router would make Next fetch the
+      // route payload, which fails with no network and throws away the editor;
+      // the History API keeps the link shareable and the back button working
+      // while staying entirely offline-safe.
+      if (typeof window !== "undefined" && window.location.pathname === "/app") {
+        if (options.replace) window.history.replaceState(null, "", href);
+        else window.history.pushState(null, "", href);
+        return;
+      }
       if (options.replace) router.replace(href);
       else router.push(href);
     },

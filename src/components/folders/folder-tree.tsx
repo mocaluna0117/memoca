@@ -34,9 +34,16 @@ type Props = {
   selectedFolderId: string | null;
   onSelect: (folderId: string | null) => void;
   onRequestLock?: (folder: FolderNode) => void;
+  /** Set when this tree lives inside the mobile drawer. */
+  menuContainer?: HTMLElement | null;
 };
 
-export function FolderTree({ selectedFolderId, onSelect, onRequestLock }: Props) {
+export function FolderTree({
+  selectedFolderId,
+  onSelect,
+  onRequestLock,
+  menuContainer,
+}: Props) {
   const tree = useFolderTree();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<FolderNode | null>(null);
@@ -100,18 +107,27 @@ export function FolderTree({ selectedFolderId, onSelect, onRequestLock }: Props)
               <span className="truncate">{label ?? "無題のフォルダ"}</span>
             </button>
 
-            <DropdownMenu>
+            {/* Not modal: on a phone this menu lives inside the folder
+                drawer, and two nested focus traps fight each other so the
+                menu closes the moment it opens. */}
+            <DropdownMenu modal={false}>
               <DropdownMenuTrigger asChild>
                 <Button
                   variant="ghost"
                   size="icon"
-                  className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
+                  // A hover-only affordance is unreachable on a touch screen,
+                  // so it stays visible wherever there is no hover.
+                  className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
                   aria-label={`${label ?? "フォルダ"} の操作`}
                 >
                   <MoreHorizontal className="size-3.5" aria-hidden />
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-44">
+              <DropdownMenuContent
+                align="end"
+                className="w-44"
+                portalContainer={menuContainer}
+              >
                 <DropdownMenuItem
                   onSelect={async () => {
                     const id = await createFolder({

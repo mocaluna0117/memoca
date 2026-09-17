@@ -21,6 +21,12 @@ async function now(): Promise<{ ts: Stamp; device: string }> {
 
 const zero = (d: string): Stamp => ({ t: 0, d });
 
+/**
+ * IndexedDB cannot index null, so top-level rows are found with a scan rather
+ * than through the parent index. At a personal note-taking scale that is a
+ * handful of rows, and it avoids inventing a magic "root" parent id that every
+ * other query would then have to know about.
+ */
 async function siblingKeyAfterLast(
   kind: "folders" | "notes",
   parent: string | null,
@@ -28,8 +34,12 @@ async function siblingKeyAfterLast(
   const database = db();
   const rows =
     kind === "folders"
-      ? await database.folders.where("parentId").equals(parent as string).toArray()
-      : await database.notes.where("folderId").equals(parent as string).toArray();
+      ? parent === null
+        ? await database.folders.filter((f) => f.parentId === null).toArray()
+        : await database.folders.where("parentId").equals(parent).toArray()
+      : parent === null
+        ? await database.notes.filter((n) => n.folderId === null).toArray()
+        : await database.notes.where("folderId").equals(parent).toArray();
   const keys = rows
     .filter((r) => r.deletedAt === null && !r.purged)
     .map((r) => r.sortKey)

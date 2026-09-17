@@ -34,10 +34,18 @@ function DropdownMenuContent({
   className,
   align = "start",
   sideOffset = 4,
+  /**
+   * Where to portal the menu. Inside a modal drawer it has to land within that
+   * drawer, otherwise the drawer's own dismiss layer treats the open menu as an
+   * outside click and closes it the moment it appears.
+   */
+  portalContainer,
   ...props
-}: React.ComponentProps<typeof DropdownMenuPrimitive.Content>) {
+}: React.ComponentProps<typeof DropdownMenuPrimitive.Content> & {
+  portalContainer?: HTMLElement | null
+}) {
   return (
-    <DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Portal container={portalContainer ?? undefined}>
       <DropdownMenuPrimitive.Content
         data-slot="dropdown-menu-content"
         sideOffset={sideOffset}

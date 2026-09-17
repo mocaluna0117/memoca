@@ -8,6 +8,8 @@ export const META = {
   clockOffset: "clockOffset",
   lastSyncAt: "lastSyncAt",
   lastHlc: "lastHlc",
+  /** Last known account snapshot, so the app renders before Convex answers. */
+  profile: "profile",
 } as const;
 
 /**

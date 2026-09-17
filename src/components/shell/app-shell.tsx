@@ -11,6 +11,7 @@ import {
 } from "react";
 import { MobileNav } from "@/components/shell/mobile-nav";
 import { Sidebar } from "@/components/shell/sidebar";
+import { SyncBadge } from "@/components/shell/sync-badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useWorkspace } from "@/lib/hooks/workspace";
@@ -34,6 +35,7 @@ export function AppShell({
 }) {
   const { selection, openFolder } = useWorkspace();
   const [drawer, setDrawer] = useState(false);
+  const [drawerElement, setDrawerElement] = useState<HTMLDivElement | null>(null);
 
   const value = useMemo<ShellContextValue>(
     () => ({
@@ -54,11 +56,14 @@ export function AppShell({
   return (
     <ShellContext.Provider value={value}>
       <div className="flex min-h-dvh">
-        <aside
-          className="hidden w-64 shrink-0 border-r md:block"
-          style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
-        >
-          <div className="sticky top-0 h-dvh">
+        <aside className="hidden w-64 shrink-0 border-r md:block">
+          <div
+            className="sticky top-0"
+            style={{
+              paddingTop: "env(safe-area-inset-top, 0px)",
+              height: "calc(100dvh - env(safe-area-inset-top, 0px))",
+            }}
+          >
             <Sidebar
               selectedFolderId={selection.folderId}
               onSelectFolder={select}
@@ -70,12 +75,17 @@ export function AppShell({
         <Sheet open={drawer} onOpenChange={setDrawer}>
           <SheetContent side="left" className="w-72 p-0">
             <SheetTitle className="sr-only">メニュー</SheetTitle>
-            <div style={{ paddingTop: "env(safe-area-inset-top, 0px)" }} className="h-full">
+            <div
+              ref={setDrawerElement}
+              style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}
+              className="h-full"
+            >
               <Sidebar
                 selectedFolderId={selection.folderId}
                 onSelectFolder={select}
                 onRequestLock={onRequestFolderLock}
                 onNavigate={() => setDrawer(false)}
+                menuContainer={drawerElement}
               />
             </div>
           </SheetContent>
@@ -111,6 +121,7 @@ export function MobileHeader({
         <Menu className="size-5" aria-hidden />
       </Button>
       <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{title}</h1>
+      <SyncBadge />
       {actions}
     </header>
   );

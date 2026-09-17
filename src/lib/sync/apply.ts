@@ -7,7 +7,8 @@ import { META } from "@/lib/db/meta";
 import { isNewer } from "@/lib/hlc";
 import type { Folder, Note } from "@/lib/types";
 
-export type PullBatch = FunctionReturnType<typeof api.sync.pull>;
+/** `null` is the signed-out case, which never reaches {@link applyBatch}. */
+export type PullBatch = NonNullable<FunctionReturnType<typeof api.sync.pull>>;
 type RemoteFolder = PullBatch["folders"][number];
 type RemoteNote = PullBatch["notes"][number];
 
@@ -106,10 +107,7 @@ function mergeNote(local: Note, remote: RemoteNote): Note {
 const toNote = (remote: RemoteNote): Note => ({ ...remote });
 const toFolder = (remote: RemoteFolder): Folder => ({ ...remote });
 
-export async function applyBatch(
-  batch: PullBatch,
-  deviceId: string,
-): Promise<ApplyResult> {
+export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
   const database = db();
   const needBodies = new Set<string>();
   const reload = new Set<string>();
