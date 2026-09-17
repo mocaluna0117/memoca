@@ -3,7 +3,9 @@
 import { useConvex } from "convex/react";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
+import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
+import { PwaPrompts } from "@/components/shell/pwa-prompts";
 import { VaultDialog } from "@/components/vault/vault-dialog";
 import { vault } from "@/lib/crypto/vault";
 import { revokeResolvedUrls } from "@/lib/media/attachments";
@@ -85,6 +87,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   return (
     <>
       <AppShell onRequestFolderLock={onRequestFolderLock}>{children}</AppShell>
+      <CommandPalette />
+      <PwaPrompts />
       <VaultDialog />
     </>
   );

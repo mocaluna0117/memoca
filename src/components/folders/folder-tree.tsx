@@ -2,6 +2,7 @@
 
 import {
   ChevronRight,
+  FolderInput,
   FolderPlus,
   Inbox,
   Lock,
@@ -23,11 +24,13 @@ import { useFolderTree } from "@/lib/hooks/data";
 import { flattenTree } from "@/lib/tree";
 import {
   createFolder,
+  moveFolder,
   renameFolder,
   setFolderTrashed,
 } from "@/lib/sync/mutations";
 import type { FolderNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { FolderPicker } from "@/components/folders/folder-picker";
 import { RenameDialog } from "@/components/folders/rename-dialog";
 
 type Props = {
@@ -50,6 +53,7 @@ export function FolderTree({
   const tree = useFolderTree();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<FolderNode | null>(null);
+  const [moving, setMoving] = useState<FolderNode | null>(null);
 
   const rows = flattenTree(tree, expanded);
 
@@ -148,6 +152,12 @@ export function FolderTree({
                   <Pencil className="size-4" aria-hidden />
                   名前を変更
                 </DropdownMenuItem>
+                {!isInbox ? (
+                  <DropdownMenuItem onSelect={() => setMoving(node)}>
+                    <FolderInput className="size-4" aria-hidden />
+                    別のフォルダへ移動
+                  </DropdownMenuItem>
+                ) : null}
                 {onRequestLock ? (
                   <DropdownMenuItem onSelect={() => onRequestLock(node)}>
                     <Lock className="size-4" aria-hidden />
@@ -180,6 +190,19 @@ export function FolderTree({
           </div>
         );
       })}
+
+      <FolderPicker
+        open={moving !== null}
+        title="フォルダを移動"
+        // A folder cannot be dropped inside itself or its own children.
+        excludeSubtreeOf={moving?.folderId}
+        onOpenChange={(open) => !open && setMoving(null)}
+        onPick={async (parentId) => {
+          if (moving) await moveFolder(moving.folderId, parentId);
+          setMoving(null);
+          toast.success("移動しました");
+        }}
+      />
 
       <RenameDialog
         open={renaming !== null}

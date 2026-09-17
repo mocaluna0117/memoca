@@ -3,6 +3,7 @@
 import { useConvex } from "convex/react";
 import {
   ArrowLeft,
+  FolderInput,
   Lock,
   LockOpen,
   MoreHorizontal,
@@ -27,7 +28,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useNote } from "@/lib/hooks/data";
 import { useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { useVaultUi } from "@/lib/store/vault-ui";
-import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
+import { FolderPicker } from "@/components/folders/folder-picker";
+import { moveNote, renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { lockNote, unlockNote } from "@/lib/vault/actions";
 import { t } from "@/lib/i18n/ja";
 
@@ -72,6 +74,7 @@ export function NotePane({
    */
   const [draft, setDraft] = useState({ noteId, value: title, dirty: false });
   const [busy, setBusy] = useState(false);
+  const [moving, setMoving] = useState(false);
 
   if (draft.noteId !== noteId) {
     setDraft({ noteId, value: note ? title : "", dirty: false });
@@ -193,6 +196,10 @@ export function NotePane({
               )}
               {note.pinned ? t.action.unpin : t.action.pin}
             </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => setMoving(true)}>
+              <FolderInput className="size-4" aria-hidden />
+              {t.action.move}
+            </DropdownMenuItem>
             <DropdownMenuItem disabled={busy} onSelect={() => void toggleLock()}>
               {note.locked ? (
                 <LockOpen className="size-4" aria-hidden />
@@ -236,6 +243,15 @@ export function NotePane({
           <NoteEditor noteId={noteId} locked={note.locked} />
         )}
       </div>
+
+      <FolderPicker
+        open={moving}
+        onOpenChange={setMoving}
+        onPick={async (folderId) => {
+          await moveNote(noteId, folderId);
+          toast.success("移動しました");
+        }}
+      />
     </div>
   );
 }
