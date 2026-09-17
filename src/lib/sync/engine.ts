@@ -318,6 +318,10 @@ export class SyncEngine {
     this.draining = true;
     try {
       const database = db();
+      // Files first: an image the editor already shows should reach the server
+      // before the block that references it is compacted.
+      const { flushUploads } = await import("@/lib/media/attachments");
+      await flushUploads(this.client).catch(() => {});
       for (;;) {
         const entries = await database.outbox.orderBy("createdAt").limit(PUSH_OP_LIMIT).toArray();
         this.set({ pending: await database.outbox.count() });
