@@ -273,7 +273,7 @@ export default function SettingsPage() {
             )}
           </p>
           <p className="text-muted-foreground text-xs">
-            画像は自動で縮小して保存されます。動画は 1 本あたり
+            画像は自動で縮小して保存されます。動画は 1 本あたり{" "}
             {formatBytes(me?.limits.maxVideoBytes ?? 0)} までです。
           </p>
         </Section>
