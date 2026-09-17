@@ -50,7 +50,14 @@ async function hydrate(noteId: string, note: Note | undefined, doc: Y.Doc): Prom
       ? await vault.noteKey(noteId, note.keyEpoch, note.wrappedKey)
       : null;
 
-  const applyOne = async (data: Uint8Array, iv: Uint8Array | undefined, epoch: number) => {
+  // Snapshots and incremental updates are sealed under different contexts, so
+  // the right one has to be named here or authentication fails.
+  const applyOne = async (
+    kind: "snapshot" | "update",
+    data: Uint8Array,
+    iv: Uint8Array | undefined,
+    epoch: number,
+  ) => {
     if (!iv) {
       Y.applyUpdate(doc, data, ORIGIN.load);
       return;
@@ -58,15 +65,17 @@ async function hydrate(noteId: string, note: Note | undefined, doc: Y.Doc): Prom
     if (!key) return; // Locked and no key: the document stays empty on purpose.
     const { open } = await import("@/lib/crypto/primitives");
     const { ctx } = await import("@/lib/crypto/context");
-    const plain = await open(key, data, iv, ctx.yjsUpdate(noteId, epoch));
+    const context =
+      kind === "snapshot" ? ctx.yjsSnapshot(noteId, epoch) : ctx.yjsUpdate(noteId, epoch);
+    const plain = await open(key, data, iv, context);
     Y.applyUpdate(doc, plain, ORIGIN.load);
   };
 
   if (snapshot) {
-    await applyOne(snapshot.data, snapshot.iv, snapshot.keyEpoch);
+    await applyOne("snapshot", snapshot.data, snapshot.iv, snapshot.keyEpoch);
   }
   for (const update of updates) {
-    await applyOne(update.data, update.iv, update.keyEpoch);
+    await applyOne("update", update.data, update.iv, update.keyEpoch);
   }
 }
 

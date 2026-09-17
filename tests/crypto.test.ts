@@ -42,6 +42,17 @@ describe("authenticated encryption", () => {
     await expect(open(key, ct, iv, ctx.yjsUpdate("n1", 1))).rejects.toThrow();
   });
 
+  test("a snapshot cannot be opened as an incremental update", async () => {
+    // These are sealed in different places and opened in one; naming the wrong
+    // context has to fail loudly rather than silently return the wrong bytes.
+    const key = await importAesKey(randomBytes(32));
+    const snapshot = await seal(key, text("merged document"), ctx.yjsSnapshot("n1", 1));
+    await expect(
+      open(key, snapshot.ct, snapshot.iv, ctx.yjsUpdate("n1", 1)),
+    ).rejects.toThrow();
+    expect(ctx.yjsSnapshot("n1", 1)).not.toBe(ctx.yjsUpdate("n1", 1));
+  });
+
   test("a flipped bit is detected", async () => {
     const key = await importAesKey(randomBytes(32));
     const { ct, iv } = await seal(key, text("改ざん検知"), ctx.noteTitle("n1", 0));

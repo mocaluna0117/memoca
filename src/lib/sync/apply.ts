@@ -97,8 +97,10 @@ function mergeNote(local: Note, remote: RemoteNote): Note {
     }
   }
   next.purged = remote.purged;
-  next.lastUpdateSeq = remote.lastUpdateSeq;
-  next.snapshotSeq = remote.snapshotSeq;
+  // The note row is not resent for every content change, so a row that arrives
+  // later can still carry an older value than the update stream already gave us.
+  next.lastUpdateSeq = Math.max(local.lastUpdateSeq, remote.lastUpdateSeq);
+  next.snapshotSeq = Math.max(local.snapshotSeq, remote.snapshotSeq);
   next.seq = remote.seq;
   next.updatedAt = Math.max(local.updatedAt, remote.updatedAt);
   return next;
@@ -164,22 +166,27 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
           if (own.seq !== remote.seq || own.pushed !== 1) {
             await database.updates.update(own.localId!, { seq: remote.seq, pushed: 1 });
           }
-          continue;
+        } else {
+          const data = new Uint8Array(remote.payload);
+          const iv = remote.iv ? new Uint8Array(remote.iv) : undefined;
+          await database.updates.add({
+            noteId: remote.noteId,
+            seq: remote.seq,
+            opId: remote.opId,
+            keyEpoch: remote.keyEpoch,
+            data,
+            iv,
+            pushed: 1,
+            createdAt: Date.now(),
+          });
+          incoming.push({ noteId: remote.noteId, keyEpoch: remote.keyEpoch, data, iv });
+          await database.notes.update(remote.noteId, { updatedAt: Date.now() });
         }
-        const data = new Uint8Array(remote.payload);
-        const iv = remote.iv ? new Uint8Array(remote.iv) : undefined;
-        await database.updates.add({
-          noteId: remote.noteId,
-          seq: remote.seq,
-          opId: remote.opId,
-          keyEpoch: remote.keyEpoch,
-          data,
-          iv,
-          pushed: 1,
-          createdAt: Date.now(),
-        });
-        incoming.push({ noteId: remote.noteId, keyEpoch: remote.keyEpoch, data, iv });
 
+        // How far the local document reaches has to advance for this device's
+        // own writes too. Locking and compaction both refuse to act unless the
+        // local copy is known to cover every update on the server, and leaving
+        // the marker behind on an echo makes that condition unreachable.
         const body = await database.bodies.get(remote.noteId);
         await database.bodies.put({
           noteId: remote.noteId,
@@ -188,9 +195,11 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
           text: body?.text ?? null,
           updatedAt: Date.now(),
         });
+        // `lastUpdateSeq` is only carried on the note row, which is not resent
+        // for content changes; keep it in step from the update itself.
         const note = await database.notes.get(remote.noteId);
-        if (note) {
-          await database.notes.update(remote.noteId, { updatedAt: Date.now() });
+        if (note && note.lastUpdateSeq < remote.seq) {
+          await database.notes.update(remote.noteId, { lastUpdateSeq: remote.seq });
         }
       }
 
