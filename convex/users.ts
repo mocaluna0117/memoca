@@ -149,6 +149,8 @@ export const me = query({
       .unique();
     const config = await getConfig(ctx);
     return {
+      /** Stable per-account key; local data is wiped when it changes. */
+      userKey: user.authId,
       email: user.email,
       name: user.name ?? null,
       image: user.image ?? null,
