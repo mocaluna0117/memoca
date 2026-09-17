@@ -52,3 +52,6 @@ next-env.d.ts
 # serwist
 /public/sw*
 /public/swe-worker*
+
+# convex local (anonymous) deployment data
+/.convex
