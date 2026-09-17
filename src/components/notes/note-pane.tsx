@@ -11,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -30,6 +30,9 @@ import { useVaultUi } from "@/lib/store/vault-ui";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { lockNote, unlockNote } from "@/lib/vault/actions";
 import { t } from "@/lib/i18n/ja";
+
+/** Long enough to coalesce typing, short enough not to feel unsaved. */
+const TITLE_DEBOUNCE_MS = 250;
 
 // BlockNote touches the DOM on construction, so it never renders on the server.
 const NoteEditor = dynamic(
@@ -80,11 +83,28 @@ export function NotePane({
     setDraft({ noteId, value: title, dirty: false });
   }
 
+  const pendingTitle = useRef<{ noteId: string; value: string } | null>(null);
+
   useEffect(() => {
     if (!draft.dirty || draft.noteId !== noteId || draft.value === title) return;
-    const handle = setTimeout(() => void renameNote(draft.noteId, draft.value), 400);
+    pendingTitle.current = { noteId: draft.noteId, value: draft.value };
+    const handle = setTimeout(() => {
+      pendingTitle.current = null;
+      void renameNote(draft.noteId, draft.value);
+    }, TITLE_DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [draft, title, noteId]);
+
+  // A debounce that is still counting when the pane goes away would lose the
+  // edit. Anything pending is written on the way out.
+  useEffect(
+    () => () => {
+      const pending = pendingTitle.current;
+      pendingTitle.current = null;
+      if (pending) void renameNote(pending.noteId, pending.value);
+    },
+    [],
+  );
 
   if (note === undefined) {
     return (

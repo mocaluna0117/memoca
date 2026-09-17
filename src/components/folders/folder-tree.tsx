@@ -34,6 +34,8 @@ type Props = {
   selectedFolderId: string | null;
   onSelect: (folderId: string | null) => void;
   onRequestLock?: (folder: FolderNode) => void;
+  /** Selects a new folder without dismissing the panel it was created in. */
+  onCreated?: (folderId: string) => void;
   /** Set when this tree lives inside the mobile drawer. */
   menuContainer?: HTMLElement | null;
 };
@@ -42,6 +44,7 @@ export function FolderTree({
   selectedFolderId,
   onSelect,
   onRequestLock,
+  onCreated = onSelect,
   menuContainer,
 }: Props) {
   const tree = useFolderTree();
@@ -135,7 +138,7 @@ export function FolderTree({
                       name: "新しいフォルダ",
                     });
                     setExpanded((c) => new Set(c).add(node.folderId));
-                    onSelect(id);
+                    onCreated(id);
                   }}
                 >
                   <FolderPlus className="size-4" aria-hidden />

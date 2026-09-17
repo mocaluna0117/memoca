@@ -100,11 +100,22 @@ export async function hideFolders(page: Page): Promise<void> {
   }
 }
 
-/** Leaves the editor so the note list is on screen again. */
+/**
+ * Leaves the editor so the note list is on screen again.
+ *
+ * Waits for the app to have rendered something first: straight after a reload
+ * neither pane exists yet, and an immediate visibility check would report the
+ * editor as absent and skip the step.
+ */
 export async function showList(page: Page): Promise<void> {
   if (!isNarrow(page)) return;
   const back = page.getByRole("button", { name: "戻る" });
-  if (await back.isVisible().catch(() => false)) await back.click();
+  const newNote = page.getByRole("button", { name: "新しいメモ" }).first();
+  await expect(back.or(newNote).first()).toBeVisible({ timeout: 25_000 });
+  if (await back.isVisible()) {
+    await back.click();
+    await expect(newNote).toBeVisible();
+  }
 }
 
 export function editor(page: Page) {

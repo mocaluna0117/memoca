@@ -25,6 +25,8 @@ import { cn } from "@/lib/utils";
 type Props = {
   selectedFolderId: string | null;
   onSelectFolder: (folderId: string | null) => void;
+  /** Selects a freshly created folder without dismissing the panel. */
+  onCreatedFolder?: (folderId: string) => void;
   onRequestLock?: (folder: FolderNode) => void;
   onNavigate?: () => void;
   /** Portal target for row menus; set only inside the mobile drawer. */
@@ -34,6 +36,7 @@ type Props = {
 export function Sidebar({
   selectedFolderId,
   onSelectFolder,
+  onCreatedFolder,
   onRequestLock,
   onNavigate,
   menuContainer,
@@ -88,6 +91,7 @@ export function Sidebar({
             onNavigate?.();
           }}
           onRequestLock={onRequestLock}
+          onCreated={onCreatedFolder}
           menuContainer={menuContainer}
         />
         <Button
@@ -96,8 +100,9 @@ export function Sidebar({
           className="text-muted-foreground mt-1 w-full justify-start gap-2"
           onClick={async () => {
             const id = await createFolder({ parentId: null, name: "新しいフォルダ" });
-            onSelectFolder(id);
-            onNavigate?.();
+            // Stay put: the next thing anyone does with a new folder is rename
+            // it, and that control is right here.
+            (onCreatedFolder ?? onSelectFolder)(id);
           }}
         >
           <FolderPlus className="size-4" aria-hidden />

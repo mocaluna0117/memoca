@@ -77,21 +77,21 @@ test.describe("folders", () => {
     await signUp(page);
     await openApp(page);
 
-    let panel = await folderPanel(page);
+    // The panel stays put while folders are created, so one reference is
+    // enough for the whole flow.
+    const panel = await folderPanel(page);
     await panel.getByRole("button", { name: "新しいフォルダ" }).click();
-    await expect(page.getByText("新しいフォルダ").filter({ visible: true }).first()).toBeVisible();
+    await expect(panel.getByText("新しいフォルダ").first()).toBeVisible();
 
-    panel = await folderPanel(page);
-    await panel.getByRole("button", { name: /の操作$/ }).first().click();
+    await panel.getByRole("button", { name: "新しいフォルダ の操作" }).click();
     await page.getByRole("menuitem", { name: "名前を変更" }).click();
     await page.getByRole("textbox").fill("仕事");
     await page.getByRole("button", { name: "保存" }).click();
-    await expect(page.getByText("仕事").filter({ visible: true }).first()).toBeVisible();
+    await expect(panel.getByText("仕事").first()).toBeVisible();
 
-    panel = await folderPanel(page);
     await panel.getByRole("button", { name: "仕事 の操作" }).click();
     await page.getByRole("menuitem", { name: "サブフォルダを追加" }).click();
-    await expect(page.getByText("新しいフォルダ").filter({ visible: true }).first()).toBeVisible();
+    await expect(panel.getByText("新しいフォルダ").first()).toBeVisible();
   });
 
   test("a note created inside a folder stays there", async ({ page }) => {

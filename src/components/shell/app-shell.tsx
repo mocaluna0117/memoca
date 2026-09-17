@@ -53,6 +53,11 @@ export function AppShell({
     [openFolder],
   );
 
+  const selectWithoutClosing = useCallback(
+    (folderId: string) => openFolder(folderId),
+    [openFolder],
+  );
+
   return (
     <ShellContext.Provider value={value}>
       <div className="flex min-h-dvh">
@@ -83,6 +88,7 @@ export function AppShell({
               <Sidebar
                 selectedFolderId={selection.folderId}
                 onSelectFolder={select}
+                onCreatedFolder={selectWithoutClosing}
                 onRequestLock={onRequestFolderLock}
                 onNavigate={() => setDrawer(false)}
                 menuContainer={drawerElement}

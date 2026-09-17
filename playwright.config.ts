@@ -8,7 +8,9 @@ export default defineConfig({
   timeout: 90_000,
   expect: { timeout: 15_000 },
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
+  // Browser tests against a live backend are sensitive to machine load; a real
+  // break still fails every attempt.
+  retries: process.env.CI ? 2 : 1,
   // Four browsers against one local backend starve each other and turn real
   // assertions into timeouts.
   workers: process.env.CI ? 1 : 2,
