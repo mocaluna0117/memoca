@@ -1,0 +1,23 @@
+import { uuidv7 } from "uuidv7";
+import { getMeta, setMeta } from "./index";
+
+export const META = {
+  deviceId: "deviceId",
+  cursor: "syncCursor",
+  userKey: "userKey",
+  clockOffset: "clockOffset",
+  lastSyncAt: "lastSyncAt",
+  lastHlc: "lastHlc",
+} as const;
+
+/**
+ * A stable id for this browser profile. It breaks ties in last-writer-wins and
+ * lets the server tell this device's own echoes from a peer's changes.
+ */
+export async function deviceId(): Promise<string> {
+  const existing = await getMeta<string | null>(META.deviceId, null);
+  if (existing) return existing;
+  const fresh = uuidv7();
+  await setMeta(META.deviceId, fresh);
+  return fresh;
+}

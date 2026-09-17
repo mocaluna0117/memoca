@@ -110,7 +110,7 @@ export const ensure = mutation({
       parentId: null,
       name: "Inbox",
       icon: "inbox",
-      sortKey: "a0",
+      sortKey: "a",
       locked: false,
       system: "inbox",
       deletedAt: null,
