@@ -21,5 +21,8 @@
     "noEmit": true
   },
   "include": ["./**/*"],
-  "exclude": ["./_generated"]
+  /* Tests run under Vitest, not on Convex, and Convex does not deploy them.
+   * They use Vite-only APIs such as `import.meta.glob`, which this config
+   * knows nothing about; the root tsconfig typechecks them instead. */
+  "exclude": ["./_generated", "./**/*.test.ts"]
 }

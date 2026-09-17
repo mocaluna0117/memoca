@@ -12,14 +12,31 @@
 ```bash
 cd ~/memo_app
 npx convex login          # ブラウザが開きます（GitHub か Google でログイン）
-npx convex dev --configure new --project memoca
+npx convex dev            # プロジェクトとリージョンを聞かれます
 ```
 
-ここで作られるのが「開発用デプロイ」です。本番用は Vercel 連携時に自動で作られます。
+リージョンは日本から近い **US East (N. Virginia)** を選びます。あとから変更できません。
 
-> 現在 `.env.local` はローカル匿名デプロイを指しています。上のコマンドで上書きされます。
-> ローカルに戻したいときは `.env.local` を削除して
-> `CONVEX_AGENT_MODE=anonymous npx convex dev` を実行してください。
+ここで作られるのが「開発用デプロイ」です。本番用は Vercel 連携時に自動で作られます。
+どちらも同じプロジェクトに属し、データは完全に分かれています。
+
+> `npx convex login` の途中でもプロジェクト名を聞かれます。
+> そこで作ったプロジェクトと `npx convex dev` で作るプロジェクトは別物になるため、
+> 使っていない方はダッシュボードから削除してください。
+>
+> 完了すると `.env.local` がクラウドのデプロイを指すように書き換わります。
+> ローカルだけで動かす状態に戻したいときは `.env.local` を削除して
+> `CONVEX_AGENT_MODE=anonymous npx convex dev` を実行します。
+
+開発用デプロイにも設定を入れておきます。
+
+```bash
+npx convex env set BETTER_AUTH_SECRET "$(openssl rand -base64 32)"
+npx convex env set SITE_URL http://localhost:3000
+npx convex env set ALLOW_PASSWORD_AUTH true
+npx convex env set MAX_USERS 100000
+npx convex env set ADMIN_EMAILS <あなたのメールアドレス>
+```
 
 ## 2. Google ログインを設定する
 

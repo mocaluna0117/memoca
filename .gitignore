@@ -55,3 +55,6 @@ next-env.d.ts
 
 # convex local (anonymous) deployment data
 /.convex
+
+# local agent settings
+.claude/settings.local.json
