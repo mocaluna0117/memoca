@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type * as Y from "yjs";
 import { useSync } from "@/components/providers/sync-provider";
+import { MobileBlockToolbar } from "@/components/editor/mobile-block-toolbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { vault } from "@/lib/crypto/vault";
 import {
@@ -122,6 +123,8 @@ function EditorSurface({
       theme={resolvedTheme === "dark" ? "dark" : "light"}
       className="memoca-editor min-h-[50vh] py-4"
       data-locked={locked ? "true" : undefined}
-    />
+    >
+      <MobileBlockToolbar />
+    </BlockNoteView>
   );
 }
