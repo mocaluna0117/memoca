@@ -1,0 +1,9 @@
+# Vercel builds from source; local build output and test artefacts only slow
+# the upload down and can never be used.
+.next
+.convex
+node_modules
+test-results
+playwright-report
+blob-report
+playwright/.cache
