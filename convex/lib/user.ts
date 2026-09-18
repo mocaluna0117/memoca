@@ -33,9 +33,35 @@ export async function requireUser(ctx: AnyCtx): Promise<Doc<"users">> {
   return user;
 }
 
+/**
+ * Whether an address is named in the deployment's ADMIN_EMAILS.
+ *
+ * Read per request, not at module load, so changing the variable takes effect
+ * on the next call.
+ */
+export function isAdminEmail(email: string): boolean {
+  return (process.env.ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(email.toLowerCase());
+}
+
+/**
+ * Admin access is the stored role OR a current match against ADMIN_EMAILS.
+ *
+ * The stored role is written once, when the account is created, so on its own
+ * it would lock the operator out of their own admin screen whenever they set
+ * the variable after signing in, with no way back except editing the database.
+ * Checking the environment every time keeps setting the variable sufficient.
+ */
+export function hasAdminAccess(user: Doc<"users">): boolean {
+  return user.role === "admin" || isAdminEmail(user.email);
+}
+
 export async function requireAdmin(ctx: AnyCtx): Promise<Doc<"users">> {
   const user = await requireUser(ctx);
-  if (user.role !== "admin") {
+  if (!hasAdminAccess(user)) {
     throw new ConvexError({ code: "FORBIDDEN", message: "管理者のみ実行できます。" });
   }
   return user;

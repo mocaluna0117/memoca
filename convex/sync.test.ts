@@ -569,3 +569,46 @@ describe("vault", () => {
     expect(note.wrappedKey).toBeUndefined();
   });
 });
+
+describe("admin access", () => {
+  test("ADMIN_EMAILS grants access to an account created before it was set", async () => {
+    const t = setup();
+    // The stored role is written once, at sign-up. An operator who names their
+    // address afterwards must still get in, otherwise there is no way back
+    // into the admin screen short of editing the database.
+    await t.run(async (ctx) =>
+      ctx.db.insert("users", {
+        authId: AUTH_A,
+        email: "operator@example.com",
+        role: "user",
+        quotaBytes: 100,
+        usedBytes: 0,
+        reservedBytes: 0,
+        settings: {
+          theme: "system",
+          trashRetentionDays: 30,
+          autoLockMinutes: 5,
+          prefetchBodies: true,
+        },
+        createdAt: Date.now(),
+      }),
+    );
+    const as = t.withIdentity({ subject: AUTH_A });
+
+    process.env.ADMIN_EMAILS = "";
+    await expect(as.query(api.admin.overview, {})).rejects.toThrow();
+
+    process.env.ADMIN_EMAILS = "Operator@Example.com";
+    const overview = await as.query(api.admin.overview, {});
+    expect(overview.config.maxUsers).toBeGreaterThan(0);
+    expect((await as.query(api.users.me, {}))?.role).toBe("admin");
+  });
+
+  test("a plain account is refused", async () => {
+    const t = setup();
+    process.env.ADMIN_EMAILS = "someone-else@example.com";
+    await seedUser(t, AUTH_B);
+    const as = t.withIdentity({ subject: AUTH_B });
+    await expect(as.query(api.admin.overview, {})).rejects.toThrow();
+  });
+});

@@ -5,7 +5,7 @@ import { type MutationCtx, internalMutation, mutation, query } from "./_generate
 import { authComponent } from "./auth";
 import { DEFAULTS } from "./lib/constants";
 import { openSeq } from "./lib/seq";
-import { getConfig, getUser, requireUser } from "./lib/user";
+import { getConfig, getUser, hasAdminAccess, isAdminEmail, requireUser } from "./lib/user";
 
 async function getOrCreateConfig(ctx: MutationCtx): Promise<Doc<"appConfig">> {
   const existing = await ctx.db
@@ -23,14 +23,6 @@ async function getOrCreateConfig(ctx: MutationCtx): Promise<Doc<"appConfig">> {
     maxVideoBytes: DEFAULTS.maxVideoBytes,
   });
   return (await ctx.db.get(id))!;
-}
-
-function isAdminEmail(email: string): boolean {
-  const list = (process.env.ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
-  return list.includes(email.toLowerCase());
 }
 
 /**
@@ -154,7 +146,8 @@ export const me = query({
       email: user.email,
       name: user.name ?? null,
       image: user.image ?? null,
-      role: user.role,
+      /** Effective, not stored: ADMIN_EMAILS is honoured on every request. */
+      role: hasAdminAccess(user) ? ("admin" as const) : user.role,
       quotaBytes: user.quotaBytes,
       usedBytes: user.usedBytes,
       reservedBytes: user.reservedBytes,
