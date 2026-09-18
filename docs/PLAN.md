@@ -231,17 +231,22 @@ Worker インデックス、日本語正規化、検索 UI とハイライト、
 
 | リスク | 対策 |
 |---|---|
-| iOS ホーム画面 PWA での WebAuthn PRF 動作が未確認 | Phase 0 で実機スパイク。NG なら生体解除はフォールバック方式、パスワード解除は常に利用可 |
-| BlockNote のモバイル操作性（ドラッグハンドルがタッチ非対応） | 自作モバイルツールバー。それでも不足なら Plate への差し替えを検討 |
+| ~~iOS ホーム画面 PWA での WebAuthn PRF 動作が未確認~~ | **解消**。iPhone のホーム画面アプリで Face ID によるロック解除が動作することを実機で確認（2026-09-18） |
+| ~~BlockNote のモバイル操作性（ドラッグハンドルがタッチ非対応）~~ | **解消**。キーボードの上に出るブロック操作バーを自作し、実機で動作を確認 |
 | Convex 無料枠の帯域 1GB/月 | 差分同期・スナップショット・SW キャッシュ・容量上限。超過時は Pro（25USD/月） |
-| Google OAuth 同意画面で `memoca-app.vercel.app` を承認済ドメインにできない可能性 | Phase 0 で最初に設定して確認。NG なら `memoca.dev`（9.99USD/年）等を購入 |
+| ~~Google OAuth 同意画面で `memoca-app.vercel.app` を承認済ドメインにできない可能性~~ | **解消**。リダイレクト URI を登録した時点で `vercel.app` が自動で承認済みドメインに入り、独自ドメインは不要でした |
 | Vercel Hobby は非商用限定 | 広告・課金を入れない。入れる時は Pro へ |
 | 金庫パスワード紛失 | リカバリーキー必須表示、パスキー併用を推奨 |
 | Better Auth × Convex がまだ 0.x | API 変更に備え認証層を `src/lib/auth/` に隔離 |
 
-## ユーザー側にお願いする作業（実装中に順次案内）
+## ユーザー側にお願いした作業（すべて完了）
 
-1. **Convex ログイン**: 初回 `npx convex dev` 実行時にブラウザで GitHub/Google ログイン。
-2. **Google Cloud OAuth**: プロジェクト作成 → 同意画面（外部・アプリ名 Memoca・承認済ドメイン `memoca-app.vercel.app`・利用規約/プライバシー URL）→ OAuth クライアント（Web）作成。リダイレクト URI は `https://memoca-app.vercel.app/api/auth/callback/google` と `http://localhost:3000/api/auth/callback/google`。クライアント ID / シークレットは Convex の env に私が登録（コミットしない）。
-3. **実機テスト**: iPhone / Android で PWA インストール・Face ID・共有の確認。
-4. （任意・将来）独自ドメイン購入。
+1. **Convex ログイン** — 完了。プロジェクト `memoca`、本番デプロイ `kindhearted-goose-499`（US East）
+2. **Google Cloud OAuth** — 完了。プロジェクト `memoca-509004`。localhost と本番の
+   リダイレクト URI を登録済み。`vercel.app` は自動で承認済みドメインに入りました
+3. **実機テスト** — 完了。iPhone のホーム画面追加、再ログイン、Face ID でのロック解除、
+   機内モードでの編集と復帰後の同期、すべて動作
+4. **独自ドメイン** — 不要でした。`memoca-app.vercel.app` で運用しています
+
+残っているのは、誰でも登録できるようにするかどうかの判断だけです。
+Google Cloud の「対象」で「アプリを公開」を押すと、テストユーザー以外も登録できます。
