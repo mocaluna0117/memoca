@@ -100,26 +100,15 @@ https://<あなたのドメイン>/api/auth/callback/google
 
 ## 3. Vercel にデプロイする
 
+### 3-1. Convex の本番デプロイを作る
+
+先にバックエンドを用意します。これでプロジェクトに本番デプロイが作られます。
+
 ```bash
-npx vercel link          # プロジェクト名は memoca-app
-npx vercel git connect   # GitHub リポジトリと接続（main への push で自動デプロイ）
+npx convex deploy --yes
 ```
 
-Vercel のダッシュボードで **Integrations → Convex** を追加すると、
-本番用 Convex デプロイが作られ、`NEXT_PUBLIC_CONVEX_URL` と `CONVEX_DEPLOY_KEY` が自動で設定されます。
-
-続けて、残りの環境変数を設定します。
-
-### Vercel 側（Project Settings → Environment Variables）
-
-| 変数 | 値 |
-| --- | --- |
-| `NEXT_PUBLIC_CONVEX_SITE_URL` | `NEXT_PUBLIC_CONVEX_URL` の `.cloud` を `.site` に変えたもの |
-
-ビルドコマンドは `vercel.json` で `npx convex deploy --cmd 'pnpm build'` に設定済みです。
-これにより、アプリのビルド前に Convex の関数とスキーマが本番へデプロイされます。
-
-### Convex 側（`npx convex env set ... --prod`）
+続けて本番用の設定を入れます。末尾の `--prod` を忘れないでください。
 
 ```bash
 npx convex env set BETTER_AUTH_SECRET "$(openssl rand -base64 32)" --prod
@@ -129,8 +118,78 @@ npx convex env set GOOGLE_CLIENT_SECRET <シークレット> --prod
 npx convex env set ADMIN_EMAILS <あなたのメールアドレス> --prod
 ```
 
-`ALLOW_PASSWORD_AUTH` は **本番では設定しないでください**。
-これはローカルと自動テストがメールとパスワードでログインするためだけのものです。
+`ALLOW_PASSWORD_AUTH` と `MAX_USERS` は **本番には設定しません**。
+前者はメールとパスワードでのログインを開ける変数で、ローカルと自動テスト専用です。
+後者を省くと登録上限が既定の 50 人になり、無料枠を守れます。
+
+### 3-2. Vercel プロジェクトを作る
+
+```bash
+vercel link --yes --project <プロジェクト名>
+```
+
+GitHub リポジトリとの接続も同時に行われ、以降は `main` への push で自動デプロイされます。
+
+### 3-3. デプロイキーを発行する
+
+Vercel のビルドが Convex へ関数を反映するための鍵です。CLI では発行できないので、
+Convex ダッシュボードの **Settings → Deploy Keys → Create Deploy Key** で作ります。
+
+| 項目 | 値 |
+| --- | --- |
+| Name | `Vercel` |
+| Expiration | No expiration |
+| 権限 | **`deployment:deploy` だけ** |
+
+「Select all」は選ばないでください。この鍵は Vercel の環境変数に保存されるため、
+漏れたときの被害範囲が権限の広さそのものになります。`deployment:deploy` だけなら
+関数の差し替えに限られますが、`deployment:env:view` を足すと Google のシークレットや
+認証鍵まで読めてしまいます。
+
+有効期限を設けると、切れた日から何の前触れもなくデプロイが失敗します。
+
+### 3-4. Vercel の環境変数
+
+```bash
+printf '<デプロイキー>' | vercel env add CONVEX_DEPLOY_KEY production
+printf 'https://<Convex の .site ドメイン>' | vercel env add NEXT_PUBLIC_CONVEX_SITE_URL production
+```
+
+| 変数 | 置く場所 | 理由 |
+| --- | --- | --- |
+| `CONVEX_DEPLOY_KEY` | Vercel | ビルド時に Convex へ反映するため |
+| `NEXT_PUBLIC_CONVEX_SITE_URL` | Vercel | Convex は自動で入れてくれないため手で設定 |
+| `NEXT_PUBLIC_CONVEX_URL` | 設定不要 | ビルド時に `convex deploy` が注入する |
+| `SITE_URL` | **Convex のみ** | 読むのは `convex/auth.ts` だけ。Vercel 側に置いても効きません |
+
+`SITE_URL` を Vercel に置くと、設定できたように見えて OAuth のコールバックだけが
+静かに壊れます。置く場所を間違えやすい変数なので注意してください。
+
+### 3-5. デプロイ
+
+`main` に push すれば GitHub 連携でビルドが始まります。
+
+CLI から `vercel deploy --prod` も使えますが、ローカルのファイルをアップロードするため、
+`.next` などを `.vercelignore` で除外しておかないと数十 MB の転送になり失敗しやすくなります。
+このリポジトリには `.vercelignore` を用意済みです。
+
+### 3-6. Google にリダイレクト URI を追加
+
+公開 URL が決まったら、[クライアント](https://console.cloud.google.com/auth/clients) の
+承認済みリダイレクト URI に本番の 1 行を追加します。
+
+```
+https://<あなたのドメイン>/api/auth/callback/google
+```
+
+これを忘れると、ログイン時に `redirect_uri_mismatch` で止まります。
+
+### 3-7. 誰でも登録できるようにする
+
+最後に [対象](https://console.cloud.google.com/auth/audience) で **「アプリを公開」** を押します。
+
+押すまでは、テストユーザーに登録した人だけがログインできます。
+自分のアカウントで一通り動作を確かめてから公開するのが安全です。
 
 ## 4. 動作を確認する
 
