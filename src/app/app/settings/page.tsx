@@ -11,6 +11,7 @@ import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { PasskeyManager } from "@/components/vault/passkey-manager";
+import { YomiSetting } from "@/components/search/yomi-setting";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -150,6 +151,15 @@ export default function SettingsPage() {
               <SelectItem value="90">90 日</SelectItem>
             </SelectContent>
           </Select>
+        </Section>
+
+        <Separator />
+
+        <Section
+          title="読みで検索"
+          description="漢字のメモを、読み方（ひらがな・カタカナ）でも探せるようにします。「薬局」を「やっきょく」で見つけられます。"
+        >
+          <YomiSetting />
         </Section>
 
         <Separator />

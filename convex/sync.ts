@@ -8,7 +8,7 @@ import {
   PULL_BYTE_BUDGET,
   PULL_PAGE_LIMIT,
 } from "./lib/constants";
-import { type Stamp, isFromTheFuture, isNewer } from "./lib/hlc";
+import { ZERO_STAMP, type Stamp, isFromTheFuture, isNewer } from "./lib/hlc";
 import { type Op, type OpResult, opV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
 import { getUser, requireUser } from "./lib/user";
@@ -407,7 +407,9 @@ async function applyNoteOp(
   now: number,
   op: Extract<Op, { kind: "note" }>,
 ): Promise<OpResult> {
-  if (futureStamp(now, op.title?.ts, op.place?.ts, op.pin?.ts, op.trash?.ts)) {
+  if (
+    futureStamp(now, op.title?.ts, op.preview?.ts, op.place?.ts, op.pin?.ts, op.trash?.ts)
+  ) {
     return reject(op.opId, "clockSkew");
   }
   const existing = await getNote(ctx, session.user._id, op.noteId);
@@ -435,6 +437,7 @@ async function applyNoteOp(
       bodyBytes: 0,
       ts: {
         title: op.title?.ts ?? base,
+        preview: op.preview?.ts ?? base,
         place: op.place?.ts ?? base,
         pin: op.pin?.ts ?? base,
         trash: op.trash?.ts ?? base,
@@ -459,6 +462,13 @@ async function applyNoteOp(
     patch.titleSealed = op.title.sealed;
     patch.preview = op.title.preview;
     ts.title = op.title.ts;
+    ts.preview = op.title.ts;
+    changed = true;
+  }
+  if (op.preview && isNewer(op.preview.ts, ts.preview ?? ZERO_STAMP)) {
+    // Never touches the title: that is the whole point of the separate group.
+    patch.preview = existing.locked ? null : op.preview.value;
+    ts.preview = op.preview.ts;
     changed = true;
   }
   if (op.place && isNewer(op.place.ts, ts.place)) {

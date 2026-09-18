@@ -35,6 +35,7 @@ export function useSearch(query: string): { hits: SearchHit[]; total: number } {
       rows.folders.map((f) => [f.folderId, f.locked ? "" : (f.name ?? "")]),
     );
     const text = new Map(rows.bodies.map((b) => [b.noteId, b.text]));
+    const reading = new Map(rows.bodies.map((b) => [b.noteId, b.reading ?? null]));
 
     return buildIndex(
       rows.notes
@@ -52,6 +53,7 @@ export function useSearch(query: string): { hits: SearchHit[]; total: number } {
           folderName: note.folderId ? (folderName.get(note.folderId) ?? "") : "",
           locked: note.locked,
           updatedAt: note.updatedAt,
+          reading: note.locked && !unlocked ? null : (reading.get(note.noteId) ?? null),
         })),
     );
   }, [rows, unlocked]);

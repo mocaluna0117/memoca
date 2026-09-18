@@ -111,3 +111,56 @@ test.describe("folders", () => {
     });
   });
 });
+
+test.describe("reading search", () => {
+  test("a kanji note is found by typing its reading", async ({ page }) => {
+    // Turning this on downloads a 17 MB dictionary, so allow for that.
+    test.slow();
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "薬局のメモ", "金曜に歯医者へ行く");
+    await waitForSynced(page);
+
+    await page.goto("/app/search");
+    const field = page.getByLabel("検索");
+    await expect(field).toBeVisible();
+    await field.fill("やっきょく");
+
+    // Reading search is off by default, so the offer appears instead of a hit.
+    const enable = page.getByRole("button", { name: "有効にする" });
+    await expect(enable).toBeVisible();
+    await enable.click();
+    await expect(enable).toBeHidden({ timeout: 180_000 });
+
+    await field.fill("");
+    await field.fill("やっきょく");
+    await expect(
+      page.getByText("薬局のメモ").filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 30_000 });
+
+    // The body's reading is searchable too.
+    await field.fill("はいしゃ");
+    await expect(
+      page.getByText("薬局のメモ").filter({ visible: true }).first(),
+    ).toBeVisible();
+  });
+
+  test("renaming a note is not undone by editing its body", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    // Two notes in a row: creating the second while the first is open is what
+    // used to let a body edit resend, and blank, the title.
+    await createNote(page, "ひとつ目", "本文A");
+    await createNote(page, "ふたつ目", "本文B");
+    await waitForSynced(page);
+
+    await page.reload();
+    await showList(page);
+    await expect(
+      page.getByText("ひとつ目").filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 20_000 });
+    await expect(
+      page.getByText("ふたつ目").filter({ visible: true }).first(),
+    ).toBeVisible();
+  });
+});

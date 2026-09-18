@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { buildIndex, search } from "@/lib/search/engine";
 import { normalize, terms } from "@/lib/search/normalize";
+import { isKanaQuery } from "@/lib/search/yomi";
 
 const rows = [
   {
@@ -90,5 +91,96 @@ describe("search", () => {
   test("an empty query returns nothing rather than everything", () => {
     expect(search(index, "")).toEqual([]);
     expect(search(index, "   ")).toEqual([]);
+  });
+});
+
+describe("reading search", () => {
+  // What kuromoji returns for these strings, verified against the real
+  // tokenizer: 薬局 becomes ヤッキョク, not ヤクキョク, because the compound
+  // carries the sound change. That is the whole reason a per-character reading
+  // table is not enough.
+  const withReadings = buildIndex([
+    {
+      noteId: "n1",
+      folderId: null,
+      title: "薬局のメモ",
+      body: "金曜に歯医者へ行く",
+      folderName: "予定",
+      locked: false,
+      updatedAt: 2,
+      reading: "ヤッキョクノメモ\nキンヨウニハイシャヘイク",
+    },
+    {
+      noteId: "n2",
+      folderId: null,
+      title: "牛乳を買う",
+      body: "帰りに寄る",
+      folderName: "",
+      locked: false,
+      updatedAt: 1,
+      reading: "ギュウニュウヲカウ\nカエリニヨル",
+    },
+  ]);
+
+  test("a kanji word is found by typing its reading", () => {
+    expect(search(withReadings, "やっきょく").map((h) => h.noteId)).toEqual(["n1"]);
+    expect(search(withReadings, "ヤッキョク").map((h) => h.noteId)).toEqual(["n1"]);
+  });
+
+  test("the reading of body text is searchable too", () => {
+    expect(search(withReadings, "はいしゃ").map((h) => h.noteId)).toEqual(["n1"]);
+    expect(search(withReadings, "ぎゅうにゅう").map((h) => h.noteId)).toEqual(["n2"]);
+  });
+
+  test("terms may mix a literal word and a reading", () => {
+    // 薬局 matches the title literally, きんよう only via the reading.
+    expect(search(withReadings, "薬局 きんよう").map((h) => h.noteId)).toEqual(["n1"]);
+  });
+
+  test("a literal match outranks one found through a reading", () => {
+    const mixed = buildIndex([
+      {
+        noteId: "reading-only",
+        folderId: null,
+        title: "予定",
+        body: "",
+        folderName: "",
+        locked: false,
+        updatedAt: 9,
+        reading: "ヨテイ\nカイギ",
+      },
+      {
+        noteId: "literal",
+        folderId: null,
+        title: "かいぎ",
+        body: "",
+        folderName: "",
+        locked: false,
+        updatedAt: 1,
+        reading: "カイギ",
+      },
+    ]);
+    // Even though the reading-only note is newer, the literal title wins.
+    expect(search(mixed, "かいぎ")[0]!.noteId).toBe("literal");
+  });
+
+  test("notes without a computed reading are unaffected", () => {
+    // Before the dictionary is downloaded every reading is absent; ordinary
+    // search has to keep working exactly as before.
+    expect(search(index, "パンケーキ").map((h) => h.noteId)).toEqual(["n1"]);
+    expect(search(index, "ぱんけーき").map((h) => h.noteId)).toEqual(["n1"]);
+  });
+});
+
+describe("kana query detection", () => {
+  test("only a kana query is worth a reading lookup", () => {
+    expect(isKanaQuery("やっきょく")).toBe(true);
+    expect(isKanaQuery("ヤッキョク")).toBe(true);
+    expect(isKanaQuery("きんよう よてい")).toBe(true);
+    // A query that already contains kanji needs no reading.
+    expect(isKanaQuery("薬局")).toBe(false);
+    expect(isKanaQuery("abc")).toBe(false);
+    // Too short to be meaningful.
+    expect(isKanaQuery("あ")).toBe(false);
   });
 });

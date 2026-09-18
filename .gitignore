@@ -58,3 +58,5 @@ next-env.d.ts
 
 # local agent settings
 .claude/settings.local.json
+# kuromoji の辞書はビルド時に配置します（scripts/copy-kuromoji-dict.mjs）
+/public/kuromoji

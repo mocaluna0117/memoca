@@ -12,6 +12,8 @@ export type Indexed = {
   normalizedTitle: string;
   normalizedBody: string;
   normalizedFolder: string;
+  /** Reading of title and body; empty when the dictionary is not in use. */
+  normalizedReading: string;
 };
 
 export type SearchHit = {
@@ -21,7 +23,7 @@ export type SearchHit = {
   folderName: string;
   updatedAt: number;
   /** Where the match was found, best first. */
-  matchedIn: "title" | "body" | "folder";
+  matchedIn: "title" | "body" | "folder" | "reading";
   snippet: { text: string; highlights: [number, number][] };
 };
 
@@ -33,6 +35,8 @@ export type IndexInput = {
   folderName: string;
   locked: boolean;
   updatedAt: number;
+  /** Katakana reading of title and body, when one has been computed. */
+  reading?: string | null;
 };
 
 export function buildIndex(rows: IndexInput[]): Indexed[] {
@@ -41,6 +45,7 @@ export function buildIndex(rows: IndexInput[]): Indexed[] {
     normalizedTitle: normalize(row.title),
     normalizedBody: row.body === null ? "" : normalize(row.body),
     normalizedFolder: normalize(row.folderName),
+    normalizedReading: row.reading ? normalize(row.reading) : "",
   }));
 }
 
@@ -87,19 +92,46 @@ export function search(index: Indexed[], query: string, limit = 50): SearchHit[]
 
   const scored: { score: number; hit: SearchHit }[] = [];
   for (const row of index) {
-    const inTitle = needles.every((n) => row.normalizedTitle.includes(n));
-    const inBody = needles.every((n) => row.normalizedBody.includes(n));
-    const inFolder = needles.every((n) => row.normalizedFolder.includes(n));
-    if (!inTitle && !inBody && !inFolder) continue;
+    // Each term may land in any field, so "薬局 よてい" can match a kanji word
+    // literally and a second one by its reading.
+    const everyTerm = (pick: (row: Indexed) => string) =>
+      needles.every((needle) => pick(row).includes(needle));
 
-    const matchedIn = inTitle ? "title" : inBody ? "body" : "folder";
+    const inTitle = everyTerm((r) => r.normalizedTitle);
+    const inBody = everyTerm((r) => r.normalizedBody);
+    const inFolder = everyTerm((r) => r.normalizedFolder);
+    const inReading = everyTerm((r) => r.normalizedReading);
+    const anywhere = needles.every(
+      (needle) =>
+        row.normalizedTitle.includes(needle) ||
+        row.normalizedBody.includes(needle) ||
+        row.normalizedFolder.includes(needle) ||
+        row.normalizedReading.includes(needle),
+    );
+    if (!anywhere) continue;
+
+    // A literal match is a stronger signal than one found through a reading,
+    // which is why reading sits below body here.
+    const matchedIn = inTitle
+      ? "title"
+      : inBody
+        ? "body"
+        : inReading
+          ? "reading"
+          : inFolder
+            ? "folder"
+            : "body";
+    const score = inTitle ? 3 : inBody ? 2 : inReading ? 1 : 0;
+
     const snippet =
       matchedIn === "body"
         ? snippetFor(row.body ?? "", row.normalizedBody, needles)
-        : { text: row.title, highlights: [] as [number, number][] };
+        : matchedIn === "reading"
+          ? { text: (row.body ?? "").slice(0, SNIPPET_RADIUS * 2), highlights: [] }
+          : { text: row.title, highlights: [] as [number, number][] };
 
     scored.push({
-      score: matchedIn === "title" ? 2 : matchedIn === "body" ? 1 : 0,
+      score,
       hit: {
         noteId: row.noteId,
         title: row.title,

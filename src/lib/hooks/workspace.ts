@@ -1,7 +1,8 @@
 "use client";
 
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useMemo } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useCallback, useEffect, useMemo } from "react";
+import { useSelectionStore } from "@/lib/store/selection";
 
 export type Selection = {
   /** null = all notes, otherwise a folder id. */
@@ -9,34 +10,51 @@ export type Selection = {
   noteId: string | null;
 };
 
+function hrefFor(selection: Selection): string {
+  const search = new URLSearchParams();
+  if (selection.folderId) search.set("f", selection.folderId);
+  if (selection.noteId) search.set("n", selection.noteId);
+  const query = search.toString();
+  return query ? `/app?${query}` : "/app";
+}
+
 /**
- * Selection lives in the URL so every view is linkable and the browser's back
- * button does the obvious thing, on desktop and on a phone alike.
+ * What is currently selected, and how to change it.
+ *
+ * Selection lives in a store so a change takes effect in the same commit as
+ * the click, and the URL is updated alongside it so every view stays linkable
+ * and the back button still works.
  */
 export function useWorkspace() {
   const params = useSearchParams();
   const router = useRouter();
-  const pathname = usePathname();
+  const folderId = useSelectionStore((s) => s.folderId);
+  const noteId = useSelectionStore((s) => s.noteId);
+  const apply = useSelectionStore((s) => s.apply);
 
-  const selection = useMemo<Selection>(
-    () => ({ folderId: params.get("f"), noteId: params.get("n") }),
-    [params],
-  );
+  const urlFolder = params.get("f");
+  const urlNote = params.get("n");
+
+  // Follow the URL when it changes from outside this hook: a first load, the
+  // back button, or a link from another screen.
+  useEffect(() => {
+    apply({ folderId: urlFolder, noteId: urlNote });
+  }, [urlFolder, urlNote, apply]);
+
+  const selection = useMemo<Selection>(() => ({ folderId, noteId }), [folderId, noteId]);
 
   const navigate = useCallback(
     (next: Partial<Selection>, options: { replace?: boolean } = {}) => {
-      const merged = { ...selection, ...next };
-      const search = new URLSearchParams();
-      if (merged.folderId) search.set("f", merged.folderId);
-      if (merged.noteId) search.set("n", merged.noteId);
-      const query = search.toString();
-      const href = query ? `/app?${query}` : "/app";
+      const merged = { ...useSelectionStore.getState(), ...next };
+      const target = { folderId: merged.folderId, noteId: merged.noteId };
+      // State first, so the interface has already switched by the time the
+      // next keystroke arrives.
+      apply(target);
 
-      // The whole workspace is one route, so selecting a note is a URL change
-      // and nothing more. Going through the router would make Next fetch the
-      // route payload, which fails with no network and throws away the editor;
-      // the History API keeps the link shareable and the back button working
-      // while staying entirely offline-safe.
+      const href = hrefFor(target);
+      // The whole workspace is one route, so this is a URL change and nothing
+      // more. Going through the router would make Next fetch the route
+      // payload, which fails with no network and throws away the editor.
       if (typeof window !== "undefined" && window.location.pathname === "/app") {
         if (options.replace) window.history.replaceState(null, "", href);
         else window.history.pushState(null, "", href);
@@ -45,15 +63,15 @@ export function useWorkspace() {
       if (options.replace) router.replace(href);
       else router.push(href);
     },
-    [router, selection],
+    [apply, router],
   );
 
   const openFolder = useCallback(
-    (folderId: string | null) => navigate({ folderId, noteId: null }),
+    (folder: string | null) => navigate({ folderId: folder, noteId: null }),
     [navigate],
   );
-  const openNote = useCallback((noteId: string | null) => navigate({ noteId }), [navigate]);
+  const openNote = useCallback((note: string | null) => navigate({ noteId: note }), [navigate]);
   const closeNote = useCallback(() => navigate({ noteId: null }), [navigate]);
 
-  return { selection, navigate, openFolder, openNote, closeNote, pathname };
+  return { selection, navigate, openFolder, openNote, closeNote };
 }

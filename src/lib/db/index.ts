@@ -32,6 +32,12 @@ export type BodyState = {
   keyEpoch: number;
   /** Extracted plain text, used by search. Absent for locked notes. */
   text: string | null;
+  /**
+   * Katakana reading of the title and text, so a note written in kanji can be
+   * found by typing how it sounds. Undefined until the reading dictionary has
+   * been downloaded, and cleared whenever the source changes.
+   */
+  reading?: string | null;
   updatedAt: number;
 };
 

@@ -10,6 +10,8 @@ export const META = {
   lastHlc: "lastHlc",
   /** Last known account snapshot, so the app renders before Convex answers. */
   profile: "profile",
+  /** Whether the person has opted into reading search and its 17 MB dictionary. */
+  yomi: "yomiEnabled",
 } as const;
 
 /**

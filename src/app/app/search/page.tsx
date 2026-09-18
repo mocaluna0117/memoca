@@ -1,12 +1,15 @@
 "use client";
 
-import { Lock, Search as SearchIcon } from "lucide-react";
+import { Languages, Loader2, Lock, Search as SearchIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
 import { useSearch } from "@/lib/hooks/use-search";
+import { useYomi } from "@/lib/hooks/use-yomi";
+import { isKanaQuery } from "@/lib/search/yomi";
 import type { SearchHit } from "@/lib/search/engine";
 import { t } from "@/lib/i18n/ja";
 
@@ -33,6 +36,12 @@ export default function SearchPage() {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const { hits, total } = useSearch(query);
+  const yomi = useYomi();
+
+  // Offer reading search exactly where it would have helped: a kana-only query
+  // that found nothing, which is what typing a kanji word's reading looks like.
+  const suggestYomi =
+    yomi.enabled === false && hits.length === 0 && isKanaQuery(query);
 
   return (
     <div className="flex min-h-dvh flex-1 flex-col">
@@ -59,8 +68,31 @@ export default function SearchPage() {
             : `${hits.length} 件見つかりました`}
         </p>
 
+        {suggestYomi ? (
+          <div className="bg-card mt-3 flex items-start gap-3 rounded-lg border p-3">
+            <Languages className="text-muted-foreground mt-0.5 size-5 shrink-0" aria-hidden />
+            <div className="min-w-0 flex-1 space-y-2">
+              <p className="text-sm font-medium">読み方でも探せます</p>
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                有効にすると「やっきょく」で「薬局」のような漢字のメモが見つかります。
+                日本語の辞書 17MB を一度だけダウンロードします。
+              </p>
+              <Button size="sm" onClick={() => void yomi.enable()} disabled={yomi.busy}>
+                {yomi.busy ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : null}
+                {yomi.busy
+                  ? yomi.progress && yomi.progress.total > 0
+                    ? `読み込み中 ${yomi.progress.done} / ${yomi.progress.total}`
+                    : "ダウンロード中…"
+                  : "有効にする"}
+              </Button>
+            </div>
+          </div>
+        ) : null}
+
         <ScrollArea className="mt-3 min-h-0 flex-1">
-          {query.trim().length > 0 && hits.length === 0 ? (
+          {query.trim().length > 0 && hits.length === 0 && !suggestYomi ? (
             <p className="text-muted-foreground py-16 text-center text-sm">
               {t.empty.noResults}
             </p>

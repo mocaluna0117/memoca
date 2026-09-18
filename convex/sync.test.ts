@@ -15,6 +15,14 @@ const AUTH_B = "authuser_b";
 const DEVICE_1 = "device-1";
 const DEVICE_2 = "device-2";
 
+/** The issuer convex-test stamps on an identity when none is given. */
+const TEST_ISSUER = "https://convex.test";
+
+// getUser only accepts tokens minted by this deployment, identified by its own
+// site URL. Set once for the whole file rather than per test: vitest shares one
+// process across projects, so briefly unsetting it can be observed elsewhere.
+process.env.CONVEX_SITE_URL = TEST_ISSUER;
+
 function setup() {
   return convexTest(schema, modules);
 }
@@ -614,19 +622,11 @@ describe("admin access", () => {
 });
 
 describe("token issuer", () => {
-  /** What convex-test stamps on an identity when none is given. */
-  const TEST_ISSUER = "https://convex.test";
-
   test("a token from the expected issuer is accepted", async () => {
     const t = setup();
     await seedUser(t, AUTH_A);
-    process.env.CONVEX_SITE_URL = TEST_ISSUER;
-    try {
-      const as = t.withIdentity({ subject: AUTH_A, issuer: TEST_ISSUER });
-      expect(await pull(as, { since: 0 })).not.toBeNull();
-    } finally {
-      delete process.env.CONVEX_SITE_URL;
-    }
+    const as = t.withIdentity({ subject: AUTH_A, issuer: TEST_ISSUER });
+    expect(await pull(as, { since: 0 })).not.toBeNull();
   });
 
   test("a token from another issuer cannot claim the same subject", async () => {
@@ -635,18 +635,91 @@ describe("token issuer", () => {
     // `subject` is only unique within an issuer. A second provider whose
     // subjects are user-chosen would otherwise let anyone register this id and
     // read the victim's notes.
-    process.env.CONVEX_SITE_URL = "https://memoca.convex.site";
-    try {
-      const impostor = t.withIdentity({
-        subject: AUTH_A,
-        issuer: "https://attacker.example.com",
-      });
-      expect(await impostor.query(api.sync.pull, { since: 0 })).toBeNull();
-      await expect(
-        impostor.mutation(api.sync.push, { deviceId: DEVICE_1, ops: [] }),
-      ).rejects.toThrow();
-    } finally {
-      delete process.env.CONVEX_SITE_URL;
-    }
+    const impostor = t.withIdentity({
+      subject: AUTH_A,
+      issuer: "https://attacker.example.com",
+    });
+    expect(await impostor.query(api.sync.pull, { since: 0 })).toBeNull();
+    await expect(
+      impostor.mutation(api.sync.push, { deviceId: DEVICE_1, ops: [] }),
+    ).rejects.toThrow();
+  });
+});
+
+describe("preview and title are independent", () => {
+  test("a body edit cannot overwrite a rename it has not seen", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        noteOp("create", "note-1", {
+          title: { value: "", preview: null, ts: stamp(1000, DEVICE_1) },
+        }),
+      ],
+    });
+
+    // The rename lands first.
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        {
+          kind: "note",
+          opId: "rename",
+          noteId: "note-1",
+          title: { value: "会議の記録", preview: null, ts: stamp(2000, DEVICE_1) },
+        },
+      ],
+    });
+
+    // Then a body edit reports its preview with a newer stamp. It carries no
+    // title, so the rename survives; bundling the two is what used to blank it.
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        {
+          kind: "note",
+          opId: "preview",
+          noteId: "note-1",
+          preview: { value: "来週までに見積もりを出す", ts: stamp(3000, DEVICE_1) },
+        },
+      ],
+    });
+
+    const { notes } = await pull(as, { since: 0 });
+    const note = notes.find((n) => n.noteId === "note-1")!;
+    expect(note.title).toBe("会議の記録");
+    expect(note.preview).toBe("来週までに見積もりを出す");
+  });
+
+  test("a rename still replaces the preview it was sent with", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        noteOp("create", "note-1", {
+          title: { value: "旧題", preview: "古い抜粋", ts: stamp(1000, DEVICE_1) },
+        }),
+      ],
+    });
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        {
+          kind: "note",
+          opId: "rename",
+          noteId: "note-1",
+          title: { value: "新題", preview: "新しい抜粋", ts: stamp(2000, DEVICE_1) },
+        },
+      ],
+    });
+    const { notes } = await pull(as, { since: 0 });
+    const note = notes.find((n) => n.noteId === "note-1")!;
+    expect(note.title).toBe("新題");
+    expect(note.preview).toBe("新しい抜粋");
   });
 });

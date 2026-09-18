@@ -98,15 +98,16 @@ export function NotePane({
     return () => clearTimeout(handle);
   }, [draft, title, noteId]);
 
-  // A debounce that is still counting when the pane goes away would lose the
-  // edit. Anything pending is written on the way out.
+  // A debounce still counting when the pane leaves this note, or goes away
+  // entirely, would lose the edit. Keyed on the note so the cleanup runs at
+  // exactly those two moments and not on every keystroke.
   useEffect(
     () => () => {
       const pending = pendingTitle.current;
       pendingTitle.current = null;
       if (pending) void renameNote(pending.noteId, pending.value);
     },
-    [],
+    [noteId],
   );
 
   if (note === undefined) {

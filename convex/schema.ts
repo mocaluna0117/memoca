@@ -20,6 +20,14 @@ const folderStamps = v.object({
 
 const noteStamps = v.object({
   title: stamp,
+  /**
+   * The list preview is derived from the body, so it changes on every edit
+   * while the title changes only when someone renames the note. Sharing one
+   * stamp meant a body edit had to resend the title it had read moments
+   * earlier, and a rename landing in between was overwritten with the stale
+   * value. Optional because rows written before this existed have no stamp.
+   */
+  preview: v.optional(stamp),
   place: stamp,
   pin: stamp,
   trash: stamp,

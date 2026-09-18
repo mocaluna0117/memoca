@@ -213,6 +213,7 @@ export async function createNote(opts: {
     snapshotSeq: 0,
     ts: {
       title: ts,
+      preview: zero(device),
       place: ts,
       pin: zero(device),
       trash: zero(device),
@@ -279,6 +280,9 @@ export async function renameNote(noteId: string, title: string): Promise<void> {
   }
 
   await database.notes.update(noteId, { title, ts: { ...note.ts, title: ts } });
+  // The stored reading covers the title too, so it is now stale. Clearing it
+  // is enough: the background pass recomputes anything missing.
+  await database.bodies.update(noteId, { reading: undefined });
   await enqueue({
     kind: "note",
     entityId: noteId,

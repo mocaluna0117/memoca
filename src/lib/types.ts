@@ -10,6 +10,8 @@ export type FolderStamps = {
 
 export type NoteStamps = {
   title: Stamp;
+  /** Absent on rows written before the preview had its own stamp. */
+  preview?: Stamp;
   place: Stamp;
   pin: Stamp;
   trash: Stamp;

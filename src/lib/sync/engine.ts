@@ -50,6 +50,7 @@ export class SyncEngine {
   private releaseLock: (() => void) | null = null;
   private unwatch: (() => void) | null = null;
   private unwatchOutbox: (() => void) | null = null;
+  private lastReadingPass = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private interval = IDLE_INTERVAL_MS;
   private draining = false;
@@ -231,6 +232,7 @@ export class SyncEngine {
 
     await setMeta(META.lastSyncAt, Date.now());
     this.set({ state: "idle", lastSyncAt: Date.now(), catchingUp: !batch.complete });
+    void this.refreshReadings();
 
     if (!batch.complete) await this.resubscribe();
   }
@@ -552,6 +554,21 @@ export class SyncEngine {
       .equals(noteId)
       .filter((u) => u.seq !== null && u.seq <= note.lastUpdateSeq)
       .delete();
+  }
+
+  /**
+   * Fills in readings for notes whose text changed.
+   *
+   * Writing text deliberately leaves the reading field absent, which marks it
+   * stale; this pass is what makes it current again. It does nothing at all
+   * unless reading search has been turned on.
+   */
+  private async refreshReadings(): Promise<void> {
+    if (Date.now() - this.lastReadingPass < 4_000) return;
+    this.lastReadingPass = Date.now();
+    const { backfillReadings, isYomiEnabled } = await import("@/lib/search/yomi");
+    if (!(await isYomiEnabled())) return;
+    await backfillReadings().catch(() => {});
   }
 
   /** Warms the cache with the notes the person is most likely to open. */

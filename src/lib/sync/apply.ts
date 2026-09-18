@@ -4,7 +4,7 @@ import type { FunctionReturnType } from "convex/server";
 import type { api } from "@convex/_generated/api";
 import { db, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
-import { isNewer } from "@/lib/hlc";
+import { ZERO_STAMP, isNewer } from "@/lib/hlc";
 import type { Folder, Note } from "@/lib/types";
 
 /** `null` is the signed-out case, which never reaches {@link applyBatch}. */
@@ -67,8 +67,13 @@ function mergeNote(local: Note, remote: RemoteNote): Note {
   if (isNewer(remote.ts.title, local.ts.title)) {
     next.title = remote.title;
     next.titleSealed = remote.titleSealed;
-    next.preview = remote.preview;
     next.ts = { ...next.ts, title: remote.ts.title };
+  }
+  // The preview moves on its own stamp, so a body edit elsewhere updates the
+  // list row without dragging that device's older title along with it.
+  if (isNewer(remote.ts.preview ?? ZERO_STAMP, local.ts.preview ?? ZERO_STAMP)) {
+    next.preview = remote.preview;
+    next.ts = { ...next.ts, preview: remote.ts.preview };
   }
   if (isNewer(remote.ts.place, local.ts.place)) {
     next.folderId = remote.folderId;

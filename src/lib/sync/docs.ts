@@ -147,16 +147,16 @@ async function flush(handle: Handle): Promise<void> {
   if (!note.locked) {
     const preview = firstLine(text, 160);
     if (preview !== note.preview) {
-      // The preview travels with the title, so a device that has not downloaded
-      // this note's body yet can still show a meaningful list row. It only goes
-      // out when the first line actually changes, which is rare.
+      // Sent on its own, never bundled with the title: this runs on every
+      // meaningful body edit, and `note` was read before the flush, so
+      // resending a title from here would overwrite a rename made in between.
       const { stamp } = await import("./clock");
       const { deviceId } = await import("@/lib/db/meta");
       const ts = stamp(await deviceId());
       await database.notes.update(handle.noteId, {
         preview,
         updatedAt: Date.now(),
-        ts: { ...note.ts, title: ts },
+        ts: { ...note.ts, preview: ts },
       });
       await enqueue({
         kind: "note",
@@ -164,7 +164,7 @@ async function flush(handle: Handle): Promise<void> {
         payload: {
           kind: "note",
           noteId: handle.noteId,
-          title: { value: note.title, preview, ts },
+          preview: { value: preview, ts },
         },
       });
     } else {

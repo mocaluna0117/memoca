@@ -59,6 +59,13 @@ export const noteOpV = v.object({
       ts: stampV,
     }),
   ),
+  /**
+   * The preview on its own, sent when the body changes. Carrying no title
+   * means a body edit can never overwrite a rename it had not seen yet.
+   */
+  preview: v.optional(
+    v.object({ value: v.union(v.string(), v.null()), ts: stampV }),
+  ),
   place: v.optional(
     v.object({
       folderId: v.union(v.string(), v.null()),
