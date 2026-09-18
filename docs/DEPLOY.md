@@ -42,25 +42,60 @@ npx convex env set ADMIN_EMAILS <あなたのメールアドレス>
 
 [Google Cloud Console](https://console.cloud.google.com/) で作業します。すべて無料です。
 
-1. **プロジェクトを作成**（名前は何でも構いません）。
-2. **API とサービス → OAuth 同意画面**
-   - ユーザーの種類: 外部
-   - アプリ名: `Memoca`
-   - サポートメール: ご自身のアドレス
-   - 承認済みドメイン: `vercel.app`（独自ドメインを使う場合はそのドメイン）
-   - アプリのホームページ: `https://<あなたのドメイン>/`
-   - プライバシーポリシー: `https://<あなたのドメイン>/privacy`
-   - 利用規約: `https://<あなたのドメイン>/terms`
-   - スコープは既定のまま（email と profile のみ）
-3. **認証情報 → OAuth クライアント ID を作成**
-   - 種類: ウェブアプリケーション
-   - 承認済みのリダイレクト URI に次の 2 つを登録
-     - `http://localhost:3000/api/auth/callback/google`
-     - `https://<あなたのドメイン>/api/auth/callback/google`
-4. 発行された **クライアント ID** と **クライアントシークレット** を控えます。
+設定画面は「Google Auth Platform」という区画にまとまっています。
+メニューを探すより、下のリンクを直接開くのが速いです。
+
+### 2-1. プロジェクトを選ぶ
+
+新しい Google アカウントには「My First Project」が最初から用意されています。
+それを使っても構いませんが、後から見て分かりやすいので `Memoca` という名前で
+新しく作るのがおすすめです。画面上部のプロジェクト選択から作成できます。
+
+### 2-2. ブランディング
+
+[console.cloud.google.com/auth/branding](https://console.cloud.google.com/auth/branding)
+
+ログイン時にユーザーへ表示される情報です。
+
+| 項目 | 値 |
+| --- | --- |
+| アプリ名 | `Memoca` |
+| ユーザーサポートメール | ご自身のアドレス |
+| アプリのホームページ | `https://<あなたのドメイン>/` |
+| プライバシーポリシー | `https://<あなたのドメイン>/privacy` |
+| 利用規約 | `https://<あなたのドメイン>/terms` |
+| 承認済みドメイン | `vercel.app`（独自ドメインを使う場合はそのドメイン） |
+
+### 2-3. 対象ユーザー
+
+[console.cloud.google.com/auth/audience](https://console.cloud.google.com/auth/audience)
+
+ユーザーの種類は **外部** を選びます。
+
+**ここが重要です。** 初期状態は「テスト中」で、登録したテストユーザー（最大 100 人）
+しかログインできません。誰でも登録できるようにするには **「アプリを公開」** を押して
+本番モードに切り替えてください。
+
+Memoca が要求するのはメールアドレスと氏名だけで、これは機密スコープではないため、
+公開しても Google の審査待ちは発生せず、すぐに有効になります。
+
+### 2-4. クライアントを作成
+
+[console.cloud.google.com/auth/clients](https://console.cloud.google.com/auth/clients)
+
+「クライアントを作成」を押し、種類は **ウェブ アプリケーション** を選びます。
+承認済みのリダイレクト URI に次の 2 つを登録します。
+
+```
+http://localhost:3000/api/auth/callback/google
+https://<あなたのドメイン>/api/auth/callback/google
+```
+
+発行された **クライアント ID** と **クライアント シークレット** を控えます。
+シークレットはこの画面を離れると再表示できないので、その場で保存してください。
 
 > 承認済みドメインに `vercel.app` を登録できない場合は、独自ドメインが必要です。
-> その場合は Vercel でドメインを購入し（`memoca.dev` が 1 年 9.99 USD で空いています）、
+> Vercel でドメインを購入し（`memoca.dev` が 1 年 9.99 USD で空いています）、
 > そのドメインを上記すべてに設定してください。
 
 ## 3. Vercel にデプロイする
