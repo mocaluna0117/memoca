@@ -612,3 +612,41 @@ describe("admin access", () => {
     await expect(as.query(api.admin.overview, {})).rejects.toThrow();
   });
 });
+
+describe("token issuer", () => {
+  /** What convex-test stamps on an identity when none is given. */
+  const TEST_ISSUER = "https://convex.test";
+
+  test("a token from the expected issuer is accepted", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    process.env.CONVEX_SITE_URL = TEST_ISSUER;
+    try {
+      const as = t.withIdentity({ subject: AUTH_A, issuer: TEST_ISSUER });
+      expect(await pull(as, { since: 0 })).not.toBeNull();
+    } finally {
+      delete process.env.CONVEX_SITE_URL;
+    }
+  });
+
+  test("a token from another issuer cannot claim the same subject", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    // `subject` is only unique within an issuer. A second provider whose
+    // subjects are user-chosen would otherwise let anyone register this id and
+    // read the victim's notes.
+    process.env.CONVEX_SITE_URL = "https://memoca.convex.site";
+    try {
+      const impostor = t.withIdentity({
+        subject: AUTH_A,
+        issuer: "https://attacker.example.com",
+      });
+      expect(await impostor.query(api.sync.pull, { since: 0 })).toBeNull();
+      await expect(
+        impostor.mutation(api.sync.push, { deviceId: DEVICE_1, ops: [] }),
+      ).rejects.toThrow();
+    } finally {
+      delete process.env.CONVEX_SITE_URL;
+    }
+  });
+});

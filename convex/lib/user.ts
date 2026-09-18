@@ -8,14 +8,32 @@ export type AnyCtx = QueryCtx | MutationCtx;
 /**
  * The signed-in person's app row, or null when signed out or not provisioned.
  *
- * The identity subject is the Better Auth user id, and Convex has already
- * verified the JWT that carried it, so this can index straight into the app's
- * own table. Going through the auth component instead would add two component
- * queries to every single request for no extra safety.
+ * The row is found by the identity's `subject`, which is the Better Auth user
+ * id. Convex has already verified the JWT that carried it, so this can index
+ * straight into the app's own table; going through the auth component instead
+ * would add two component queries to every request for no extra safety.
+ *
+ * `subject` is only unique *within* an issuer, though, so the issuer is pinned
+ * to the one this deployment expects. Without that, adding a second sign-in
+ * provider later would silently make the lookup unsafe: a provider whose
+ * subject is user-chosen (a self-hosted server, or one mapping `sub` to a
+ * username) would let someone register the victim's id and land on their row,
+ * with full read and write access to their notes.
+ *
+ * Pinning fails safe. A token from an unexpected issuer is refused outright
+ * rather than matched against someone else, so adding a provider requires
+ * extending this check on purpose.
  */
 export async function getUser(ctx: AnyCtx): Promise<Doc<"users"> | null> {
   const identity = await ctx.auth.getUserIdentity();
   if (!identity) return null;
+
+  // Better Auth issues its tokens from this deployment's own site URL, which
+  // the platform always provides. It is absent only under convex-test, where
+  // there is no second provider to confuse this with.
+  const expectedIssuer = process.env.CONVEX_SITE_URL;
+  if (expectedIssuer && identity.issuer !== expectedIssuer) return null;
+
   return await ctx.db
     .query("users")
     .withIndex("by_authId", (q) => q.eq("authId", identity.subject))
