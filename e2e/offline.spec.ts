@@ -13,13 +13,25 @@ import {
  * These only mean anything against a real build: the service worker is what
  * lets a navigation or a reload succeed with no network, and `next dev` does
  * not ship one.
+ *
+ * Waits for what a reload with no network actually needs: an active worker
+ * with the /app shell in its cache. A fresh browser that opens /app straight
+ * after signing up can finish loading it before the worker has installed, and
+ * clients.claim() does not reliably take over a page that was still loading,
+ * so that page never becomes controlled and the shell is never cached. For a
+ * person the next load, such as the one after signing in, goes through the
+ * worker. One reload here does the same.
  */
-async function serviceWorkerReady(page: import("@playwright/test").Page) {
-  await page.waitForFunction(
-    () => navigator.serviceWorker.controller !== null,
-    undefined,
-    { timeout: 30_000 },
-  );
+async function offlineReady(page: import("@playwright/test").Page) {
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  const shellCached = () => page.evaluate(async () => Boolean(await caches.match("/app")));
+  if (!(await shellCached())) {
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "すべてのメモ" }).first(),
+    ).toBeVisible({ timeout: 20_000 });
+  }
+  await expect.poll(shellCached, { timeout: 30_000 }).toBe(true);
 }
 
 test.describe("offline", () => {
@@ -29,7 +41,7 @@ test.describe("offline", () => {
   }) => {
     const email = await signUp(page);
     await openApp(page);
-    await serviceWorkerReady(page);
+    await offlineReady(page);
     await createNote(page, "オンラインのメモ");
     await waitForSynced(page);
 
@@ -57,7 +69,7 @@ test.describe("offline", () => {
   test("an edit made offline survives a reload", async ({ page, context }) => {
     await signUp(page);
     await openApp(page);
-    await serviceWorkerReady(page);
+    await offlineReady(page);
     await createNote(page, "下書き");
     await waitForSynced(page);
 
