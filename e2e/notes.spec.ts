@@ -80,7 +80,7 @@ test.describe("folders", () => {
     // The panel stays put while folders are created, so one reference is
     // enough for the whole flow.
     const panel = await folderPanel(page);
-    await panel.getByRole("button", { name: "新しいフォルダ" }).click();
+    await panel.getByRole("button", { name: "フォルダを追加" }).click();
     await expect(panel.getByText("新しいフォルダ").first()).toBeVisible();
 
     await panel.getByRole("button", { name: "新しいフォルダ の操作" }).click();
@@ -98,7 +98,7 @@ test.describe("folders", () => {
     await signUp(page);
     await openApp(page);
     const panel = await folderPanel(page);
-    await panel.getByRole("button", { name: "新しいフォルダ" }).click();
+    await panel.getByRole("button", { name: "フォルダを追加" }).click();
     await hideFolders(page);
     await page.waitForTimeout(700);
     await createNote(page, "フォルダの中のメモ");

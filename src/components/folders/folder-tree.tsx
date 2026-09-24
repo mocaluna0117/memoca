@@ -13,7 +13,10 @@ import {
 
 import {
   ChevronRight,
+  Folder as FolderIcon,
   FolderInput,
+  FolderLock,
+  FolderOpen,
   FolderPlus,
   Inbox,
   Lock,
@@ -182,7 +185,13 @@ export function FolderTree({
               >
                 <button
                   type="button"
-                  aria-label={hasChildren ? "開閉" : undefined}
+                  aria-label={
+                    hasChildren
+                      ? `${label ?? "フォルダ"} を${expanded.has(node.folderId) ? "閉じる" : "開く"}`
+                      : undefined
+                  }
+                  aria-expanded={hasChildren ? expanded.has(node.folderId) : undefined}
+                  tabIndex={hasChildren ? undefined : -1}
                   onClick={() => hasChildren && toggle(node.folderId)}
                   className={cn(
                     "flex size-5 shrink-0 items-center justify-center rounded",
@@ -204,11 +213,13 @@ export function FolderTree({
                   onClick={() => onSelect(node.folderId)}
                   className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
                 >
-                  {isInbox ? (
-                    <Inbox className="size-4 shrink-0 opacity-70" aria-hidden />
-                  ) : node.locked ? (
-                    <Lock className="size-4 shrink-0 opacity-70" aria-hidden />
-                  ) : null}
+                  {/* Every row carries a folder glyph. Without one, plain folders
+                  were bare names and read no differently from notes. */}
+                  <FolderGlyph
+                    inbox={isInbox}
+                    locked={node.locked}
+                    open={hasChildren && expanded.has(node.folderId)}
+                  />
                   <span className="truncate">{label ?? "無題のフォルダ"}</span>
                 </FolderDragButton>
 
@@ -323,4 +334,18 @@ export function FolderTree({
       </div>
     </DndContext>
   );
+}
+
+/** The icon at the start of a folder row: Inbox, locked, open or closed. */
+function FolderGlyph({
+  inbox,
+  locked,
+  open,
+}: {
+  inbox: boolean;
+  locked: boolean;
+  open: boolean;
+}) {
+  const Icon = inbox ? Inbox : locked ? FolderLock : open ? FolderOpen : FolderIcon;
+  return <Icon className="size-4 shrink-0 opacity-70" aria-hidden />;
 }

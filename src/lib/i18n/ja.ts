@@ -18,10 +18,13 @@ export const ja = {
     inbox: "Inbox",
     admin: "管理",
     allNotes: "すべてのメモ",
+    folders: "フォルダ",
   },
   action: {
     newNote: "新しいメモ",
-    newFolder: "新しいフォルダ",
+    // Not "新しいフォルダ": that is also the name a fresh folder is given, so the
+    // button and the folder it creates read identically.
+    addFolder: "フォルダを追加",
     rename: "名前を変更",
     move: "移動",
     delete: "削除",

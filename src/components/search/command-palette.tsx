@@ -118,7 +118,7 @@ export function CommandPalette() {
                 }
               >
                 <FolderPlus className="size-4 opacity-70" aria-hidden />
-                {t.action.newFolder}
+                {t.action.addFolder}
               </CommandItem>
               <CommandItem value="search" onSelect={() => run(() => router.push("/app/search"))}>
                 <Search className="size-4 opacity-70" aria-hidden />

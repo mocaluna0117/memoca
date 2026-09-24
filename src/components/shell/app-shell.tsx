@@ -78,7 +78,7 @@ export function AppShell({
         </aside>
 
         <Sheet open={drawer} onOpenChange={setDrawer}>
-          <SheetContent side="left" className="w-72 p-0">
+          <SheetContent side="left" className="w-72 p-0" showCloseButton={false}>
             <SheetTitle className="sr-only">メニュー</SheetTitle>
             <div
               ref={setDrawerElement}
@@ -91,6 +91,7 @@ export function AppShell({
                 onCreatedFolder={selectWithoutClosing}
                 onRequestLock={onRequestFolderLock}
                 onNavigate={() => setDrawer(false)}
+                onClose={() => setDrawer(false)}
                 menuContainer={drawerElement}
               />
             </div>
