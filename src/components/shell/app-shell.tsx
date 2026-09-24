@@ -78,7 +78,19 @@ export function AppShell({
         </aside>
 
         <Sheet open={drawer} onOpenChange={setDrawer}>
-          <SheetContent side="left" className="w-72 p-0" showCloseButton={false}>
+          <SheetContent
+            side="left"
+            className="w-72 p-0"
+            showCloseButton={false}
+            onEscapeKeyDown={(event) => {
+              // Escape that cancels a rename, or an IME conversion, is not a
+              // request to close the whole drawer.
+              const target = event.target as HTMLElement | null;
+              if (event.isComposing || target?.closest("[data-inline-rename]")) {
+                event.preventDefault();
+              }
+            }}
+          >
             <SheetTitle className="sr-only">メニュー</SheetTitle>
             <div
               ref={setDrawerElement}

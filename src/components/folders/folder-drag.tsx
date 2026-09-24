@@ -1,7 +1,7 @@
 "use client";
 
 import { useDraggable, useDroppable } from "@dnd-kit/core";
-import type { ReactNode } from "react";
+import type { KeyboardEvent, ReactNode } from "react";
 import { cn } from "@/lib/utils";
 
 /**
@@ -53,29 +53,31 @@ export function FolderRowDropZones({
 }
 
 /**
- * The folder's own button, which is also what you drag.
+ * The folder's own button, which is also what you drag with a pointer.
  *
  * One element rather than a draggable wrapper around a button: wrapping gave
  * every folder two controls with the same name, so screen readers announced
- * each one twice and "which one do I press" had no good answer. Enter selects
- * the folder as a button should; Space picks it up, which is what the drag
- * instructions announce.
+ * each one twice and "which one do I press" had no good answer. The keys are
+ * the tree's to decide, so they arrive through `onKeyDown`.
  */
 export function FolderDragButton({
   folderId,
   disabled,
   onClick,
+  onKeyDown,
+  describedBy,
   className,
   children,
 }: {
   folderId: string;
   disabled: boolean;
   onClick: () => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  describedBy?: string;
   className?: string;
   children: ReactNode;
 }) {
   const {
-    attributes,
     listeners,
     setNodeRef: setDragRef,
     isDragging,
@@ -85,13 +87,23 @@ export function FolderDragButton({
     <button
       ref={setDragRef}
       type="button"
-      onClick={onClick}
-      // Only the pointer of the drag instructions: the native button already
-      // has the right role and focus behaviour, and dnd-kit's aria-pressed
-      // would announce an ordinary button as a toggle.
-      aria-describedby={disabled ? undefined : attributes["aria-describedby"]}
+      data-folder-row={folderId}
+      // None of dnd-kit's attributes: the native button already has the right
+      // role and focus behaviour, and its aria-pressed would announce an
+      // ordinary button as a toggle.
+      aria-describedby={describedBy}
       className={cn(className, isDragging && "opacity-40")}
       {...listeners}
+      onClick={(event) => {
+        // Safari does not focus a button it clicks, and the keys below act on
+        // the focused row, so a click has to put focus there itself.
+        event.currentTarget.focus();
+        onClick();
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (!event.defaultPrevented) listeners?.onKeyDown?.(event);
+      }}
     >
       {children}
     </button>

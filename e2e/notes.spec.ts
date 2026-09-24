@@ -24,6 +24,43 @@ test.describe("notes", () => {
     await expect(editor(page)).toContainText("牛乳とパンを買う");
   });
 
+  test("Enter on a focused note in the list renames it in place", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "旧タイトル", "本文はそのまま");
+    await waitForSynced(page);
+    await showList(page);
+
+    const row = page
+      .getByRole("button", { name: /^旧タイトル/ })
+      .filter({ visible: true })
+      .first();
+    await row.focus();
+    await page.keyboard.press("Enter");
+
+    const field = page.getByRole("textbox", { name: "メモ名" });
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("旧タイトル");
+    await page.keyboard.type("新タイトル");
+    await page.keyboard.press("Enter");
+
+    const renamed = page
+      .getByRole("button", { name: /^新タイトル/ })
+      .filter({ visible: true })
+      .first();
+    await expect(renamed).toBeVisible();
+    await expect(renamed).toBeFocused();
+
+    // The rename is a real one: it survives a reload and the body is intact.
+    await waitForSynced(page);
+    await page.reload();
+    await showList(page);
+    const reloaded = page.getByText("新タイトル").filter({ visible: true }).first();
+    await expect(reloaded).toBeVisible({ timeout: 20_000 });
+    await reloaded.click();
+    await expect(editor(page)).toContainText("本文はそのまま");
+  });
+
   test("the list row shows the first line of the body", async ({ page }) => {
     await signUp(page);
     await openApp(page);
@@ -112,6 +149,72 @@ test.describe("folders", () => {
 
     await expect(page.getByRole("heading", { name: "フォルダ名を変更" })).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "買い物 の操作" })).toBeVisible();
+  });
+
+  test("Enter on a focused folder renames it in place, as in VS Code", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+
+    const panel = await folderPanel(page);
+    await panel.getByRole("button", { name: "フォルダを追加" }).click();
+    const row = panel.getByRole("button", { name: "新しいフォルダ", exact: true });
+    await row.focus();
+    await page.keyboard.press("Enter");
+
+    // The name becomes a field, already selected, so typing replaces it.
+    const field = panel.getByRole("textbox", { name: "フォルダ名" });
+    await expect(field).toBeFocused();
+    await expect(field).toHaveValue("新しいフォルダ");
+    await page.keyboard.type("仕事");
+    await page.keyboard.press("Enter");
+
+    const renamed = panel.getByRole("button", { name: "仕事", exact: true });
+    await expect(renamed).toBeVisible();
+    // Focus comes back to the row, so the next key acts on it again.
+    await expect(renamed).toBeFocused();
+
+    // Escape leaves the name as it was.
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("やめる");
+    await page.keyboard.press("Escape");
+    await expect(renamed).toBeFocused();
+    await expect(panel.getByRole("button", { name: "やめる", exact: true })).toHaveCount(0);
+
+    // Space opens the folder, since Enter no longer does.
+    await page.keyboard.press("Space");
+    await hideFolders(page);
+    await expect(
+      page.getByRole("heading", { name: "仕事" }).filter({ visible: true }).first(),
+    ).toBeVisible();
+  });
+
+  test("Option with an arrow key moves a folder among its siblings", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+
+    const panel = await folderPanel(page);
+    for (const name of ["いち", "に"]) {
+      await panel.getByRole("button", { name: "フォルダを追加" }).click();
+      await panel.getByRole("button", { name: "新しいフォルダ", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await page.keyboard.type(name);
+      await page.keyboard.press("Enter");
+      await expect(panel.getByRole("button", { name, exact: true })).toBeVisible();
+    }
+
+    const order = () =>
+      panel
+        .locator("[data-folder-row]")
+        .evaluateAll((rows) => rows.map((row) => row.textContent?.trim()));
+    await expect.poll(order).toEqual(["Inbox", "いち", "に"]);
+
+    await panel.getByRole("button", { name: "いち", exact: true }).focus();
+    await page.keyboard.press("Alt+ArrowDown");
+    await expect.poll(order).toEqual(["Inbox", "に", "いち"]);
+    await expect(panel.getByRole("button", { name: "いち", exact: true })).toBeFocused();
+
+    await page.keyboard.press("Alt+ArrowUp");
+    await expect.poll(order).toEqual(["Inbox", "いち", "に"]);
   });
 
   test("a note created inside a folder stays there", async ({ page }) => {

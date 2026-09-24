@@ -4,7 +4,6 @@ import {
   DndContext,
   type DragEndEvent,
   DragOverlay,
-  KeyboardSensor,
   PointerSensor,
   pointerWithin,
   useSensor,
@@ -24,7 +23,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -49,6 +48,11 @@ import {
 } from "@/components/folders/folder-drag";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { RenameDialog } from "@/components/folders/rename-dialog";
+import { InlineRename } from "@/components/shell/inline-rename";
+
+/** Read out with each folder row, so the keys are discoverable. */
+const FOLDER_KEYS_HINT =
+  "Enter で名前を変更、スペースで開きます。Option（Alt）と上下の矢印キーで並べ替えます。";
 
 type Props = {
   selectedFolderId: string | null;
@@ -72,6 +76,24 @@ export function FolderTree({
   const [renaming, setRenaming] = useState<FolderNode | null>(null);
   const [moving, setMoving] = useState<FolderNode | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+  // The row being renamed in place, as a file explorer does on Enter.
+  const [editing, setEditing] = useState<string | null>(null);
+  const hintId = useId();
+
+  // A row to put focus back on once it is on screen again: after an in-place
+  // rename, and after a reorder, which re-sorts the rows and can drop focus.
+  // The tree only changes when the local database does, so waiting for it to
+  // change is waiting for the move to land.
+  const list = useRef<HTMLDivElement>(null);
+  const refocus = useRef<string | null>(null);
+  useEffect(() => {
+    const folderId = refocus.current;
+    if (!folderId || editing !== null) return;
+    const row = list.current?.querySelector<HTMLElement>(`[data-folder-row="${folderId}"]`);
+    if (!row) return;
+    refocus.current = null;
+    row.focus();
+  }, [tree, editing]);
 
   // A closing menu puts focus back on its trigger. When the chosen item opens
   // a dialog, that pulls focus out of the dialog's field, so typing goes
@@ -87,12 +109,10 @@ export function FolderTree({
   const canDrag = useMediaQuery("(pointer: fine)");
 
   const sensors = useSensors(
-    // A small threshold so a plain click still selects the folder.
+    // A small threshold so a plain click still selects the folder. There is no
+    // keyboard drag: Enter renames and Space opens, as in VS Code, reordering
+    // has its own keys, and moving into another folder has the move dialog.
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    // Space picks a folder up; Enter is left to the button, so it still opens.
-    useSensor(KeyboardSensor, {
-      keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] },
-    }),
   );
 
   // dnd-kit announces drag progress to screen readers in English by default.
@@ -148,6 +168,37 @@ export function FolderTree({
 
   const rows = flattenTree(tree, expanded);
 
+  /** Moves a folder one place up or down among its siblings. */
+  const nudge = async (node: FolderNode, direction: -1 | 1) => {
+    const siblings = siblingsOf(tree, node.folderId);
+    const index = siblings.findIndex((f) => f.folderId === node.folderId);
+    const neighbour = siblings[index + direction];
+    if (index < 0 || !neighbour) return;
+    const beyond = siblings[index + direction * 2];
+    const [before, after] =
+      direction < 0
+        ? [beyond?.sortKey ?? null, neighbour.sortKey]
+        : [neighbour.sortKey, beyond?.sortKey ?? null];
+    refocus.current = node.folderId;
+    await moveFolder(node.folderId, node.parentId, between(before, after));
+  };
+
+  const onRowKeyDown = (
+    event: KeyboardEvent<HTMLButtonElement>,
+    node: FolderNode,
+    renamable: boolean,
+  ) => {
+    if (event.nativeEvent.isComposing) return;
+    if (event.key === "Enter" && renamable) {
+      // Stops the button's own Enter, which would open the folder instead.
+      event.preventDefault();
+      setEditing(node.folderId);
+    } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
+      event.preventDefault();
+      if (node.system !== "inbox") void nudge(node, event.key === "ArrowUp" ? -1 : 1);
+    }
+  };
+
   const toggle = (folderId: string) => {
     setExpanded((current) => {
       const next = new Set(current);
@@ -163,16 +214,16 @@ export function FolderTree({
       collisionDetection={pointerWithin}
       accessibility={{
         announcements,
-        screenReaderInstructions: {
-          draggable:
-            "スペースキーでフォルダをつかみ、矢印キーで移動先を選び、もう一度スペースキーで移動します。Esc で取り消します。",
-        },
+        screenReaderInstructions: { draggable: FOLDER_KEYS_HINT },
       }}
       onDragStart={({ active }) => setDragging(String(active.id))}
       onDragCancel={() => setDragging(null)}
       onDragEnd={(event) => void onDragEnd(event)}
     >
-      <div className="flex flex-col gap-0.5">
+      <p id={hintId} className="sr-only">
+        {FOLDER_KEYS_HINT}
+      </p>
+      <div ref={list} className="flex flex-col gap-0.5">
         {rows.map((node) => {
           const selected = selectedFolderId === node.folderId;
           const hasChildren = node.children.length > 0;
@@ -216,21 +267,47 @@ export function FolderTree({
                   />
                 </button>
 
-                <FolderDragButton
-                  folderId={node.folderId}
-                  disabled={!canDrag || isInbox}
-                  onClick={() => onSelect(node.folderId)}
-                  className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
-                >
-                  {/* Every row carries a folder glyph. Without one, plain folders
-                  were bare names and read no differently from notes. */}
-                  <FolderGlyph
-                    inbox={isInbox}
-                    locked={node.locked}
-                    open={hasChildren && expanded.has(node.folderId)}
-                  />
-                  <span className="truncate">{label ?? "無題のフォルダ"}</span>
-                </FolderDragButton>
+                {editing === node.folderId ? (
+                  // Not inside the button: a field in a button would have its
+                  // Space and Enter taken by the button.
+                  <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
+                    <FolderGlyph
+                      inbox={isInbox}
+                      locked={node.locked}
+                      open={hasChildren && expanded.has(node.folderId)}
+                    />
+                    <InlineRename
+                      initialValue={node.name ?? ""}
+                      label="フォルダ名"
+                      className="h-6"
+                      onSubmit={(value) => renameFolder(node.folderId, value)}
+                      onDone={(byKeyboard) => {
+                        if (byKeyboard) refocus.current = node.folderId;
+                        setEditing(null);
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <FolderDragButton
+                    folderId={node.folderId}
+                    disabled={!canDrag || isInbox}
+                    onClick={() => onSelect(node.folderId)}
+                    // A locked folder's name is unreadable until the vault is
+                    // open, and there is nothing to edit in a placeholder.
+                    onKeyDown={(event) => onRowKeyDown(event, node, node.name !== null)}
+                    describedBy={hintId}
+                    className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
+                  >
+                    {/* Every row carries a folder glyph. Without one, plain folders
+                    were bare names and read no differently from notes. */}
+                    <FolderGlyph
+                      inbox={isInbox}
+                      locked={node.locked}
+                      open={hasChildren && expanded.has(node.folderId)}
+                    />
+                    <span className="truncate">{label ?? "無題のフォルダ"}</span>
+                  </FolderDragButton>
+                )}
 
                 {/* Not modal: on a phone this menu lives inside the folder
                 drawer, and two nested focus traps fight each other so the

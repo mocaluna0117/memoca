@@ -1,11 +1,13 @@
 "use client";
 
 import { FilePlus2, Lock, Pin } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { InlineRename } from "@/components/shell/inline-rename";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useFolder, useNotes } from "@/lib/hooks/data";
-import { useFolderName, useNoteTitle } from "@/lib/hooks/use-decrypted";
-import { createNote } from "@/lib/sync/mutations";
+import { useFolderName, useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
+import { createNote, renameNote } from "@/lib/sync/mutations";
 import type { Note } from "@/lib/types";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
@@ -23,39 +25,95 @@ function relativeDate(at: number): string {
   return date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
 }
 
+const ROW_CLASS = "flex w-full flex-col gap-0.5 border-b px-4 py-3 text-left last:border-b-0";
+
 function NoteRow({
   note,
   selected,
+  editing,
+  hintId,
   onSelect,
+  onStartRename,
+  onEndRename,
 }: {
   note: Note;
   selected: boolean;
+  editing: boolean;
+  hintId: string;
   onSelect: (noteId: string) => void;
+  onStartRename: (noteId: string) => void;
+  onEndRename: (noteId: string, byKeyboard: boolean) => void;
 }) {
   const title = useNoteTitle(note);
+  const unlocked = useVaultUnlocked();
+  // A locked note's title is unreadable until the vault is open, and there is
+  // nothing to edit in a placeholder.
+  const renamable = !note.locked || unlocked;
+
+  const icons = (
+    <>
+      {note.pinned ? <Pin className="size-3 shrink-0 opacity-60" aria-hidden /> : null}
+      {note.locked ? <Lock className="size-3 shrink-0 opacity-60" aria-hidden /> : null}
+    </>
+  );
+  const details = (
+    <span className="text-muted-foreground flex items-center gap-2 text-xs">
+      <span className="shrink-0">{relativeDate(note.updatedAt)}</span>
+      <span className="truncate">
+        {note.locked ? t.empty.lockedHint : (note.preview ?? "")}
+      </span>
+    </span>
+  );
+
+  if (editing) {
+    // Not inside the button: a field in a button would have its Space and
+    // Enter taken by the button.
+    return (
+      <div className={cn(ROW_CLASS, selected && "bg-accent")}>
+        <span className="flex items-center gap-1.5">
+          {icons}
+          <InlineRename
+            initialValue={title}
+            label="メモ名"
+            placeholder="無題のメモ"
+            className="-my-0.5 h-6 font-medium"
+            onSubmit={(value) => renameNote(note.noteId, value)}
+            onDone={(byKeyboard) => onEndRename(note.noteId, byKeyboard)}
+          />
+        </span>
+        {details}
+      </div>
+    );
+  }
+
   return (
     <button
       type="button"
-      onClick={() => onSelect(note.noteId)}
-      className={cn(
-        "flex w-full flex-col gap-0.5 border-b px-4 py-3 text-left last:border-b-0",
-        selected ? "bg-accent" : "hover:bg-accent/50",
-      )}
+      data-note-row={note.noteId}
+      aria-describedby={hintId}
+      onClick={(event) => {
+        // Safari does not focus a button it clicks, and Enter acts on the
+        // focused row, so a click has to put focus there itself.
+        event.currentTarget.focus();
+        onSelect(note.noteId);
+      }}
+      onKeyDown={(event) => {
+        if (event.key !== "Enter" || event.nativeEvent.isComposing || !renamable) return;
+        // Stops the button's own Enter, which would open the note instead.
+        event.preventDefault();
+        onStartRename(note.noteId);
+      }}
+      className={cn(ROW_CLASS, selected ? "bg-accent" : "hover:bg-accent/50")}
     >
       <span className="flex items-center gap-1.5">
-        {note.pinned ? <Pin className="size-3 shrink-0 opacity-60" aria-hidden /> : null}
-        {note.locked ? <Lock className="size-3 shrink-0 opacity-60" aria-hidden /> : null}
+        {icons}
         <span className="truncate text-sm font-medium">{title || "無題のメモ"}</span>
       </span>
-      <span className="text-muted-foreground flex items-center gap-2 text-xs">
-        <span className="shrink-0">{relativeDate(note.updatedAt)}</span>
-        <span className="truncate">
-          {note.locked ? t.empty.lockedHint : (note.preview ?? "")}
-        </span>
-      </span>
+      {details}
     </button>
   );
 }
+
 
 export function NoteList({
   folderId,
@@ -71,6 +129,19 @@ export function NoteList({
   const notes = useNotes(folderId ? { kind: "folder", folderId } : { kind: "all" });
 
   const heading = folderId ? folderName || "フォルダ" : t.nav.allNotes;
+
+  // The note being renamed in place, as a file explorer does on Enter.
+  const [editing, setEditing] = useState<string | null>(null);
+  const hintId = useId();
+  // Enter and Escape hand focus back to the row, once it is a button again.
+  const list = useRef<HTMLDivElement>(null);
+  const refocus = useRef<string | null>(null);
+  useEffect(() => {
+    const noteId = refocus.current;
+    if (!noteId || editing !== null) return;
+    refocus.current = null;
+    list.current?.querySelector<HTMLElement>(`[data-note-row="${noteId}"]`)?.focus();
+  }, [editing]);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -101,14 +172,26 @@ export function NoteList({
         </div>
       ) : (
         <ScrollArea className="min-h-0 flex-1">
-          {notes.map((note) => (
-            <NoteRow
-              key={note.noteId}
-              note={note}
-              selected={note.noteId === selectedNoteId}
-              onSelect={onSelectNote}
-            />
-          ))}
+          <p id={hintId} className="sr-only">
+            Enter でタイトルを変更、スペースで開きます。
+          </p>
+          <div ref={list}>
+            {notes.map((note) => (
+              <NoteRow
+                key={note.noteId}
+                note={note}
+                selected={note.noteId === selectedNoteId}
+                editing={note.noteId === editing}
+                hintId={hintId}
+                onSelect={onSelectNote}
+                onStartRename={setEditing}
+                onEndRename={(noteId, byKeyboard) => {
+                  if (byKeyboard) refocus.current = noteId;
+                  setEditing(null);
+                }}
+              />
+            ))}
+          </div>
         </ScrollArea>
       )}
     </div>
