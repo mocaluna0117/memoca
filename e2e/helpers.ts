@@ -142,9 +142,14 @@ export async function waitForSynced(page: Page): Promise<void> {
 
 export async function createNote(page: Page, title: string, body?: string): Promise<void> {
   await showList(page);
+  const openNote = () => new URL(page.url()).searchParams.get("n");
+  const previous = openNote();
   await page.getByRole("button", { name: "新しいメモ" }).first().click();
+  // The previous note stays open until the new one has been written locally,
+  // so its title field is already visible. Filling it then renamed that note.
+  await expect.poll(openNote).not.toBe(previous);
   const titleField = page.getByLabel("メモのタイトル");
-  await expect(titleField).toBeVisible();
+  await expect(titleField).toHaveValue("");
   await titleField.fill(title);
   if (body) {
     await editor(page).click();
