@@ -94,6 +94,26 @@ test.describe("folders", () => {
     await expect(panel.getByText("新しいフォルダ").first()).toBeVisible();
   });
 
+  test("a folder can be renamed by typing and pressing Enter", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+
+    const panel = await folderPanel(page);
+    await panel.getByRole("button", { name: "フォルダを追加" }).click();
+    await panel.getByRole("button", { name: "新しいフォルダ の操作" }).click();
+    await page.getByRole("menuitem", { name: "名前を変更" }).click();
+
+    // No click into the field and no select-all: the dialog has to start in
+    // the field with the old name selected, or the keystrokes go nowhere.
+    const field = page.getByRole("textbox");
+    await expect(field).toBeFocused();
+    await page.keyboard.type("買い物");
+    await page.keyboard.press("Enter");
+
+    await expect(page.getByRole("heading", { name: "フォルダ名を変更" })).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "買い物 の操作" })).toBeVisible();
+  });
+
   test("a note created inside a folder stays there", async ({ page }) => {
     await signUp(page);
     await openApp(page);

@@ -24,7 +24,7 @@ import {
   Pencil,
   Trash2,
 } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -72,6 +72,15 @@ export function FolderTree({
   const [renaming, setRenaming] = useState<FolderNode | null>(null);
   const [moving, setMoving] = useState<FolderNode | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
+
+  // A closing menu puts focus back on its trigger. When the chosen item opens
+  // a dialog, that pulls focus out of the dialog's field, so typing goes
+  // nowhere and Enter cannot save. Those items set this to skip the return.
+  const openingDialog = useRef(false);
+  const openDialog = (open: () => void) => {
+    openingDialog.current = true;
+    open();
+  };
 
   // Dragging a row inside a scrolling drawer fights the scroll on a phone, and
   // the move dialog covers the same need there, so this is a pointer feature.
@@ -239,7 +248,16 @@ export function FolderTree({
                       <MoreHorizontal className="size-3.5" aria-hidden />
                     </Button>
                   </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-44" portalContainer={menuContainer}>
+                  <DropdownMenuContent
+                    align="end"
+                    className="w-44"
+                    portalContainer={menuContainer}
+                    onCloseAutoFocus={(event) => {
+                      if (!openingDialog.current) return;
+                      openingDialog.current = false;
+                      event.preventDefault();
+                    }}
+                  >
                     <DropdownMenuItem
                       onSelect={async () => {
                         const id = await createFolder({
@@ -253,18 +271,18 @@ export function FolderTree({
                       <FolderPlus className="size-4" aria-hidden />
                       サブフォルダを追加
                     </DropdownMenuItem>
-                    <DropdownMenuItem onSelect={() => setRenaming(node)}>
+                    <DropdownMenuItem onSelect={() => openDialog(() => setRenaming(node))}>
                       <Pencil className="size-4" aria-hidden />
                       名前を変更
                     </DropdownMenuItem>
                     {!isInbox ? (
-                      <DropdownMenuItem onSelect={() => setMoving(node)}>
+                      <DropdownMenuItem onSelect={() => openDialog(() => setMoving(node))}>
                         <FolderInput className="size-4" aria-hidden />
                         別のフォルダへ移動
                       </DropdownMenuItem>
                     ) : null}
                     {onRequestLock ? (
-                      <DropdownMenuItem onSelect={() => onRequestLock(node)}>
+                      <DropdownMenuItem onSelect={() => openDialog(() => onRequestLock(node))}>
                         <Lock className="size-4" aria-hidden />
                         {node.locked ? "ロックを解除" : "ロックする"}
                       </DropdownMenuItem>

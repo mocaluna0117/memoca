@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -26,6 +26,7 @@ export function RenameDialog({
   onSubmit: (value: string) => Promise<void> | void;
 }) {
   const [value, setValue] = useState(initialValue);
+  const field = useRef<HTMLInputElement>(null);
   // Re-seed when the dialog opens. Adjusting state during render is the
   // documented way to derive from props without an extra render pass.
   const [wasOpen, setWasOpen] = useState(open);
@@ -36,7 +37,16 @@ export function RenameDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-sm">
+      <DialogContent
+        className="sm:max-w-sm"
+        // Start in the field with the old name selected, so typing replaces it
+        // and Enter saves without reaching for the mouse.
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          field.current?.focus();
+          field.current?.select();
+        }}
+      >
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
@@ -49,9 +59,10 @@ export function RenameDialog({
           className="space-y-4"
         >
           <Input
+            ref={field}
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            autoFocus
+            enterKeyHint="done"
             maxLength={120}
           />
           <DialogFooter>
