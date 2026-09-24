@@ -52,13 +52,26 @@ export function FolderRowDropZones({
   );
 }
 
-export function FolderDragHandle({
+/**
+ * The folder's own button, which is also what you drag.
+ *
+ * One element rather than a draggable wrapper around a button: wrapping gave
+ * every folder two controls with the same name, so screen readers announced
+ * each one twice and "which one do I press" had no good answer. Enter selects
+ * the folder as a button should; Space picks it up, which is what the drag
+ * instructions announce.
+ */
+export function FolderDragButton({
   folderId,
   disabled,
+  onClick,
+  className,
   children,
 }: {
   folderId: string;
   disabled: boolean;
+  onClick: () => void;
+  className?: string;
   children: ReactNode;
 }) {
   const {
@@ -69,14 +82,19 @@ export function FolderDragHandle({
   } = useDraggable({ id: folderId, disabled });
 
   return (
-    <div
+    <button
       ref={setDragRef}
-      className={cn("flex min-w-0 flex-1", isDragging && "opacity-40")}
+      type="button"
+      onClick={onClick}
+      // Only the pointer of the drag instructions: the native button already
+      // has the right role and focus behaviour, and dnd-kit's aria-pressed
+      // would announce an ordinary button as a toggle.
+      aria-describedby={disabled ? undefined : attributes["aria-describedby"]}
+      className={cn(className, isDragging && "opacity-40")}
       {...listeners}
-      {...attributes}
     >
       {children}
-    </div>
+    </button>
   );
 }
 

@@ -184,6 +184,37 @@ async function isAncestorTrashed(parentId: string | null): Promise<boolean> {
   return false;
 }
 
+/* ---------------------------------------------------------------- inbox */
+
+/**
+ * The Inbox's folder id, or null before it has reached this device.
+ *
+ * Inbox is the one place for notes that are not filed anywhere yet. A note is
+ * never left with no folder at all: that used to be a second, unnamed kind of
+ * "unfiled" that could only be seen under all notes.
+ */
+export async function inboxFolderId(): Promise<string | null> {
+  const inbox = await db().folders.where("system").equals("inbox").first();
+  return inbox && !inbox.purged ? inbox.folderId : null;
+}
+
+/**
+ * Files every note that has no folder into Inbox.
+ *
+ * Catches notes written before Inbox became the default, and any that arrive
+ * from a device still running an older version. Uses the ordinary move, so the
+ * change syncs like any other and two devices doing it at once simply agree.
+ */
+export async function adoptFolderlessNotes(): Promise<number> {
+  const inbox = await inboxFolderId();
+  if (!inbox) return 0;
+  const orphans = await db()
+    .notes.filter((note) => note.folderId === null && !note.purged)
+    .toArray();
+  for (const note of orphans) await moveNote(note.noteId, inbox);
+  return orphans.length;
+}
+
 /* ---------------------------------------------------------------- notes */
 
 export async function createNote(opts: {
@@ -193,13 +224,16 @@ export async function createNote(opts: {
 }): Promise<string> {
   const { ts, device } = await now();
   const noteId = uuidv7();
-  const sortKey = await siblingKeyAfterLast("notes", opts.folderId);
+  // No folder chosen means Inbox. Null survives only on a device that has not
+  // received its Inbox yet, and adoptFolderlessNotes files it once it has.
+  const folderId = opts.folderId ?? (await inboxFolderId());
+  const sortKey = await siblingKeyAfterLast("notes", folderId);
   const kind = opts.kind ?? "note";
   const title = opts.title ?? "";
 
   const note: Note = {
     noteId,
-    folderId: opts.folderId,
+    folderId,
     kind,
     title,
     preview: null,
@@ -236,9 +270,9 @@ export async function createNote(opts: {
     payload: {
       kind: "note",
       noteId,
-      create: { noteKind: kind, folderId: opts.folderId, sortKey },
+      create: { noteKind: kind, folderId, sortKey },
       title: { value: title, preview: null, ts },
-      place: { folderId: opts.folderId, sortKey, ts },
+      place: { folderId, sortKey, ts },
     },
   });
   return noteId;
@@ -302,18 +336,20 @@ export async function moveNote(
   const database = db();
   const note = await database.notes.get(noteId);
   if (!note) return;
+  const target = folderId ?? (await inboxFolderId());
+  if (note.folderId === target && sortKey === undefined) return;
   const { ts } = await now();
-  const key = sortKey ?? (await siblingKeyAfterLast("notes", folderId));
+  const key = sortKey ?? (await siblingKeyAfterLast("notes", target));
 
   await database.notes.update(noteId, {
-    folderId,
+    folderId: target,
     sortKey: key,
     ts: { ...note.ts, place: ts },
   });
   await enqueue({
     kind: "note",
     entityId: noteId,
-    payload: { kind: "note", noteId, place: { folderId, sortKey: key, ts } },
+    payload: { kind: "note", noteId, place: { folderId: target, sortKey: key, ts } },
   });
 }
 
@@ -344,8 +380,10 @@ export async function setNoteTrashed(noteId: string, trashed: boolean): Promise<
     payload: { kind: "note", noteId, trash: { deletedAt, ts } },
   });
 
+  // Restoring a note whose folder is still in the trash would leave it
+  // invisible, so it comes back to Inbox, the home for anything unfiled.
   if (!trashed && note.folderId && (await isAncestorTrashed(note.folderId))) {
-    await moveNote(noteId, null);
+    await moveNote(noteId, await inboxFolderId());
   }
 }
 

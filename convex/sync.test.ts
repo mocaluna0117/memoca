@@ -723,3 +723,70 @@ describe("preview and title are independent", () => {
     expect(note.preview).toBe("新しい抜粋");
   });
 });
+
+describe("last updated", () => {
+  async function updatedAtOf(as: Caller, noteId: string) {
+    const { notes } = await pull(as, { since: 0 });
+    return notes.find((n) => n.noteId === noteId)!.updatedAt;
+  }
+
+  test("filing a note away does not make it look freshly written", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [folderOp("f", "folder-1"), noteOp("n", "note-1")],
+    });
+    const before = await updatedAtOf(as, "note-1");
+
+    // Moving every unfiled note into Inbox would otherwise stamp them all
+    // "just now" and scramble the order of the notes list.
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        {
+          kind: "note",
+          opId: "move",
+          noteId: "note-1",
+          place: { folderId: "folder-1", sortKey: "m", ts: stamp(Date.now(), DEVICE_1) },
+        },
+        {
+          kind: "note",
+          opId: "pin",
+          noteId: "note-1",
+          pin: { pinned: true, ts: stamp(Date.now(), DEVICE_1) },
+        },
+      ],
+    });
+
+    const { notes } = await pull(as, { since: 0 });
+    const note = notes.find((n) => n.noteId === "note-1")!;
+    expect(note.folderId).toBe("folder-1");
+    expect(note.pinned).toBe(true);
+    expect(note.updatedAt).toBe(before);
+  });
+
+  test("renaming a note does count as an edit", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.sync.push, { deviceId: DEVICE_1, ops: [noteOp("n", "note-1")] });
+    const before = await updatedAtOf(as, "note-1");
+
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        {
+          kind: "note",
+          opId: "rename",
+          noteId: "note-1",
+          title: { value: "新しい題", preview: null, ts: stamp(Date.now(), DEVICE_1) },
+        },
+      ],
+    });
+    expect(await updatedAtOf(as, "note-1")).toBeGreaterThan(before);
+  });
+});

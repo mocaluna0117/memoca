@@ -40,7 +40,7 @@ import { createFolder, moveFolder, renameFolder, setFolderTrashed } from "@/lib/
 import type { FolderNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
-  FolderDragHandle,
+  FolderDragButton,
   FolderRowDropZones,
   RootDropZone,
 } from "@/components/folders/folder-drag";
@@ -77,7 +77,10 @@ export function FolderTree({
   const sensors = useSensors(
     // A small threshold so a plain click still selects the folder.
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor),
+    // Space picks a folder up; Enter is left to the button, so it still opens.
+    useSensor(KeyboardSensor, {
+      keyboardCodes: { start: ["Space"], cancel: ["Escape"], end: ["Space", "Enter"] },
+    }),
   );
 
   // dnd-kit announces drag progress to screen readers in English by default.
@@ -195,20 +198,19 @@ export function FolderTree({
                   />
                 </button>
 
-                <FolderDragHandle folderId={node.folderId} disabled={!canDrag || isInbox}>
-                  <button
-                    type="button"
-                    onClick={() => onSelect(node.folderId)}
-                    className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
-                  >
-                    {isInbox ? (
-                      <Inbox className="size-4 shrink-0 opacity-70" aria-hidden />
-                    ) : node.locked ? (
-                      <Lock className="size-4 shrink-0 opacity-70" aria-hidden />
-                    ) : null}
-                    <span className="truncate">{label ?? "無題のフォルダ"}</span>
-                  </button>
-                </FolderDragHandle>
+                <FolderDragButton
+                  folderId={node.folderId}
+                  disabled={!canDrag || isInbox}
+                  onClick={() => onSelect(node.folderId)}
+                  className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
+                >
+                  {isInbox ? (
+                    <Inbox className="size-4 shrink-0 opacity-70" aria-hidden />
+                  ) : node.locked ? (
+                    <Lock className="size-4 shrink-0 opacity-70" aria-hidden />
+                  ) : null}
+                  <span className="truncate">{label ?? "無題のフォルダ"}</span>
+                </FolderDragButton>
 
                 {/* Not modal: on a phone this menu lives inside the folder
                 drawer, and two nested focus traps fight each other so the
@@ -289,6 +291,7 @@ export function FolderTree({
         <FolderPicker
           open={moving !== null}
           title="フォルダを移動"
+          rootLabel="いちばん上の階層"
           // A folder cannot be dropped inside itself or its own children.
           excludeSubtreeOf={moving?.folderId}
           onOpenChange={(open) => !open && setMoving(null)}

@@ -35,12 +35,19 @@ export function FolderPicker({
   onPick,
   /** Hidden from the list, along with everything inside it. */
   excludeSubtreeOf,
+  /**
+   * Offers "no parent" as a destination, under this label. Right for moving a
+   * folder to the top level; left unset for notes, because a note with no
+   * folder belongs in Inbox, which is already in the list.
+   */
+  rootLabel,
   title = t.action.move,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onPick: (folderId: string | null) => void;
   excludeSubtreeOf?: string;
+  rootLabel?: string;
   title?: string;
 }) {
   const tree = useFolderTree();
@@ -84,16 +91,18 @@ export function FolderPicker({
           <CommandList className="max-h-72">
             <CommandEmpty>{t.empty.noResults}</CommandEmpty>
             <CommandGroup>
-              <CommandItem
-                value="__root__ すべてのメモ"
-                onSelect={() => {
-                  onPick(null);
-                  onOpenChange(false);
-                }}
-              >
-                <FolderIcon className="size-4 opacity-70" aria-hidden />
-                {t.nav.allNotes}（フォルダなし）
-              </CommandItem>
+              {rootLabel ? (
+                <CommandItem
+                  value={`__root__ ${rootLabel}`}
+                  onSelect={() => {
+                    onPick(null);
+                    onOpenChange(false);
+                  }}
+                >
+                  <FolderIcon className="size-4 opacity-70" aria-hidden />
+                  {rootLabel}
+                </CommandItem>
+              ) : null}
               {rows.map((node) => (
                 <CommandItem
                   key={node.folderId}

@@ -455,6 +455,10 @@ async function applyNoteOp(
   const ts = { ...existing.ts };
   const patch: Partial<Doc<"notes">> = {};
   let changed = false;
+  // Only a change to the note's words counts as an edit. Moving, pinning or
+  // trashing it leaves "last updated" alone, so filing a note away does not
+  // shoot it to the top of every list as if it had just been written.
+  let edited = false;
 
   if (op.title && isNewer(op.title.ts, ts.title)) {
     if (existing.locked && !op.title.sealed) return reject(op.opId, "plaintextIntoLockedNote");
@@ -464,12 +468,14 @@ async function applyNoteOp(
     ts.title = op.title.ts;
     ts.preview = op.title.ts;
     changed = true;
+    edited = true;
   }
   if (op.preview && isNewer(op.preview.ts, ts.preview ?? ZERO_STAMP)) {
     // Never touches the title: that is the whole point of the separate group.
     patch.preview = existing.locked ? null : op.preview.value;
     ts.preview = op.preview.ts;
     changed = true;
+    edited = true;
   }
   if (op.place && isNewer(op.place.ts, ts.place)) {
     patch.folderId = op.place.folderId;
@@ -495,7 +501,7 @@ async function applyNoteOp(
     ts,
     deviceId,
     seq: seq.next(),
-    updatedAt: now,
+    ...(edited ? { updatedAt: now } : {}),
   });
   return ok(op.opId);
 }

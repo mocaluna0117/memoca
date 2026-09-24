@@ -164,3 +164,33 @@ test.describe("reading search", () => {
     ).toBeVisible();
   });
 });
+
+test.describe("Inbox", () => {
+  test("a note created from all notes is filed in Inbox", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "どこにも入れていないメモ");
+    await waitForSynced(page);
+
+    const panel = await folderPanel(page);
+    await panel.getByRole("button", { name: "Inbox", exact: true }).click();
+    await showList(page);
+    await expect(
+      page.getByText("どこにも入れていないメモ").filter({ visible: true }).first(),
+    ).toBeVisible();
+  });
+
+  test("a note cannot be moved to no folder", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "移動の確認");
+    await page.getByRole("button", { name: "メモの操作" }).click();
+    await page.getByRole("menuitem", { name: "移動" }).click();
+
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Inbox")).toBeVisible();
+    // The unnamed "no folder" destination is gone; Inbox is where unfiled
+    // notes live now.
+    await expect(dialog.getByText("フォルダなし")).toHaveCount(0);
+  });
+});
