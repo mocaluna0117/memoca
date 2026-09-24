@@ -61,6 +61,40 @@ test.describe("notes", () => {
     await expect(editor(page)).toContainText("本文はそのまま");
   });
 
+  test("arrow keys move between notes in the list", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "ひとつ目");
+    await createNote(page, "ふたつ目");
+    await createNote(page, "みっつ目");
+    await showList(page);
+
+    const rows = page.locator("[data-note-row]").filter({ visible: true });
+    await expect(rows).toHaveCount(3);
+    await rows.nth(0).focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(rows.nth(1)).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(rows.nth(2)).toBeFocused();
+    // The last row stays put rather than wrapping around.
+    await page.keyboard.press("ArrowDown");
+    await expect(rows.nth(2)).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(rows.nth(1)).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(rows.nth(0)).toBeFocused();
+    await page.keyboard.press("End");
+    await expect(rows.nth(2)).toBeFocused();
+
+    // Newest first, so focus is on the oldest note now. Moving focus does not
+    // open anything; Space does.
+    await expect(rows.nth(2)).toContainText("ひとつ目");
+    const title = page.getByLabel("メモのタイトル");
+    if (await title.isVisible()) await expect(title).toHaveValue("みっつ目");
+    await page.keyboard.press("Space");
+    await expect(title).toHaveValue("ひとつ目");
+  });
+
   test("the list row shows the first line of the body", async ({ page }) => {
     await signUp(page);
     await openApp(page);
@@ -215,6 +249,57 @@ test.describe("folders", () => {
 
     await page.keyboard.press("Alt+ArrowUp");
     await expect.poll(order).toEqual(["Inbox", "いち", "に"]);
+  });
+
+  test("arrow keys walk the folder tree, as in VS Code", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+
+    const panel = await folderPanel(page);
+    const row = (name: string) => panel.getByRole("button", { name, exact: true });
+    const renameNew = async (name: string) => {
+      await row("新しいフォルダ").focus();
+      await page.keyboard.press("Enter");
+      await page.keyboard.type(name);
+      await page.keyboard.press("Enter");
+      await expect(row(name)).toBeVisible();
+    };
+
+    // Inbox, いち (with 子 inside), に.
+    for (const name of ["いち", "に"]) {
+      await panel.getByRole("button", { name: "フォルダを追加" }).click();
+      await renameNew(name);
+    }
+    await panel.getByRole("button", { name: "いち の操作" }).click();
+    await page.getByRole("menuitem", { name: "サブフォルダを追加" }).click();
+    await renameNew("子");
+
+    await row("Inbox").focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(row("いち")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(row("子")).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    await expect(row("に")).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(row("子")).toBeFocused();
+
+    // Left steps out to the parent, then closes it; right opens, then steps in.
+    await page.keyboard.press("ArrowLeft");
+    await expect(row("いち")).toBeFocused();
+    await page.keyboard.press("ArrowLeft");
+    await expect(row("子")).toHaveCount(0);
+    await expect(row("いち")).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(row("子")).toBeVisible();
+    await expect(row("いち")).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    await expect(row("子")).toBeFocused();
+
+    await page.keyboard.press("End");
+    await expect(row("に")).toBeFocused();
+    await page.keyboard.press("Home");
+    await expect(row("Inbox")).toBeFocused();
   });
 
   test("a note created inside a folder stays there", async ({ page }) => {

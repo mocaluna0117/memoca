@@ -35,6 +35,7 @@ function NoteRow({
   onSelect,
   onStartRename,
   onEndRename,
+  onArrow,
 }: {
   note: Note;
   selected: boolean;
@@ -43,6 +44,8 @@ function NoteRow({
   onSelect: (noteId: string) => void;
   onStartRename: (noteId: string) => void;
   onEndRename: (noteId: string, byKeyboard: boolean) => void;
+  /** Moves focus to another row; true when the key was one it handles. */
+  onArrow: (noteId: string, key: string) => boolean;
 }) {
   const title = useNoteTitle(note);
   const unlocked = useVaultUnlocked();
@@ -98,12 +101,22 @@ function NoteRow({
         onSelect(note.noteId);
       }}
       onKeyDown={(event) => {
-        if (event.key !== "Enter" || event.nativeEvent.isComposing || !renamable) return;
-        // Stops the button's own Enter, which would open the note instead.
-        event.preventDefault();
-        onStartRename(note.noteId);
+        if (event.nativeEvent.isComposing) return;
+        if (event.key === "Enter") {
+          if (!renamable) return;
+          // Stops the button's own Enter, which would open the note instead.
+          event.preventDefault();
+          onStartRename(note.noteId);
+        } else if (!event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+          if (onArrow(note.noteId, event.key)) event.preventDefault();
+        }
       }}
-      className={cn(ROW_CLASS, selected ? "bg-accent" : "hover:bg-accent/50")}
+      className={cn(
+        ROW_CLASS,
+        // Inset, so the scroll area's edge does not clip the ring.
+        "focus-visible:ring-ring outline-none focus-visible:ring-2 focus-visible:ring-inset",
+        selected ? "bg-accent" : "hover:bg-accent/50",
+      )}
     >
       <span className="flex items-center gap-1.5">
         {icons}
@@ -143,6 +156,26 @@ export function NoteList({
     list.current?.querySelector<HTMLElement>(`[data-note-row="${noteId}"]`)?.focus();
   }, [editing]);
 
+  // Up and down walk the list as they do in a file explorer. Focus only:
+  // Space is what opens a note.
+  const onArrow = (noteId: string, key: string): boolean => {
+    const index = notes.findIndex((note) => note.noteId === noteId);
+    const targets: Record<string, Note | undefined> = {
+      ArrowUp: notes[index - 1],
+      ArrowDown: notes[index + 1],
+      Home: notes[0],
+      End: notes.at(-1),
+    };
+    if (!(key in targets)) return false;
+    const target = targets[key];
+    if (target) {
+      list.current
+        ?.querySelector<HTMLElement>(`[data-note-row="${target.noteId}"]`)
+        ?.focus();
+    }
+    return true;
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
@@ -173,7 +206,7 @@ export function NoteList({
       ) : (
         <ScrollArea className="min-h-0 flex-1">
           <p id={hintId} className="sr-only">
-            Enter でタイトルを変更、スペースで開きます。
+            上下の矢印キーで移動、Enter でタイトルを変更、スペースで開きます。
           </p>
           <div ref={list}>
             {notes.map((note) => (
@@ -189,6 +222,7 @@ export function NoteList({
                   if (byKeyboard) refocus.current = noteId;
                   setEditing(null);
                 }}
+                onArrow={onArrow}
               />
             ))}
           </div>

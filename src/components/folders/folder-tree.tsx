@@ -52,7 +52,7 @@ import { InlineRename } from "@/components/shell/inline-rename";
 
 /** Read out with each folder row, so the keys are discoverable. */
 const FOLDER_KEYS_HINT =
-  "Enter で名前を変更、スペースで開きます。Option（Alt）と上下の矢印キーで並べ替えます。";
+  "上下の矢印キーで移動、右と左の矢印キーで開閉します。Enter で名前を変更、スペースで開きます。Option（Alt）と上下の矢印キーで並べ替えます。";
 
 type Props = {
   selectedFolderId: string | null;
@@ -196,7 +196,50 @@ export function FolderTree({
     } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
       if (node.system !== "inbox") void nudge(node, event.key === "ArrowUp" ? -1 : 1);
+    } else if (!event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
+      if (navigate(event.key, node)) event.preventDefault();
     }
+  };
+
+  /**
+   * Arrow keys walk the tree as VS Code's explorer does: up and down move
+   * between visible rows, right opens a folder and then steps into it, and
+   * left closes it and then steps out to its parent. They move focus only;
+   * Space is what shows a folder's notes.
+   */
+  const navigate = (key: string, node: FolderNode): boolean => {
+    const index = rows.findIndex((row) => row.folderId === node.folderId);
+    const hasChildren = node.children.length > 0;
+    const isOpen = expanded.has(node.folderId);
+    switch (key) {
+      case "ArrowUp":
+        focusRow(rows[index - 1]?.folderId);
+        return true;
+      case "ArrowDown":
+        focusRow(rows[index + 1]?.folderId);
+        return true;
+      case "Home":
+        focusRow(rows[0]?.folderId);
+        return true;
+      case "End":
+        focusRow(rows.at(-1)?.folderId);
+        return true;
+      case "ArrowRight":
+        if (hasChildren && !isOpen) toggle(node.folderId);
+        else if (hasChildren) focusRow(node.children[0]?.folderId);
+        return true;
+      case "ArrowLeft":
+        if (hasChildren && isOpen) toggle(node.folderId);
+        else focusRow(node.parentId ?? undefined);
+        return true;
+      default:
+        return false;
+    }
+  };
+
+  const focusRow = (folderId: string | undefined) => {
+    if (!folderId) return;
+    list.current?.querySelector<HTMLElement>(`[data-folder-row="${folderId}"]`)?.focus();
   };
 
   const toggle = (folderId: string) => {
@@ -239,6 +282,9 @@ export function FolderTree({
               <div
                 className={cn(
                   "group flex items-center gap-1 rounded-md pr-1 text-sm",
+                  // The keyboard focus is drawn round the whole row, where the
+                  // selection highlight is, rather than round the name alone.
+                  "has-[[data-folder-row]:focus-visible]:ring-ring has-[[data-folder-row]:focus-visible]:ring-2",
                   selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
                 )}
                 style={{ paddingLeft: `${node.depth * 12}px` }}
@@ -296,7 +342,7 @@ export function FolderTree({
                     // open, and there is nothing to edit in a placeholder.
                     onKeyDown={(event) => onRowKeyDown(event, node, node.name !== null)}
                     describedBy={hintId}
-                    className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left"
+                    className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left outline-none"
                   >
                     {/* Every row carries a folder glyph. Without one, plain folders
                     were bare names and read no differently from notes. */}
