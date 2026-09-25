@@ -25,8 +25,21 @@ export async function createVaultInSettings(page: Page): Promise<string> {
   const heading = page.getByRole("heading", { name: "リカバリーキーを保管してください" });
   await expect(heading).toBeVisible({ timeout: 30_000 });
   const key = await confirmRecoveryKey(page);
+  await skipPasskeyOffer(page);
   await expect(vaultPrompt(page)).toHaveCount(0);
   return key;
+}
+
+/**
+ * Where the device can use a passkey, creation ends by offering one. Tests
+ * that are not about that decline it.
+ */
+export async function skipPasskeyOffer(page: Page): Promise<void> {
+  const offer = vaultPrompt(page).getByRole("heading", { name: /でも開けるようにしますか？$/ });
+  await expect
+    .poll(async () => (await offer.isVisible()) || (await vaultPrompt(page).count()) === 0)
+    .toBe(true);
+  if (await offer.isVisible()) await vaultPrompt(page).getByRole("button", { name: "あとで" }).click();
 }
 
 /** Fills the creation form's two password fields. */

@@ -171,6 +171,31 @@ describe("vault", () => {
     vault.lock();
   });
 
+  test("the raw key is handed back only when asked for, and once", async () => {
+    const plain = await setUpVault("パスワード", async () => ({ status: "ok" }), FAST_ARGON);
+    expect(plain.status === "ok" && plain.raw).toBeNull();
+    vault.lock();
+
+    let stored: PreparedVault["record"] | null = null;
+    const kept = await setUpVault(
+      "パスワード",
+      async (record) => {
+        stored = record;
+        return { status: "ok" };
+      },
+      FAST_ARGON,
+      { keepRaw: true },
+    );
+    expect(kept.status).toBe("ok");
+    if (kept.status !== "ok" || !kept.raw || !stored) throw new Error("unreachable");
+    const viaPassword = await extractVaultRaw(
+      { ...(stored as PreparedVault["record"]), passkeys: [], version: 1 },
+      { password: "パスワード" },
+    );
+    expect(Array.from(kept.raw)).toEqual(Array.from(viaPassword));
+    vault.lock();
+  });
+
   test("an account that already has a vault keeps it: the new key is dropped", async () => {
     const result = await setUpVault(
       "パスワード",

@@ -116,6 +116,21 @@ export function purposeCopy(
   }
 }
 
+/**
+ * The first line of the creation screen when it opened on the way to
+ * something else, so creating a vault reads as a step, not a detour.
+ */
+export function creationLead(purpose: VaultPurpose): string | null {
+  switch (purpose.kind) {
+    case "lockNote":
+      return "メモをロックする前に、金庫を作成します。";
+    case "lockFolder":
+      return `フォルダ「${purpose.name}」をロックする前に、金庫を作成します。`;
+    default:
+      return null;
+  }
+}
+
 /** The passkey button: 「{m}で開く」 when opening, 「{m}で続ける」 otherwise. */
 export function passkeyAction(purpose: VaultPurpose, method: string): string {
   return withMethod(method, purpose.kind === "open" ? "で開く" : "で続ける");

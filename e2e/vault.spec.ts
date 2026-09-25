@@ -6,6 +6,7 @@ import {
   createVaultInSettings,
   enterVaultPassword,
   fillNewVaultPassword,
+  skipPasskeyOffer,
   vaultPrompt,
 } from "./vault-helpers";
 
@@ -117,8 +118,11 @@ test.describe("vault prompt", () => {
     await expect(page.getByText("一致しません。")).toBeVisible();
     await page.getByRole("button", { name: "キーをもう一度表示" }).click();
     await confirmRecoveryKey(page);
+    await skipPasskeyOffer(page);
     await expect(heading).toHaveCount(0);
     await expect(vaultPrompt(page)).toHaveCount(0);
+    // Created from Settings, nothing follows, so it says so itself.
+    await expect(page.getByText("金庫を作成しました")).toBeVisible();
   });
 
   test("closing the prompt in any way never offers to create a second vault", async ({
@@ -205,6 +209,29 @@ test.describe("vault prompt", () => {
     await expect(prompt.getByText("パスワードが違います。")).toBeVisible({ timeout: 30_000 });
     await enterVaultPassword(page, "開く", "another-vault-password");
     await expect(page.getByText("金庫：開いています")).toBeVisible({ timeout: 30_000 });
+  });
+
+  test("locking with no vault yet creates one, then carries on and locks", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await addFolder(page);
+
+    await askToLockFolder(page);
+    const dialog = vaultPrompt(page);
+    await expect(dialog.getByRole("heading", { name: CREATE })).toBeVisible();
+    await expect(dialog).toContainText("フォルダ「新しいフォルダ」をロックする前に、金庫を作成します。");
+    await fillNewVaultPassword(page);
+    await dialog.getByRole("button", { name: "作成する" }).click();
+    await expect(page.getByRole("heading", { name: "リカバリーキーを保管してください" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await confirmRecoveryKey(page);
+    await skipPasskeyOffer(page);
+    // The lock that was asked for goes ahead without asking again.
+    await expect(page.getByText("フォルダ「新しいフォルダ」をロックしました")).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText("金庫を作成しました")).toHaveCount(0);
   });
 
   test("with no vault yet, one cancel closes the creation prompt", async ({ page }) => {

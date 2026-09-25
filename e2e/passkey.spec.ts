@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { openApp, signUp } from "./helpers";
-import { createVaultInSettings, VAULT_PASSWORD, vaultPrompt } from "./vault-helpers";
+import {
+  VAULT_PASSWORD,
+  confirmRecoveryKey,
+  createVaultInSettings,
+  fillNewVaultPassword,
+  vaultPrompt,
+} from "./vault-helpers";
 import { addVirtualPasskey, countCredentialGets, setUserVerified } from "./webauthn";
 
 /** 「Windows Hello で開く」, 「指紋・顔認証で開く」 and so on, by device. */
@@ -77,5 +83,33 @@ test.describe("passkey unlock", () => {
     await vaultPrompt(page).getByRole("button", { name: "削除する" }).click();
     await expect(page.getByText("パスキーを削除しました")).toBeVisible();
     await expect(rows).toHaveCount(0);
+  });
+
+  test("right after the vault is made, Face ID / Touch ID can be set up in the same flow", async ({
+    page,
+    context,
+  }) => {
+    await signUp(page);
+    await addVirtualPasskey(context, page);
+    await openApp(page);
+    await page.goto("/app/settings");
+    await page.getByRole("button", { name: "金庫を作成" }).click();
+    await fillNewVaultPassword(page);
+    await vaultPrompt(page).getByRole("button", { name: "作成する" }).click();
+    await expect(page.getByRole("heading", { name: "リカバリーキーを保管してください" })).toBeVisible({
+      timeout: 30_000,
+    });
+    await confirmRecoveryKey(page);
+
+    const dialog = vaultPrompt(page);
+    await expect(dialog.getByRole("heading", { name: /でも開けるようにしますか？$/ })).toBeVisible();
+    await dialog.getByRole("button", { name: /を使う$/ }).click();
+    // No second password: the key from creation is still at hand.
+    await expect(dialog.getByLabel("金庫のパスワード")).toHaveCount(0);
+    await dialog.getByRole("button", { name: "登録を始める" }).click();
+    await expect(page.getByText(/を使えるようにしました$/)).toBeVisible({ timeout: 30_000 });
+    await expect(dialog).toHaveCount(0);
+    await expect(page.getByRole("button", { name: /のパスキーを削除$/ })).toHaveCount(1);
+    await expect(page.getByText("この端末", { exact: true })).toBeVisible();
   });
 });

@@ -265,6 +265,12 @@ export type PreparedVault = {
   adopt(): void;
   /** Throws the key away, for when the server already holds a vault. */
   discard(): void;
+  /**
+   * A copy of the raw key, when asked for with `keepRaw`, for registering a
+   * passkey straight after creation without asking for the password again.
+   * Once only; the caller wipes it.
+   */
+  takeRaw(): Uint8Array | null;
 };
 
 /**
@@ -282,6 +288,7 @@ export type PreparedVault = {
 export async function prepareVault(
   password: string,
   params: ArgonParams = DEFAULT_ARGON,
+  opts: { keepRaw?: boolean } = {},
 ): Promise<PreparedVault> {
   const vaultRaw = randomBytes(KEY_BYTES);
 
@@ -297,6 +304,7 @@ export async function prepareVault(
   await proveRecoveryKey(recoveryKey, recSalt, recWrap, vaultRaw);
 
   let key: CryptoKey | null = await importAesKey(vaultRaw);
+  let rawCopy: Uint8Array | null = opts.keepRaw ? vaultRaw.slice() : null;
   wipe(vaultRaw);
 
   return {
@@ -319,6 +327,13 @@ export async function prepareVault(
     discard() {
       key = null;
       recoveryKey.fill(0);
+      if (rawCopy) wipe(rawCopy);
+      rawCopy = null;
+    },
+    takeRaw() {
+      const taken = rawCopy;
+      rawCopy = null;
+      return taken;
     },
   };
 }
@@ -361,10 +376,12 @@ export async function setUpVault(
   password: string,
   store: (record: PreparedVault["record"]) => Promise<{ status: "ok" | "already" }>,
   params: ArgonParams = DEFAULT_ARGON,
+  opts: { keepRaw?: boolean } = {},
 ): Promise<
-  { status: "ok"; recoveryKey: Uint8Array; recWrapIv: ArrayBuffer } | { status: "already" }
+  | { status: "ok"; recoveryKey: Uint8Array; recWrapIv: ArrayBuffer; raw: Uint8Array | null }
+  | { status: "already" }
 > {
-  const prepared = await prepareVault(password, params);
+  const prepared = await prepareVault(password, params, opts);
   let result: { status: "ok" | "already" };
   try {
     result = await store(prepared.record);
@@ -381,6 +398,7 @@ export async function setUpVault(
     status: "ok",
     recoveryKey: prepared.recoveryKey,
     recWrapIv: prepared.record.recWrap.iv,
+    raw: prepared.takeRaw(),
   };
 }
 

@@ -6,6 +6,7 @@ import { Fingerprint, KeyRound, Loader2 } from "lucide-react";
 import { useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@convex/_generated/api";
+import { PasskeyEnrollSteps } from "@/components/vault/passkey-enroll";
 import { PasswordInput } from "@/components/vault/password-input";
 import { RecoveryKeyView, recordKeptKey } from "@/components/vault/recovery-key-view";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,7 @@ import {
   startPasskey,
 } from "@/lib/crypto/passkey";
 import { unlockMethodName, withMethod } from "@/lib/crypto/platform";
-import { wipe } from "@/lib/crypto/primitives";
+import { DEFAULT_ARGON, wipe } from "@/lib/crypto/primitives";
 import {
   RECOVERY_FORMAT,
   RECOVERY_KEY_LENGTH,
@@ -66,6 +67,7 @@ import {
 } from "@/lib/vault/local-passkeys";
 import {
   type VaultPurpose,
+  creationLead,
   needsServer,
   passkeyAction,
   purposeCopy,
@@ -160,6 +162,11 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
   // The recovery key that opened the vault, kept only while the offer to set a
   // new password is on screen.
   const recoveredKey = useRef<Uint8Array | null>(null);
+  // The new vault's key, kept from creation until the offer to use Face ID /
+  // Touch ID is answered, so that offer does not ask for the password again.
+  const [createdRaw, setCreatedRaw] = useState<Uint8Array | null>(null);
+  const createdRawRef = useRef<Uint8Array | null>(null);
+  const [enrolling, setEnrolling] = useState(false);
   const content = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -183,6 +190,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     () => () => {
       abort.current?.abort();
       if (recoveredKey.current) wipe(recoveredKey.current);
+      if (createdRawRef.current) wipe(createdRawRef.current);
     },
     [],
   );
@@ -201,6 +209,16 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
   const keyboard = useKeyboardInset();
 
   const ok = () => finish({ ok: true });
+
+  /** The vault exists and is open: carry on with whatever asked for it. */
+  const finishCreation = () => {
+    if (createdRawRef.current) wipe(createdRawRef.current);
+    createdRawRef.current = null;
+    setCreatedRaw(null);
+    // Only when nothing follows; otherwise the next thing says it is done.
+    if (purpose.kind === "setup") toast.success("金庫を作成しました");
+    ok();
+  };
   const cancel = () => {
     abort.current?.abort();
     finish(dismissResult(view) === "ok" ? { ok: true } : { ok: false, reason: "cancelled" });
@@ -358,8 +376,12 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     dispatch({ type: "setupStarted" });
     void work(async () => {
       try {
-        const result = await setUpVault(password, (prepared) =>
-          setup({ ...prepared, recoveryFormat: RECOVERY_FORMAT }),
+        const result = await setUpVault(
+          password,
+          (prepared) => setup({ ...prepared, recoveryFormat: RECOVERY_FORMAT }),
+          DEFAULT_ARGON,
+          // Kept only if Face ID / Touch ID can be offered right after.
+          { keepRaw: platform },
         );
         if (result.status !== "ok") {
           // A vault already exists, made on another device or a moment ago in
@@ -371,6 +393,8 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         }
         setFreshKey({ key: formatRecoveryKey(result.recoveryKey), iv: result.recWrapIv });
         wipe(result.recoveryKey);
+        createdRawRef.current = result.raw;
+        setCreatedRaw(result.raw);
         dispatch({ type: "setupSucceeded" });
       } catch {
         setError("金庫を作成できませんでした。インターネット接続を確認して、もう一度お試しください。");
@@ -415,10 +439,47 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                   "ほかの端末でリカバリーキーが作り直されました。このキーは使えません。設定で作り直してください。",
                 );
               }
-              dispatch({ type: "keyConfirmed", passkeyOffer: false });
-              ok();
+              const offer = platform && online && createdRawRef.current !== null;
+              dispatch({ type: "keyConfirmed", passkeyOffer: offer });
+              if (!offer) finishCreation();
             }}
           />
+        ) : view === "createPasskey" && record && createdRaw ? (
+          enrolling ? (
+            <PasskeyEnrollSteps
+              record={record}
+              raw={createdRaw}
+              cancelLabel="あとで"
+              onCancel={finishCreation}
+              onDone={(result) => {
+                toast.success(
+                  result === "added"
+                    ? withMethod(`この端末で ${method}`, "を使えるようにしました")
+                    : "この端末のパスキーを使えるようにしました",
+                );
+                finishCreation();
+              }}
+            />
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>{withMethod(method, "でも開けるようにしますか？")}</DialogTitle>
+                <DialogDescription>
+                  {withMethod(`次からはパスワードを入力せずに、${method}`, "だけで金庫を開けます。")}
+                  この端末にパスキーが保存されます。
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button variant="ghost" onClick={finishCreation}>
+                  あとで
+                </Button>
+                <Button onClick={() => setEnrolling(true)} className="gap-2" data-autofocus>
+                  <Fingerprint className="size-4" aria-hidden />
+                  {withMethod(method, "を使う")}
+                </Button>
+              </DialogFooter>
+            </>
+          )
         ) : view === "offline" ? (
           <>
             <DialogHeader>
@@ -529,7 +590,10 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
               submitCreate();
             }}
           >
-            <Header title="金庫を作成" body={purposeCopy({ kind: "setup" }).body} />
+            <Header
+              title="金庫を作成"
+              body={`${creationLead(purpose) ?? ""}${purposeCopy({ kind: "setup" }).body}`}
+            />
             <div className="space-y-3">
               <Field id="vault-password" label="金庫のパスワード">
                 <PasswordInput
@@ -539,8 +603,12 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                   enterKeyHint="next"
                   onChange={(event) => setPassword(event.target.value)}
                   aria-invalid={error ? true : undefined}
+                  aria-describedby="vault-password-hint"
                   data-autofocus
                 />
+                <p id="vault-password-hint" className="text-muted-foreground text-xs">
+                  8 文字以上。Memoca へのログインとは別の、金庫専用のパスワードです。
+                </p>
               </Field>
               <Field id="vault-confirm" label="確認のためもう一度入力">
                 <PasswordInput
@@ -552,6 +620,9 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                   aria-invalid={error ? true : undefined}
                 />
               </Field>
+              <p className="text-muted-foreground text-xs">
+                このパスワードを忘れても、次に表示するリカバリーキーがあれば開けます。両方なくすと、誰にも開けません。
+              </p>
               <ErrorLine error={error} />
               {!online ? <OfflineNote text="金庫の作成にはインターネット接続が必要です。" /> : null}
             </div>
