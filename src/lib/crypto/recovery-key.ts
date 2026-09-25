@@ -47,13 +47,7 @@ export type ParsedRecoveryKey =
  * read as those letters, since base32 has no 0, 1 or 8.
  */
 export function parseRecoveryKey(input: string): ParsedRecoveryKey {
-  const clean = input
-    .normalize("NFKC")
-    .toUpperCase()
-    .replace(/0/g, "O")
-    .replace(/1/g, "I")
-    .replace(/8/g, "B")
-    .replace(/[^A-Z2-7]/g, "");
+  const clean = normalize(input);
   if (clean.length === LEGACY_DISPLAY_LENGTH) {
     return { ok: false, reason: "legacy", length: clean.length };
   }
@@ -67,12 +61,27 @@ export function parseRecoveryKey(input: string): ParsedRecoveryKey {
   return { ok: true, key };
 }
 
+/** The last four key characters, as a person would read them back. */
+export function recoveryKeyTail(input: string): string {
+  return normalize(input).slice(-4);
+}
+
 /** How many key characters the input holds, for a live "n / 52" count. */
 export function recoveryKeyCharacters(input: string): number {
   return input
     .normalize("NFKC")
     .toUpperCase()
     .replace(/[^A-Z0-9]/g, "").length;
+}
+
+function normalize(input: string): string {
+  return input
+    .normalize("NFKC")
+    .toUpperCase()
+    .replace(/0/g, "O")
+    .replace(/1/g, "I")
+    .replace(/8/g, "B")
+    .replace(/[^A-Z2-7]/g, "");
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {

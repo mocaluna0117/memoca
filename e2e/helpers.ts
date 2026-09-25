@@ -80,7 +80,8 @@ export async function folderPanel(page: Page): Promise<Locator> {
 }
 
 /** Waits for every running animation inside an element to finish. */
-async function settle(locator: Locator): Promise<void> {
+/** Waits for every animation inside an element, such as a dialog opening. */
+export async function settle(locator: Locator): Promise<void> {
   await locator.evaluate(async (element) => {
     await Promise.all(
       element

@@ -1,10 +1,11 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { Fingerprint, KeyRound, Loader2, ShieldCheck } from "lucide-react";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fingerprint, KeyRound, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { api } from "@convex/_generated/api";
+import { RecoveryKeyView, recordKeptKey } from "@/components/vault/recovery-key-view";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -53,6 +54,7 @@ export function VaultDialog() {
   const status = useVaultRecord((s) => s.record);
   const online = useOnline();
   const setup = useMutation(api.vault.setup);
+  const markChecked = useMutation(api.vault.markRecoveryChecked);
 
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -61,6 +63,7 @@ export function VaultDialog() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [freshKey, setFreshKey] = useState<string | null>(null);
+  const [freshIv, setFreshIv] = useState<ArrayBuffer | null>(null);
   const [biometricReady, setBiometricReady] = useState(false);
   // One attempt at a time. Enter in the password field bypasses the disabled
   // button, and a second attempt finishing first would clear `busy` while the
@@ -134,6 +137,7 @@ export function VaultDialog() {
         return;
       }
       setFreshKey(formatRecoveryKey(result.recoveryKey));
+      setFreshIv(result.recWrapIv);
       result.recoveryKey.fill(0);
     } catch {
       setError("設定できませんでした。時間をおいて試してください。");
@@ -154,7 +158,7 @@ export function VaultDialog() {
         if (!parsed.ok) {
           setError(
             parsed.reason === "legacy"
-              ? "このリカバリーキーは、以前の不具合で一部しか表示されていなかったため使えません。金庫のパスワードで開いてください。"
+              ? "このリカバリーキーは、以前の不具合で一部しか表示されていなかったため使えません。金庫のパスワードで開いたあと、設定でリカバリーキーを作り直してください。"
               : `リカバリーキーは ${RECOVERY_KEY_LENGTH} 文字です（いま ${parsed.length} 文字）。`,
           );
           return;
@@ -231,34 +235,23 @@ export function VaultDialog() {
       >
         {freshKey ? (
           // Each view is keyed so React builds fresh elements. Otherwise the
-          // focused 設定する button is reused as 保管しました, and one more Enter
-          // would dismiss the one-time key before it was read.
+          // focused 設定する button is reused inside the key view, and one more
+          // Enter could move past the one-time key before it was read.
           <Fragment key="recovery">
-            <DialogHeader>
-              <DialogTitle className="flex items-center gap-2">
-                <ShieldCheck className="size-5" aria-hidden />
-                リカバリーキーを保管してください
-              </DialogTitle>
-              <DialogDescription>
-                パスワードを忘れたときに、ロックしたメモを開ける唯一の手段です。
-                これは一度しか表示されません。私たちも復元できません。
-              </DialogDescription>
-            </DialogHeader>
-            <p className="bg-muted rounded-md p-4 text-center font-mono text-sm tracking-wider break-all select-all">
-              {freshKey}
-            </p>
-            <DialogFooter className="gap-2 sm:justify-between">
-              <Button
-                variant="outline"
-                onClick={async () => {
-                  await navigator.clipboard.writeText(freshKey);
-                  toast.success(t.action.copied);
-                }}
-              >
-                {t.action.copy}
-              </Button>
-              <Button onClick={() => close(true)}>保管しました</Button>
-            </DialogFooter>
+            <RecoveryKeyView
+              recoveryKey={freshKey}
+              onConfirmed={async () => {
+                if (freshIv) {
+                  const outcome = await recordKeptKey(() => markChecked({ recWrapIv: freshIv }));
+                  if (outcome === "stale") {
+                    toast.error(
+                      "ほかの端末でリカバリーキーが作り直されました。このキーは使えません。設定で作り直してください。",
+                    );
+                  }
+                }
+                close(true);
+              }}
+            />
           </Fragment>
         ) : unreachable ? (
           <Fragment key="offline">

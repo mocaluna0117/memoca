@@ -1,6 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
-import { createNote, folderPanel, openApp, signUp } from "./helpers";
-import { createVaultInSettings, VAULT_PASSWORD } from "./vault-helpers";
+import { createNote, folderPanel, openApp, settle, signUp } from "./helpers";
+import { confirmRecoveryKey, createVaultInSettings, VAULT_PASSWORD } from "./vault-helpers";
 
 const PROMPT_UNLOCK = "ロックを解除";
 const PROMPT_CREATE = "ロックを設定";
@@ -35,6 +35,9 @@ async function expectDismissedWithoutCreation(
 ) {
   const prompt = page.getByRole("heading", { name: PROMPT_UNLOCK });
   await expect(prompt, `prompt before ${how}`).toBeVisible();
+  // Radix starts listening for outside clicks only once the dialog has
+  // opened; a click during the opening animation is not a dismissal.
+  await settle(page.getByRole("dialog").last());
   await dismiss();
   await expect(prompt, `prompt after ${how}`).toHaveCount(0);
   // The old behaviour: dismissing jumped straight to vault creation.
@@ -62,8 +65,15 @@ test.describe("vault prompt", () => {
     await expect(heading).toBeVisible();
     await expect(page.getByRole("button", { name: "Close" })).toHaveCount(0);
 
-    await page.getByRole("button", { name: "保管しました" }).click();
+    // Moving on needs the key's last four characters, not just a click.
+    await page.getByRole("button", { name: "次へ" }).click();
+    await page.getByLabel("最後の 4 文字").fill("ZZZZ");
+    await page.getByRole("button", { name: "確認", exact: true }).click();
+    await expect(page.getByText("一致しません。")).toBeVisible();
+    await page.getByRole("button", { name: "キーをもう一度表示" }).click();
+    await confirmRecoveryKey(page);
     await expect(heading).toHaveCount(0);
+    await expect(page.getByRole("dialog")).toHaveCount(0);
   });
 
   test("closing the prompt in any way never offers to create a second vault", async ({

@@ -126,7 +126,7 @@ describe("vault rewrap", () => {
     await seedUser(t, AUTH_A);
     const as = t.withIdentity({ subject: AUTH_A });
     await as.mutation(api.vault.setup, record(1));
-    await as.mutation(api.vault.markRecoveryChecked, {});
+    await as.mutation(api.vault.markRecoveryChecked, { recWrapIv: record(1).recWrap.iv });
 
     const done = await as.mutation(api.vault.rewrap, {
       recWrap: record(3).recWrap,
@@ -148,9 +148,26 @@ describe("vault rewrap", () => {
     await seedUser(t, AUTH_A);
     const as = t.withIdentity({ subject: AUTH_A });
     await as.mutation(api.vault.setup, record(1));
-    expect(await as.mutation(api.vault.markRecoveryChecked, {})).toEqual({ status: "ok" });
+    expect(
+      await as.mutation(api.vault.markRecoveryChecked, { recWrapIv: record(1).recWrap.iv }),
+    ).toEqual({ status: "ok" });
     const read = await as.query(api.vault.record, {});
     expect(read.state === "exists" && typeof read.record.recoveryCheckedAt).toBe("number");
+  });
+
+  test("confirming a key that has since been replaced marks nothing", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.vault.setup, record(1));
+    // Another tab makes a newer key before this one is confirmed.
+    await as.mutation(api.vault.rewrap, { recWrap: record(3).recWrap, recoveryFormat: 2 });
+
+    expect(
+      await as.mutation(api.vault.markRecoveryChecked, { recWrapIv: record(1).recWrap.iv }),
+    ).toEqual({ status: "stale" });
+    const read = await as.query(api.vault.record, {});
+    expect(read.state === "exists" && read.record.recoveryCheckedAt).toBeNull();
   });
 });
 

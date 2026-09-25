@@ -16,6 +16,8 @@ export const META = {
   vaultRecord: "vaultRecord",
   /** Passkeys registered or used on this device, offered first on unlock. */
   passkeyLocal: "passkeyLocal",
+  /** When this device last asked for a new recovery key, to ask at most daily. */
+  recoveryNudgeAt: "recoveryNudgeAt",
 } as const;
 
 /**

@@ -17,8 +17,19 @@ export async function createVaultInSettings(page: Page): Promise<string> {
 
   const heading = page.getByRole("heading", { name: "リカバリーキーを保管してください" });
   await expect(heading).toBeVisible({ timeout: 30_000 });
-  const key = (await page.locator("p.font-mono").textContent())?.trim() ?? "";
-  await page.getByRole("button", { name: "保管しました" }).click();
-  await expect(heading).toHaveCount(0);
+  const key = await confirmRecoveryKey(page);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  return key;
+}
+
+/**
+ * Reads the recovery key on screen and proves it was kept: 次へ, then its
+ * last four characters. Returns the key as shown.
+ */
+export async function confirmRecoveryKey(page: Page): Promise<string> {
+  const key = (await page.locator("[data-recovery-key]").textContent())?.trim() ?? "";
+  await page.getByRole("button", { name: "次へ" }).click();
+  await page.getByLabel("最後の 4 文字").fill(key.replace(/-/g, "").slice(-4));
+  await page.getByRole("button", { name: "確認", exact: true }).click();
   return key;
 }

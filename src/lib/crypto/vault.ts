@@ -294,20 +294,7 @@ export async function prepareVault(
   const kekRec = await hkdfKey(recoveryKey, recSalt, HKDF_INFO.recovery);
   const recWrap = await seal(kekRec, vaultRaw, ctx.vaultWrap("recovery"));
 
-  // Prove that the key as it will be shown opens this vault. A display bug
-  // once cut every recovery key short, and no test noticed because they all
-  // used the raw bytes rather than the text a person copies.
-  const shown = parseRecoveryKey(formatRecoveryKey(recoveryKey));
-  if (!shown.ok) throw new Error("The recovery key would not read back.");
-  const reopened = await open(
-    await hkdfKey(shown.key, recSalt, HKDF_INFO.recovery),
-    recWrap.ct,
-    recWrap.iv,
-    ctx.vaultWrap("recovery"),
-  );
-  const matches = reopened.every((byte, i) => byte === vaultRaw[i]);
-  wipe(reopened);
-  if (!matches) throw new Error("The recovery key does not open the new vault.");
+  await proveRecoveryKey(recoveryKey, recSalt, recWrap, vaultRaw);
 
   let key: CryptoKey | null = await importAesKey(vaultRaw);
   wipe(vaultRaw);
@@ -337,6 +324,33 @@ export async function prepareVault(
 }
 
 /**
+ * Proves that a recovery key, as it will be shown, opens the vault key.
+ *
+ * A display bug once cut every recovery key short, and no test noticed
+ * because they all used the raw bytes rather than the text a person copies.
+ */
+async function proveRecoveryKey(
+  recoveryKey: Uint8Array,
+  salt: Uint8Array,
+  wrapped: { ct: Uint8Array; iv: Uint8Array },
+  vaultRaw: Uint8Array,
+): Promise<void> {
+  const shown = parseRecoveryKey(formatRecoveryKey(recoveryKey));
+  if (!shown.ok) throw new Error("The recovery key would not read back.");
+  const reopened = await open(
+    await hkdfKey(shown.key, salt, HKDF_INFO.recovery),
+    wrapped.ct,
+    wrapped.iv,
+    ctx.vaultWrap("recovery"),
+  );
+  const matches =
+    reopened.byteLength === vaultRaw.byteLength &&
+    reopened.every((byte, i) => byte === vaultRaw[i]);
+  wipe(reopened);
+  if (!matches) throw new Error("The recovery key does not open the vault.");
+}
+
+/**
  * Creates the vault on the server and only then starts using its key.
  *
  * `store` sends the record to the server. The order is the whole point: if an
@@ -347,7 +361,9 @@ export async function setUpVault(
   password: string,
   store: (record: PreparedVault["record"]) => Promise<{ status: "ok" | "already" }>,
   params: ArgonParams = DEFAULT_ARGON,
-): Promise<{ status: "ok"; recoveryKey: Uint8Array } | { status: "already" }> {
+): Promise<
+  { status: "ok"; recoveryKey: Uint8Array; recWrapIv: ArrayBuffer } | { status: "already" }
+> {
   const prepared = await prepareVault(password, params);
   let result: { status: "ok" | "already" };
   try {
@@ -361,7 +377,11 @@ export async function setUpVault(
     return { status: "already" };
   }
   prepared.adopt();
-  return { status: "ok", recoveryKey: prepared.recoveryKey };
+  return {
+    status: "ok",
+    recoveryKey: prepared.recoveryKey,
+    recWrapIv: prepared.record.recWrap.iv,
+  };
 }
 
 async function adoptFrom(kek: CryptoKey, wrapped: Sealed, method: "password" | "recovery" | "passkey") {
@@ -478,4 +498,73 @@ export async function extractVaultRaw(
     toBytes(record.recWrap.iv),
     ctx.vaultWrap("recovery"),
   );
+}
+
+/** The raw vault key from any factor, including a passkey's PRF output. */
+export async function openVaultRaw(
+  record: VaultRecord,
+  factor:
+    | { password: string }
+    | { recoveryKey: Uint8Array }
+    | { prf: { entry: VaultRecord["passkeys"][number]; output: Uint8Array } },
+): Promise<Uint8Array> {
+  if ("prf" in factor) {
+    const { entry, output } = factor.prf;
+    const kek = await hkdfKey(output, toBytes(entry.hkdfSalt), HKDF_INFO.passkey);
+    return open(kek, toBytes(entry.ct), toBytes(entry.iv), ctx.vaultWrap("passkey"));
+  }
+  return extractVaultRaw(record, factor);
+}
+
+/**
+ * A new recovery key for the vault key in `raw`, proven to open it exactly as
+ * it will be shown. The vault key itself stays the same, so nothing locked
+ * has to be encrypted again: only this one wrapping is replaced.
+ */
+export async function issueRecoveryWrap(raw: Uint8Array): Promise<{
+  recWrap: { hkdfSalt: ArrayBuffer; ct: ArrayBuffer; iv: ArrayBuffer };
+  recoveryKey: Uint8Array;
+}> {
+  const recoveryKey = randomBytes(KEY_BYTES);
+  const salt = randomBytes(16);
+  const kek = await hkdfKey(recoveryKey, salt, HKDF_INFO.recovery);
+  const wrapped = await seal(kek, raw, ctx.vaultWrap("recovery"));
+  await proveRecoveryKey(recoveryKey, salt, wrapped, raw);
+  return {
+    recWrap: {
+      hkdfSalt: toArrayBuffer(salt),
+      ct: toArrayBuffer(wrapped.ct),
+      iv: toArrayBuffer(wrapped.iv),
+    },
+    recoveryKey,
+  };
+}
+
+/** Whether a recovery key opens this vault. The vault stays as it is. */
+export async function verifyRecoveryKey(
+  record: VaultRecord,
+  recoveryKey: Uint8Array,
+): Promise<boolean> {
+  try {
+    wipe(await extractVaultRaw(record, { recoveryKey }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** The vault key in `raw`, wrapped under a new password. */
+export async function rewrapPasswordFromRaw(
+  raw: Uint8Array,
+  nextPassword: string,
+  params: ArgonParams = DEFAULT_ARGON,
+): Promise<{ argon: ArgonParams; saltPw: ArrayBuffer; pwWrap: Sealed }> {
+  const saltPw = randomBytes(16);
+  const kek = await argonKey(nextPassword, saltPw, params);
+  const pwWrap = await seal(kek, raw, ctx.vaultWrap("password"));
+  return {
+    argon: params,
+    saltPw: toArrayBuffer(saltPw),
+    pwWrap: { ct: toArrayBuffer(pwWrap.ct), iv: toArrayBuffer(pwWrap.iv) },
+  };
 }

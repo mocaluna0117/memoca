@@ -11,6 +11,8 @@ import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { PasskeyManager } from "@/components/vault/passkey-manager";
+import { ResetPasswordDialog } from "@/components/vault/password-dialogs";
+import { RecoverySettings } from "@/components/vault/recovery-settings";
 import { YomiSetting } from "@/components/search/yomi-setting";
 import {
   AlertDialog,
@@ -81,6 +83,7 @@ export default function SettingsPage() {
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");
   const [changing, setChanging] = useState(false);
+  const [resetting, setResetting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const standalone = useMediaQuery("(display-mode: standalone)");
@@ -223,6 +226,11 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-2">
+                <Label>リカバリーキー</Label>
+                <RecoverySettings />
+              </div>
+
+              <div className="space-y-2">
                 <Label>パスワードの変更</Label>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
@@ -250,6 +258,18 @@ export default function SettingsPage() {
                 <p className="text-muted-foreground text-xs">
                   メモの中身を暗号化し直す必要はありません。鍵の包み方だけが変わります。
                 </p>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-4"
+                  onClick={() => setResetting(true)}
+                >
+                  パスワードを忘れた場合
+                </button>
+                <ResetPasswordDialog
+                  open={resetting}
+                  onOpenChange={setResetting}
+                  record={vaultStatus}
+                />
               </div>
             </div>
           )}

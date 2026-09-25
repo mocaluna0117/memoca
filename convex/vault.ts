@@ -164,20 +164,35 @@ export const rewrap = mutation({
   },
 });
 
-/** Records that the person proved they kept the current recovery key. */
+/**
+ * Records that the person proved they kept the recovery key they were shown.
+ *
+ * `recWrapIv` names that key's wrapping, which is unique to it. If another
+ * device or tab has made a newer key since, the confirmation is refused: it
+ * would otherwise mark a key nobody kept as safe.
+ */
 export const markRecoveryChecked = mutation({
-  args: {},
-  handler: async (ctx) => {
+  args: { recWrapIv: v.bytes() },
+  handler: async (ctx, { recWrapIv }) => {
     const user = await requireUser(ctx);
     const vault = await ctx.db
       .query("vaults")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .unique();
     if (!vault) return { status: "noVault" as const };
+    if (!vault.recWrap || !sameBytes(vault.recWrap.iv, recWrapIv)) {
+      return { status: "stale" as const };
+    }
     await ctx.db.patch("vaults", vault._id, { recoveryCheckedAt: Date.now() });
     return { status: "ok" as const };
   },
 });
+
+function sameBytes(a: ArrayBuffer, b: ArrayBuffer): boolean {
+  const x = new Uint8Array(a);
+  const y = new Uint8Array(b);
+  return x.byteLength === y.byteLength && x.every((byte, i) => byte === y[i]);
+}
 
 /** Registers a passkey's PRF-derived wrapping of the vault key. */
 export const addPasskey = mutation({

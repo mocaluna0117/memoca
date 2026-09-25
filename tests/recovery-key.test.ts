@@ -6,8 +6,19 @@ import {
   formatRecoveryKey,
   parseRecoveryKey,
   recoveryKeyCharacters,
+  recoveryKeyTail,
 } from "@/lib/crypto/recovery-key";
-import { prepareVault, unlockWithRecoveryKey, vault } from "@/lib/crypto/vault";
+import {
+  issueRecoveryWrap,
+  openVaultRaw,
+  prepareVault,
+  rewrapPasswordFromRaw,
+  unlockWithPassword,
+  unlockWithRecoveryKey,
+  vault,
+  verifyRecoveryKey,
+  wrapForPasskey,
+} from "@/lib/crypto/vault";
 import { FAST_ARGON } from "./helpers/seed";
 
 const fullWidth = (text: string) =>
@@ -69,5 +80,61 @@ describe("recovery key", () => {
 
   test("anything but a 32-byte key is refused rather than shown", () => {
     expect(() => formatRecoveryKey(randomBytes(25))).toThrow();
+  });
+});
+
+describe("replacing the recovery key", () => {
+  test("a new key opens the vault as shown, and the old one no longer does", async () => {
+    const prepared = await prepareVault("パスワード", FAST_ARGON);
+    const record = { ...prepared.record, passkeys: [], version: 1 };
+    const oldKey = prepared.recoveryKey.slice();
+
+    const raw = await openVaultRaw(record, { password: "パスワード" });
+    const { recWrap, recoveryKey } = await issueRecoveryWrap(raw);
+    const next = { ...record, recWrap, version: 2 };
+
+    const shown = parseRecoveryKey(formatRecoveryKey(recoveryKey));
+    expect(shown.ok && (await verifyRecoveryKey(next, shown.key))).toBe(true);
+    expect(await verifyRecoveryKey(next, oldKey)).toBe(false);
+    // Checking a key never opens the vault.
+    expect(vault.isUnlocked).toBe(false);
+  });
+
+  test("a forgotten password is replaced with the recovery key alone", async () => {
+    const prepared = await prepareVault("わすれたパスワード", FAST_ARGON);
+    const record = { ...prepared.record, passkeys: [], version: 1 };
+
+    const raw = await openVaultRaw(record, { recoveryKey: prepared.recoveryKey });
+    const next = { ...record, ...(await rewrapPasswordFromRaw(raw, "あたらしい", FAST_ARGON)) };
+
+    await expect(unlockWithPassword(next, "わすれたパスワード")).rejects.toThrow();
+    await unlockWithPassword(next, "あたらしい");
+    expect(vault.isUnlocked).toBe(true);
+    vault.lock();
+  });
+
+  test("a passkey's PRF output gives the same vault key as the password", async () => {
+    const prepared = await prepareVault("パスワード", FAST_ARGON);
+    const record = { ...prepared.record, passkeys: [], version: 1 };
+    const raw = await openVaultRaw(record, { password: "パスワード" });
+
+    const output = randomBytes(32);
+    const wrap = await wrapForPasskey(output, raw);
+    const entry = {
+      credentialId: "cred",
+      prfInput: new Uint8Array(32).buffer,
+      label: "Mac",
+      createdAt: 0,
+      ...wrap,
+    };
+    const viaPasskey = await openVaultRaw(record, { prf: { entry, output } });
+    expect(Array.from(viaPasskey)).toEqual(Array.from(raw));
+  });
+
+  test("the last four characters are compared however they are typed", () => {
+    const shown = formatRecoveryKey(randomBytes(32));
+    const tail = shown.replace(/-/g, "").slice(-4);
+    expect(recoveryKeyTail(shown)).toBe(tail);
+    expect(recoveryKeyTail(` ${tail.toLowerCase()} `)).toBe(tail);
   });
 });

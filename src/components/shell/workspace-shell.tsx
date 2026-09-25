@@ -1,6 +1,7 @@
 "use client";
 
 import { useConvex } from "convex/react";
+import { useRouter } from "next/navigation";
 import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CommandPalette } from "@/components/search/command-palette";
@@ -8,6 +9,10 @@ import { AppShell } from "@/components/shell/app-shell";
 import { PwaPrompts } from "@/components/shell/pwa-prompts";
 import { VaultDialog } from "@/components/vault/vault-dialog";
 import { VaultRecordSync } from "@/components/vault/vault-record-sync";
+import { recoveryKeyState } from "@/components/vault/recovery-settings";
+import { getMeta, setMeta } from "@/lib/db";
+import { META } from "@/lib/db/meta";
+import { useVaultRecord } from "@/lib/vault/record";
 import { vault } from "@/lib/crypto/vault";
 import { revokeResolvedUrls } from "@/lib/media/attachments";
 import { flushAll } from "@/lib/sync/docs";
@@ -21,6 +26,7 @@ import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
  */
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   const client = useConvex();
+  const router = useRouter();
   const requestUnlock = useVaultUi((s) => s.requestUnlock);
   const [, setUnlocked] = useState(vault.isUnlocked);
 
@@ -33,6 +39,33 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         if (!unlocked) revokeResolvedUrls();
       }),
     [],
+  );
+
+  // Every recovery key shown before the display fix is unusable, so the owner
+  // of such a vault is asked for a new one when they open it, at most daily.
+  useEffect(
+    () =>
+      vault.subscribe((unlocked) => {
+        const record = useVaultRecord.getState().record;
+        if (!unlocked || !record) return;
+        const state = recoveryKeyState(record);
+        if (state === "ok") return;
+        void (async () => {
+          const last = await getMeta<number>(META.recoveryNudgeAt, 0);
+          if (Date.now() - last < 24 * 60 * 60 * 1000) return;
+          await setMeta(META.recoveryNudgeAt, Date.now());
+          toast(
+            state === "legacy"
+              ? "リカバリーキーを作り直してください"
+              : "リカバリーキーの保管を確認してください",
+            {
+              duration: 10_000,
+              action: { label: "設定を開く", onClick: () => router.push("/app/settings") },
+            },
+          );
+        })();
+      }),
+    [router],
   );
 
   // A phone can suspend or kill a backgrounded app without warning. Writing
