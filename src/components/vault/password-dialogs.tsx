@@ -18,12 +18,174 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { wipe } from "@/lib/crypto/primitives";
-import { rewrapPasswordFromRaw } from "@/lib/crypto/vault";
+import { DEFAULT_ARGON } from "@/lib/crypto/primitives";
+import { rewrapPasswordFromRaw, rewrapWithPassword } from "@/lib/crypto/vault";
 import { useOnline } from "@/lib/hooks/use-online";
 import { t } from "@/lib/i18n/ja";
 import type { StoredVaultRecord } from "@/lib/vault/record";
 
 const MIN_PASSWORD = 8;
+const STALE = "ほかの端末で金庫の設定が変わりました。画面を閉じて、もう一度お試しください。";
+const FAILED = "変更できませんでした。インターネット接続を確認して、もう一度お試しください。";
+
+/**
+ * Changes the vault password, knowing the current one. Only the wrapping of
+ * the vault key changes, so nothing locked is encrypted again.
+ */
+export function ChangePasswordDialog({
+  open,
+  onOpenChange,
+  record,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  record: StoredVaultRecord;
+}) {
+  const rewrap = useMutation(api.vault.rewrap);
+  const online = useOnline();
+  const [current, setCurrent] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  // The record the dialog opened on, fixed from then on: following later
+  // versions would let this overwrite a change made on another device.
+  const [base, setBase] = useState(record);
+
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    setCurrent("");
+    setPassword("");
+    setConfirm("");
+    setError(null);
+    if (open) setBase(record);
+  }
+
+  const save = async () => {
+    if (current.length === 0) {
+      setError("いまのパスワードを入力してください。");
+      return;
+    }
+    if (password.length < MIN_PASSWORD) {
+      setError(`新しいパスワードは ${MIN_PASSWORD} 文字以上にしてください。`);
+      return;
+    }
+    if (password !== confirm) {
+      setError("2 つの新しいパスワードが一致しません。");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      let next;
+      try {
+        next = await rewrapWithPassword(base, current, password, DEFAULT_ARGON);
+      } catch {
+        // The only way unwrapping fails is the wrong password.
+        setError("いまのパスワードが違います。");
+        return;
+      }
+      const result = await rewrap({
+        argon: next.argon,
+        saltPw: next.saltPw,
+        pwWrap: next.pwWrap,
+        expectedVersion: base.version,
+      });
+      if (result.status === "stale") {
+        setError(STALE);
+        return;
+      }
+      if (result.status !== "ok") throw new Error(result.status);
+      toast.success("金庫のパスワードを変更しました");
+      onOpenChange(false);
+    } catch {
+      setError(FAILED);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !saving && onOpenChange(next)}>
+      <DialogContent
+        className="sm:max-w-md"
+        showCloseButton={!saving}
+        onEscapeKeyDown={(event) => saving && event.preventDefault()}
+        onInteractOutside={(event) => saving && event.preventDefault()}
+      >
+        <DialogHeader>
+          <DialogTitle>金庫のパスワードを変更</DialogTitle>
+          <DialogDescription>
+            変えても、ロックしたメモを暗号化し直すことはありません。金庫の鍵の包み方だけが変わります。
+          </DialogDescription>
+        </DialogHeader>
+        {!online ? (
+          <p className="text-muted-foreground text-sm">
+            オフラインのため、この設定はいま変更できません。
+          </p>
+        ) : (
+          <form
+            className="space-y-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void save();
+            }}
+          >
+            <div className="space-y-1.5">
+              <Label htmlFor="change-current">いまのパスワード</Label>
+              <Input
+                id="change-current"
+                type="password"
+                value={current}
+                autoComplete="current-password"
+                onChange={(event) => setCurrent(event.target.value)}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="change-password">新しいパスワード</Label>
+              <Input
+                id="change-password"
+                type="password"
+                value={password}
+                autoComplete="new-password"
+                aria-describedby="change-password-hint"
+                onChange={(event) => setPassword(event.target.value)}
+              />
+              <p id="change-password-hint" className="text-muted-foreground text-xs">
+                {MIN_PASSWORD} 文字以上
+              </p>
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="change-confirm">新しいパスワード（確認）</Label>
+              <Input
+                id="change-confirm"
+                type="password"
+                value={confirm}
+                autoComplete="new-password"
+                onChange={(event) => setConfirm(event.target.value)}
+              />
+            </div>
+            {error ? (
+              <p role="alert" className="text-destructive text-sm">
+                {error}
+              </p>
+            ) : null}
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={saving}>
+                {t.action.cancel}
+              </Button>
+              <Button type="submit" disabled={saving}>
+                {saving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+                変更する
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 /**
  * Sets a new vault password without knowing the old one.
@@ -100,14 +262,14 @@ export function ResetPasswordDialog({
         expectedVersion: baseVersion,
       });
       if (result.status === "stale") {
-        setError("ほかの端末で金庫の設定が変わりました。画面を閉じて、もう一度お試しください。");
+        setError(STALE);
         return;
       }
       if (result.status !== "ok") throw new Error(result.status);
       toast.success("金庫のパスワードを再設定しました");
       onOpenChange(false);
     } catch {
-      setError("変更できませんでした。インターネット接続を確認して、もう一度お試しください。");
+      setError(FAILED);
     } finally {
       setSaving(false);
     }

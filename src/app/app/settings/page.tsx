@@ -1,21 +1,16 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { Loader2, LogOut, ShieldCheck, Smartphone } from "lucide-react";
+import { Loader2, LogOut, Smartphone } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useClientValue, useMediaQuery } from "@/lib/hooks/use-client-value";
-import { toast } from "sonner";
 import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
-import { LockHealth } from "@/components/vault/lock-health";
-import { PasskeyManager } from "@/components/vault/passkey-manager";
-import { closeVaultNow } from "@/components/vault/vault-badge";
-import { ResetPasswordDialog } from "@/components/vault/password-dialogs";
-import { RecoverySettings } from "@/components/vault/recovery-settings";
 import { YomiSetting } from "@/components/search/yomi-setting";
+import { VaultSettings } from "@/components/vault/vault-settings";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,8 +22,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
@@ -39,11 +32,6 @@ import {
 import { Separator } from "@/components/ui/separator";
 import { signOut } from "@/lib/auth/client";
 import { formatBytes } from "@/lib/bytes";
-import { DEFAULT_ARGON } from "@/lib/crypto/primitives";
-import { rewrapWithPassword, vault } from "@/lib/crypto/vault";
-import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
-import { requestVault } from "@/lib/store/vault-gate";
-import { useVaultRecord } from "@/lib/vault/record";
 import { resetLocalData } from "@/lib/db";
 import { t } from "@/lib/i18n/ja";
 
@@ -73,17 +61,9 @@ export default function SettingsPage() {
   const router = useRouter();
   const { me } = useSync();
   const { theme, setTheme } = useTheme();
-  const unlocked = useVaultUnlocked();
-  const vaultAvailability = useVaultRecord((s) => s.availability);
-  const vaultStatus = useVaultRecord((s) => s.record);
   const updateSettings = useMutation(api.users.updateSettings);
-  const rewrap = useMutation(api.vault.rewrap);
   const deleteAccount = useMutation(api.users.deleteAccount);
 
-  const [currentPassword, setCurrentPassword] = useState("");
-  const [nextPassword, setNextPassword] = useState("");
-  const [changing, setChanging] = useState(false);
-  const [resetting, setResetting] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const standalone = useMediaQuery("(display-mode: standalone)");
@@ -94,27 +74,6 @@ export default function SettingsPage() {
     // the difference between a cache that can be evicted and one that persists.
     void navigator.storage?.persist?.().catch(() => false);
   }, []);
-
-  const changePassword = async () => {
-    if (!vaultStatus) return;
-    setChanging(true);
-    try {
-      const next = await rewrapWithPassword(
-        vaultStatus,
-        currentPassword,
-        nextPassword,
-        DEFAULT_ARGON,
-      );
-      await rewrap({ argon: next.argon, saltPw: next.saltPw, pwWrap: next.pwWrap });
-      setCurrentPassword("");
-      setNextPassword("");
-      toast.success("パスワードを変更しました");
-    } catch {
-      toast.error("現在のパスワードが正しくありません。");
-    } finally {
-      setChanging(false);
-    }
-  };
 
   return (
     <div className="flex min-h-dvh flex-1 flex-col">
@@ -173,114 +132,7 @@ export default function SettingsPage() {
           title={t.vault.title}
           description="ロックしたメモの本文・タイトル・添付ファイルは、金庫の鍵で暗号化され、あなたの端末の中でだけ読めます。フォルダ名、メモの件数、更新日時は暗号化されません。"
         >
-          {vaultAvailability === "unknown" ? (
-            // Not known yet, or offline. Offering to create a vault here would
-            // let an account that already has one start a second.
-            <p className="text-muted-foreground text-sm">金庫の情報を読み込んでいます…</p>
-          ) : vaultAvailability === "none" || !vaultStatus ? (
-            <Button onClick={() => void requestVault({ kind: "setup" })} className="gap-2">
-              <ShieldCheck className="size-4" aria-hidden />
-              {t.vault.setupTitle}
-            </Button>
-          ) : (
-            <div className="space-y-6">
-              <LockHealth />
-              <div className="flex items-center gap-3">
-                <span className="text-sm">{unlocked ? t.vault.isOpen : t.vault.isClosed}</span>
-                {unlocked ? (
-                  <Button variant="outline" size="sm" onClick={() => void closeVaultNow()}>
-                    {t.vault.closeNow}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={(event) =>
-                      void requestVault(
-                        { kind: "open", from: "general" },
-                        { gesture: true, returnFocus: event.currentTarget },
-                      )
-                    }
-                  >
-                    {t.vault.open}
-                  </Button>
-                )}
-              </div>
-
-              <div className="space-y-2">
-                <Label>自動で閉じるまでの時間</Label>
-                <Select
-                  value={String(me?.settings.autoLockMinutes ?? 5)}
-                  onValueChange={(value) => {
-                    void updateSettings({ autoLockMinutes: Number(value) });
-                    vault.setAutoLockMinutes(Number(value));
-                  }}
-                >
-                  <SelectTrigger className="w-48">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="1">1 分</SelectItem>
-                    <SelectItem value="5">5 分</SelectItem>
-                    <SelectItem value="15">15 分</SelectItem>
-                    <SelectItem value="60">60 分</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="space-y-2">
-                <Label>パスキー（Face ID・Touch ID など）</Label>
-                <PasskeyManager />
-              </div>
-
-              <div className="space-y-2">
-                <Label>リカバリーキー</Label>
-                <RecoverySettings />
-              </div>
-
-              <div className="space-y-2">
-                <Label>金庫のパスワードの変更</Label>
-                <div className="flex flex-col gap-2 sm:flex-row">
-                  <Input
-                    type="password"
-                    placeholder="現在のパスワード"
-                    autoComplete="current-password"
-                    value={currentPassword}
-                    onChange={(event) => setCurrentPassword(event.target.value)}
-                  />
-                  <Input
-                    type="password"
-                    placeholder="新しいパスワード"
-                    autoComplete="new-password"
-                    value={nextPassword}
-                    onChange={(event) => setNextPassword(event.target.value)}
-                  />
-                  <Button
-                    onClick={changePassword}
-                    disabled={changing || nextPassword.length < 8}
-                  >
-                    {changing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                    変更
-                  </Button>
-                </div>
-                <p className="text-muted-foreground text-xs">
-                  メモの中身を暗号化し直す必要はありません。鍵の包み方だけが変わります。
-                </p>
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-4"
-                  onClick={() => setResetting(true)}
-                >
-                  パスワードを忘れた場合
-                </button>
-                <ResetPasswordDialog
-                  open={resetting}
-                  onOpenChange={setResetting}
-                  record={vaultStatus}
-                />
-              </div>
-            </div>
-          )}
+          <VaultSettings />
         </Section>
 
         <Separator />

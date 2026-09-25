@@ -252,3 +252,59 @@ test.describe("vault prompt", () => {
     await expect(vaultPrompt(page)).toHaveCount(0);
   });
 });
+
+test.describe("changing the vault password in Settings", () => {
+  test("checks the confirmation and the current password, then opens with the new one", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createVaultInSettings(page);
+
+    await page
+      .getByRole("group", { name: "金庫のパスワード" })
+      .getByRole("button", { name: "パスワードを変更" })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "金庫のパスワードを変更" });
+    const current = dialog.getByLabel("いまのパスワード");
+    const next = dialog.getByLabel("新しいパスワード", { exact: true });
+    const confirm = dialog.getByLabel("新しいパスワード（確認）");
+    const submit = dialog.getByRole("button", { name: "変更する" });
+    const error = dialog.getByRole("alert");
+
+    // The two new passwords must match.
+    await current.fill(VAULT_PASSWORD);
+    await next.fill("changed-vault-password");
+    await confirm.fill("changed-vault-passwrod");
+    await submit.click();
+    await expect(error).toHaveText("2 つの新しいパスワードが一致しません。");
+
+    // Too short, sent with Enter.
+    await next.fill("short");
+    await confirm.fill("short");
+    await confirm.press("Enter");
+    await expect(error).toHaveText("新しいパスワードは 8 文字以上にしてください。");
+
+    // A wrong current password is named as such, not as a network problem.
+    await current.fill("not-the-password");
+    await next.fill("changed-vault-password");
+    await confirm.fill("changed-vault-password");
+    await submit.click();
+    await expect(error).toHaveText("いまのパスワードが違います。", { timeout: 30_000 });
+
+    await current.fill(VAULT_PASSWORD);
+    await submit.click();
+    await expect(page.getByText("金庫のパスワードを変更しました")).toBeVisible({ timeout: 30_000 });
+    await expect(dialog).toHaveCount(0);
+
+    // Closed and opened again, only the new password works.
+    await page.getByRole("button", { name: "いますぐ閉じる" }).click();
+    await expect(page.getByText("金庫：閉じています").first()).toBeVisible();
+    await page.getByRole("button", { name: "金庫を開く", exact: true }).click();
+    await enterVaultPassword(page, "開く");
+    await expect(vaultPrompt(page).getByRole("alert")).toBeVisible({ timeout: 30_000 });
+    await enterVaultPassword(page, "開く", "changed-vault-password");
+    await expect(vaultPrompt(page)).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.getByText("金庫：開いています").first()).toBeVisible();
+  });
+});
