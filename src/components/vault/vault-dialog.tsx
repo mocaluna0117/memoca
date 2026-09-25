@@ -17,9 +17,11 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  PasskeyCancelledError,
+  PasskeyNeedsRetryError,
   PrfUnsupportedError,
-  evaluatePrf,
   platformAuthenticatorAvailable,
+  startPasskey,
 } from "@/lib/crypto/passkey";
 import {
   RECOVERY_FORMAT,
@@ -37,6 +39,7 @@ import {
 } from "@/lib/crypto/vault";
 import { useOnline } from "@/lib/hooks/use-online";
 import { useVaultUi } from "@/lib/store/vault-ui";
+import { localPasskeyIds, rememberLocalPasskey } from "@/lib/vault/local-passkeys";
 import { useVaultRecord } from "@/lib/vault/record";
 import { t } from "@/lib/i18n/ja";
 
@@ -63,6 +66,10 @@ export function VaultDialog() {
   // button, and a second attempt finishing first would clear `busy` while the
   // first is still deriving a key or waiting for the server.
   const inFlight = useRef(false);
+  // The passkey to ask on its own next time, after a combined request came
+  // back without its PRF output.
+  const [retryPasskey, setRetryPasskey] = useState<string | null>(null);
+  const passkeyAbort = useRef<AbortController | null>(null);
 
   // Clear the form the moment the dialog closes, so a password never lingers
   // in memory behind a closed sheet.
@@ -76,8 +83,14 @@ export function VaultDialog() {
       setUseRecovery(false);
       setError(null);
       setFreshKey(null);
+      setRetryPasskey(null);
     }
   }
+
+  // A system sheet left open by a closed prompt would unlock nothing useful.
+  useEffect(() => {
+    if (!open) passkeyAbort.current?.abort();
+  }, [open]);
 
   useEffect(() => {
     void platformAuthenticatorAvailable().then(setBiometricReady);
@@ -159,35 +172,48 @@ export function VaultDialog() {
     }
   };
 
-  const runBiometric = async () => {
+  /**
+   * One tap, one system sheet. Before, every registered passkey was tried in
+   * turn, including ones on other devices, so the browser showed its chooser or
+   * a QR code, and cancelling one sheet opened the next.
+   */
+  const runBiometric = () => {
     if (!status || status.passkeys.length === 0 || inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
     setError(null);
-    try {
-      let lastError: unknown = null;
-      for (const entry of status.passkeys) {
-        try {
-          const output = await evaluatePrf(
-            entry.credentialId,
-            new Uint8Array(entry.prfInput),
-          );
-          await unlockWithPrf(entry, output);
-          close(true);
+    const controller = new AbortController();
+    passkeyAbort.current = controller;
+    // Nothing is awaited before this call, so the tap still counts for it.
+    void startPasskey(status.passkeys, localPasskeyIds(), {
+      signal: controller.signal,
+      only: retryPasskey ?? undefined,
+    })
+      .then(async ({ entry, output }) => {
+        const full = status.passkeys.find((p) => p.credentialId === entry.credentialId)!;
+        await unlockWithPrf(full, output);
+        void rememberLocalPasskey(entry.credentialId);
+        setRetryPasskey(null);
+        close(true);
+      })
+      .catch((cause) => {
+        if (cause instanceof PasskeyCancelledError) return;
+        if (cause instanceof PasskeyNeedsRetryError) {
+          setRetryPasskey(cause.credentialId);
+          setError("もう一度 Face ID / Touch ID で確認してください。");
           return;
-        } catch (cause) {
-          lastError = cause;
         }
-      }
-      setError(
-        lastError instanceof PrfUnsupportedError
-          ? lastError.message
-          : "生体認証で解除できませんでした。パスワードをお試しください。",
-      );
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
+        setError(
+          cause instanceof PrfUnsupportedError
+            ? cause.message
+            : "Face ID / Touch ID で開けませんでした。パスワードを使ってください。",
+        );
+      })
+      .finally(() => {
+        if (passkeyAbort.current === controller) passkeyAbort.current = null;
+        inFlight.current = false;
+        setBusy(false);
+      });
   };
 
   return (

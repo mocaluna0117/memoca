@@ -16,6 +16,7 @@ import {
   registerPasskey,
 } from "@/lib/crypto/passkey";
 import { extractVaultRaw, wrapForPasskey } from "@/lib/crypto/vault";
+import { rememberLocalPasskey } from "@/lib/vault/local-passkeys";
 import { useVaultRecord } from "@/lib/vault/record";
 
 /**
@@ -75,6 +76,8 @@ export function PasskeyManager() {
             ? "Android"
             : "この端末",
       });
+      // Created here, so it is this device's: unlock offers it first.
+      await rememberLocalPasskey(created.credentialId);
       setPassword("");
       toast.success("生体認証を登録しました");
     } catch (cause) {

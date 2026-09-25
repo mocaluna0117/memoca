@@ -14,6 +14,8 @@ export const META = {
   yomi: "yomiEnabled",
   /** The vault record (wrapped keys only), so the vault opens offline. */
   vaultRecord: "vaultRecord",
+  /** Passkeys registered or used on this device, offered first on unlock. */
+  passkeyLocal: "passkeyLocal",
 } as const;
 
 /**

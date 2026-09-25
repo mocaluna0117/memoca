@@ -44,6 +44,119 @@ export async function platformAuthenticatorAvailable(): Promise<boolean> {
   }
 }
 
+/**
+ * The person closed the system sheet, it timed out, or the page aborted it.
+ * Not an error to show: they chose not to continue.
+ */
+export class PasskeyCancelledError extends Error {
+  constructor() {
+    super("cancelled");
+    this.name = "PasskeyCancelledError";
+  }
+}
+
+/**
+ * Several passkeys were offered at once and the one used did not return its
+ * PRF output, which some browsers only do for a single-credential request.
+ * The next tap asks that passkey alone.
+ */
+export class PasskeyNeedsRetryError extends Error {
+  constructor(readonly credentialId: string) {
+    super("retry");
+    this.name = "PasskeyNeedsRetryError";
+  }
+}
+
+// WebAuthn Level 3 `hints` is only in the DOM lib's JSON option types.
+type RequestOptions = PublicKeyCredentialRequestOptions & { hints?: string[] };
+
+/** A registered passkey as the vault record lists it. */
+export type PasskeyEntry = { credentialId: string; prfInput: ArrayBuffer };
+
+/**
+ * The single request for one tap.
+ *
+ * Only passkeys known to be on this device are offered when there are any;
+ * offering a passkey that lives elsewhere is what made browsers show their
+ * chooser or a QR code for another device. Transports are "internal" only for
+ * the same reason, and the client-device hint asks for this device's own
+ * authenticator. Each passkey has its own PRF input, so several at once need
+ * evalByCredential.
+ */
+export function buildAssertionOptions(
+  entries: PasskeyEntry[],
+  localIds: string[],
+): { options: RequestOptions; candidates: PasskeyEntry[] } {
+  const local = entries.filter((entry) => localIds.includes(entry.credentialId));
+  const candidates = local.length > 0 ? local : entries;
+  const prf =
+    candidates.length === 1
+      ? { eval: { first: candidates[0]!.prfInput } }
+      : {
+          evalByCredential: Object.fromEntries(
+            candidates.map((entry) => [entry.credentialId, { first: entry.prfInput }]),
+          ),
+        };
+  return {
+    candidates,
+    options: {
+      challenge: toArrayBuffer(randomBytes(32)),
+      rpId: window.location.hostname,
+      allowCredentials: candidates.map((entry) => ({
+        type: "public-key",
+        id: base64UrlToBuffer(entry.credentialId),
+        transports: ["internal"],
+      })),
+      hints: ["client-device"],
+      userVerification: "required",
+      timeout: 60_000,
+      extensions: { prf } as AuthenticationExtensionsClientInputs,
+    },
+  };
+}
+
+/**
+ * Shows the Face ID / Touch ID sheet once and returns the PRF output.
+ *
+ * Call it straight from the tap, with nothing awaited first: WebKit only
+ * shows the sheet while the tap still counts as the reason for it. It never
+ * retries on its own; a cancel means stop.
+ */
+export async function startPasskey(
+  entries: PasskeyEntry[],
+  localIds: string[],
+  opts: { signal?: AbortSignal; only?: string } = {},
+): Promise<{ entry: PasskeyEntry; output: Uint8Array }> {
+  const pool = opts.only ? entries.filter((entry) => entry.credentialId === opts.only) : entries;
+  if (pool.length === 0) throw new PrfUnsupportedError();
+  const { options, candidates } = buildAssertionOptions(pool, localIds);
+
+  let assertion: PublicKeyCredential | null;
+  try {
+    assertion = (await navigator.credentials.get({
+      publicKey: options,
+      signal: opts.signal,
+    })) as PublicKeyCredential | null;
+  } catch (cause) {
+    const name = cause instanceof Error ? cause.name : "";
+    if (name === "NotAllowedError" || name === "AbortError") throw new PasskeyCancelledError();
+    throw cause;
+  }
+  if (!assertion) throw new PasskeyCancelledError();
+
+  const usedId = bufferToBase64Url(assertion.rawId);
+  const entry = candidates.find((candidate) => candidate.credentialId === usedId);
+  if (!entry) throw new PrfUnsupportedError("この端末のパスキーでは金庫を開けませんでした。");
+  const output = prfResult(assertion);
+  if (!output) {
+    if (candidates.length > 1) throw new PasskeyNeedsRetryError(entry.credentialId);
+    throw new PrfUnsupportedError(
+      "この端末では生体認証からロック解除用の鍵を取り出せませんでした。パスワードで解除してください。",
+    );
+  }
+  return { entry, output };
+}
+
 type PrfExtensionResults = {
   prf?: { enabled?: boolean; results?: { first?: ArrayBuffer } };
 };
@@ -130,7 +243,8 @@ export async function evaluatePrf(
         {
           type: "public-key",
           id: base64UrlToBuffer(credentialId),
-          transports: ["internal", "hybrid"],
+          // Internal only: "hybrid" is what offers another device and a QR code.
+          transports: ["internal"],
         },
       ],
       userVerification: "required",
