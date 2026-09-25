@@ -4,7 +4,11 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   resolve: {
-    alias: { "@": new URL("./src", import.meta.url).pathname },
+    alias: {
+      "@": new URL("./src", import.meta.url).pathname,
+      // The vault and sync code import generated Convex references directly.
+      "@convex": new URL("./convex", import.meta.url).pathname,
+    },
   },
   test: {
     projects: [

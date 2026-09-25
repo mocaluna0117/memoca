@@ -10,28 +10,7 @@ import {
   setFolderTrashed,
   setNoteTrashed,
 } from "@/lib/sync/mutations";
-import type { Folder } from "@/lib/types";
-
-const zero = { t: 0, d: "test" };
-
-/** The Inbox as it arrives from the server on first sign-in. */
-async function seedInbox(id = "inbox"): Promise<string> {
-  const inbox: Folder = {
-    folderId: id,
-    parentId: null,
-    name: "Inbox",
-    icon: "inbox",
-    sortKey: "a",
-    locked: false,
-    system: "inbox",
-    deletedAt: null,
-    purged: false,
-    ts: { name: zero, place: zero, trash: zero, lock: zero },
-    seq: 1,
-  };
-  await db().folders.put(inbox);
-  return id;
-}
+import { seedInbox } from "./helpers/seed";
 
 /** The server operations queued for one note, oldest first. */
 async function placeOps(noteId: string) {
