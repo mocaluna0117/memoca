@@ -96,37 +96,10 @@ export async function lockNote(
   // Attachments are re-encrypted and re-uploaded; the server deletes the
   // plaintext files as part of the same transaction.
   const attachments = await database.attachments.where("noteId").equals(noteId).toArray();
-  const swaps: Record<string, unknown>[] = [];
-
-  for (const attachment of attachments) {
-    if (attachment.status !== "committed" || attachment.locked) continue;
-    const urls = await client.query(api.attachments.urls, {
-      attachmentIds: [attachment.attachmentId],
-    });
-    const url = urls[attachment.attachmentId];
-    if (!url) continue;
-    const plain = new Uint8Array(await (await fetch(url)).arrayBuffer());
-
-    const attKey = await vault.createAttachmentKey(attachment.attachmentId);
-    const encrypted = await seal(attKey.key, plain, ctx.attachmentBody(attachment.attachmentId));
-    const meta = await seal(
-      attKey.key,
-      new TextEncoder().encode(
-        JSON.stringify({ name: attachment.name, mime: attachment.mime }),
-      ),
-      ctx.attachmentMeta(attachment.attachmentId),
-    );
-    const storageId = await uploadBytes(client, encrypted.ct, "application/octet-stream");
-
-    swaps.push({
-      attachmentId: attachment.attachmentId,
-      storageId,
-      bytes: encrypted.ct.byteLength,
-      metaSealed: { ct: toArrayBuffer(meta.ct), iv: toArrayBuffer(meta.iv) },
-      wrappedKey: attKey.wrapped,
-      contentIv: toArrayBuffer(encrypted.iv),
-    });
-  }
+  const swaps = await sealAttachments(
+    client,
+    attachments.filter((a) => a.status === "committed" && !a.locked),
+  );
 
   const result = await client.mutation(api.vault.lockNote, {
     noteId,
@@ -168,6 +141,9 @@ export async function lockNote(
     text: null,
     updatedAt: Date.now(),
   });
+  // Its files were cached here in plaintext while it was an ordinary note.
+  const { purgeLockedBlobs } = await import("@/lib/media/attachments");
+  await purgeLockedBlobs([noteId]);
   await reloadDoc(noteId);
   return { status: "ok" };
 }
@@ -294,4 +270,43 @@ export async function unlockNote(
   });
   await reloadDoc(noteId);
   return { status: "ok" };
+}
+
+/**
+ * Encrypts plaintext attachments under fresh keys and uploads the result,
+ * returning the swaps for the server to put in place of the plain files.
+ * Files whose storage is gone are left out; the server decides what that
+ * means for the lock.
+ */
+export async function sealAttachments(
+  client: ConvexReactClient,
+  attachments: { attachmentId: string; name: string | null; mime: string | null }[],
+): Promise<Record<string, unknown>[]> {
+  const swaps: Record<string, unknown>[] = [];
+  for (const attachment of attachments) {
+    const urls = await client.query(api.attachments.urls, {
+      attachmentIds: [attachment.attachmentId],
+    });
+    const url = urls[attachment.attachmentId];
+    if (!url) continue;
+    const plain = new Uint8Array(await (await fetch(url)).arrayBuffer());
+
+    const attKey = await vault.createAttachmentKey(attachment.attachmentId);
+    const encrypted = await seal(attKey.key, plain, ctx.attachmentBody(attachment.attachmentId));
+    const meta = await seal(
+      attKey.key,
+      new TextEncoder().encode(JSON.stringify({ name: attachment.name, mime: attachment.mime })),
+      ctx.attachmentMeta(attachment.attachmentId),
+    );
+    const storageId = await uploadBytes(client, encrypted.ct, "application/octet-stream");
+    swaps.push({
+      attachmentId: attachment.attachmentId,
+      storageId,
+      bytes: encrypted.ct.byteLength,
+      metaSealed: { ct: toArrayBuffer(meta.ct), iv: toArrayBuffer(meta.iv) },
+      wrappedKey: attKey.wrapped,
+      contentIv: toArrayBuffer(encrypted.iv),
+    });
+  }
+  return swaps;
 }

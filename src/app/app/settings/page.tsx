@@ -10,6 +10,7 @@ import { toast } from "sonner";
 import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
+import { LockHealth } from "@/components/vault/lock-health";
 import { PasskeyManager } from "@/components/vault/passkey-manager";
 import { closeVaultNow } from "@/components/vault/vault-badge";
 import { ResetPasswordDialog } from "@/components/vault/password-dialogs";
@@ -183,6 +184,7 @@ export default function SettingsPage() {
             </Button>
           ) : (
             <div className="space-y-6">
+              <LockHealth />
               <div className="flex items-center gap-3">
                 <span className="text-sm">{unlocked ? t.vault.isOpen : t.vault.isClosed}</span>
                 {unlocked ? (

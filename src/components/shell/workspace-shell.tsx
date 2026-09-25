@@ -2,7 +2,7 @@
 
 import { useConvex } from "convex/react";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
@@ -17,10 +17,9 @@ import { vault } from "@/lib/crypto/vault";
 import { revokeResolvedUrls } from "@/lib/media/attachments";
 import { flushAll } from "@/lib/sync/docs";
 import { useLiveQuery } from "dexie-react-hooks";
-import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { watchVaultActivity } from "@/lib/vault/activity";
-import { sealedNameFolders, unsealFolderNames } from "@/lib/vault/reconcile";
-import { lockUncovered, resumeUnlockJob } from "@/lib/vault/cascade";
+import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
+
 import { useSync } from "@/components/providers/sync-provider";
 
 /**
@@ -29,7 +28,7 @@ import { useSync } from "@/components/providers/sync-provider";
  */
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   const client = useConvex();
-  const { engine } = useSync();
+  const { engine, status } = useSync();
   const router = useRouter();
   const [, setUnlocked] = useState(vault.isUnlocked);
 
@@ -102,47 +101,49 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Folder names an earlier version sealed become plaintext again the moment
-  // the vault is open, and also when such a folder arrives from a device that
-  // still runs that version.
-  const sealedNames = useLiveQuery(async () => (await sealedNameFolders()).length, [], 0);
-  const unlockedNow = useVaultUnlocked();
-  useEffect(() => {
-    if (!unlockedNow || sealedNames === 0) return;
-    void unsealFolderNames().then((restored) => {
-      if (restored > 0) {
-        toast.success(`ロックしたフォルダの名前を、ロック中も表示されるようにしました（${restored} 件）`);
-      }
-    });
-  }, [unlockedNow, sealedNames]);
 
-  // A folder can be marked locked while some of its notes are still plaintext:
-  // a lock interrupted part way, or notes written on a device that did not
-  // know yet. And a folder unlock this device left unfinished is picked up
-  // again. Both run whenever the vault opens and when the network returns.
+
+  // Puts right what earlier versions left behind: folder names they sealed,
+  // plaintext notes and files inside locks, an unfinished unlock, Inbox's old
+  // lock. Runs when the vault opens, when the network returns, when sync
+  // settles, and when a sealed folder name arrives from another device.
+  const sealedNames = useLiveQuery(async () => (await sealedNameFolders()).length, [], 0);
+  const settled = status.state === "idle" && !status.catchingUp && status.pending === 0;
+  const unreadableSeen = useRef(0);
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
-      if (!vault.isUnlocked) return;
-      const resumed = await resumeUnlockJob(client, engine());
-      if (!cancelled && resumed && resumed.total > 0 && resumed.pending.length === 0) {
-        toast.success("フォルダのロックを外す処理を再開しました");
+      const report = await repairLocks(client, engine());
+      if (cancelled) return;
+      if (report.inboxUnlocked) {
+        toast("Inbox はロックできなくなったため、Inbox のロックを外しました。ロックしていたメモは、ロックされたままです。");
       }
-      const repaired = await lockUncovered(client, engine());
-      if (!cancelled && repaired > 0) {
-        toast.success(`ロックが途中だったメモ ${repaired} 件をロックしました`);
+      if (report.namesRestored > 0) {
+        toast.success(`ロックしたフォルダの名前を、ロック中も表示されるようにしました（${report.namesRestored} 件）`);
       }
+      if (report.unlockResumed) toast.success("フォルダのロックを外す処理を再開しました");
+      if (report.notesLocked > 0) toast.success(`ロックが途中だったメモ ${report.notesLocked} 件をロックしました`);
+      if (report.attachmentsLocked > 0) {
+        toast.success(`ロックしたメモの添付ファイル ${report.attachmentsLocked} 件を暗号化しました`);
+      }
+      if (report.unreadable > unreadableSeen.current) {
+        toast.warning(`この金庫の鍵では開けないメモが ${report.unreadable} 件あります`, {
+          action: { label: "設定を開く", onClick: () => router.push("/app/settings") },
+        });
+      }
+      unreadableSeen.current = Math.max(unreadableSeen.current, report.unreadable);
     };
+    const later = settled ? setTimeout(() => void run(), 2_000) : null;
     const unsubscribe = vault.subscribe((unlocked) => unlocked && void run());
     const onOnline = () => void run();
     window.addEventListener("online", onOnline);
-    void run();
     return () => {
       cancelled = true;
+      if (later) clearTimeout(later);
       unsubscribe();
       window.removeEventListener("online", onOnline);
     };
-  }, [client, engine]);
+  }, [client, engine, router, settled, sealedNames]);
 
   return (
     <>

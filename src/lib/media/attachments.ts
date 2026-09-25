@@ -103,8 +103,12 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
       let wrappedKey: { ct: ArrayBuffer; iv: ArrayBuffer } | undefined;
       let contentIv: ArrayBuffer | undefined;
       let metaSealed: { ct: ArrayBuffer; iv: ArrayBuffer } | undefined;
+      // Read again now: the note may have been locked since the file was
+      // added, and a locked note's file must go up encrypted.
+      const note = await database.notes.get(item.noteId);
+      const locked = item.locked || note?.locked === true;
 
-      if (item.locked) {
+      if (locked) {
         if (!vault.isUnlocked) continue; // Retried after the vault opens.
         const key = await vault.createAttachmentKey(item.attachmentId);
         const plain = new Uint8Array(await item.blob.arrayBuffer());
@@ -124,11 +128,11 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
         attachmentId: item.attachmentId,
         noteId: item.noteId,
         bytes: body.size,
-        mime: item.locked ? null : item.mime,
-        name: item.locked ? null : item.name,
+        mime: locked ? null : item.mime,
+        name: locked ? null : item.name,
         width: item.width,
         height: item.height,
-        locked: item.locked,
+        locked,
         category: item.category,
         ...(wrappedKey ? { wrappedKey } : {}),
         ...(contentIv ? { contentIv } : {}),
@@ -137,6 +141,12 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
 
       if (reservation.status === "already") {
         await database.pendingUploads.delete(item.attachmentId);
+        continue;
+      }
+      if (reservation.status === "rejected" && reservation.reason === "lockMismatch") {
+        // The server knows the note is locked before this device does. Keep
+        // the file, and send it encrypted on the next pass.
+        await database.pendingUploads.update(item.attachmentId, { locked: true });
         continue;
       }
       if (reservation.status === "rejected" || !reservation.uploadUrl) {
@@ -163,12 +173,16 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
         },
       });
 
-      await database.blobs.put({
-        attachmentId: item.attachmentId,
-        blob: item.blob,
-        bytes: item.blob.size,
-        lastUsed: Date.now(),
-      });
+      // Only plain files are cached: a locked note's file must not sit on the
+      // device in plaintext.
+      if (!locked) {
+        await database.blobs.put({
+          attachmentId: item.attachmentId,
+          blob: item.blob,
+          bytes: item.blob.size,
+          lastUsed: Date.now(),
+        });
+      }
       await database.pendingUploads.delete(item.attachmentId);
     } catch (error) {
       if (error instanceof QuotaError) throw error;
@@ -205,8 +219,12 @@ export async function resolveAttachment(
   if (cached) return cached;
 
   const database = db();
+  const row0 = await database.attachments.get(attachmentId);
   const local = await database.blobs.get(attachmentId);
-  if (local) {
+  if (local && row0?.locked) {
+    // A plaintext copy of a locked file, left by an earlier version.
+    await database.blobs.delete(attachmentId);
+  } else if (local) {
     await database.blobs.update(attachmentId, { lastUsed: Date.now() });
     const url = URL.createObjectURL(local.blob);
     objectUrls.set(attachmentId, url);
@@ -257,6 +275,28 @@ export async function resolveAttachment(
   const url = URL.createObjectURL(new Blob([toArrayBuffer(plain)], { type: mime }));
   objectUrls.set(attachmentId, url);
   return url;
+}
+
+/**
+ * Deletes plaintext copies of locked notes' files from the device cache.
+ * Earlier versions kept them after locking; needs no vault.
+ */
+export async function purgeLockedBlobs(noteIds?: string[]): Promise<number> {
+  const database = db();
+  const lockedNotes = new Set(
+    noteIds ?? (await database.notes.filter((n) => n.locked).primaryKeys()).map(String),
+  );
+  const cached = new Set((await database.blobs.toCollection().primaryKeys()).map(String));
+  const doomed = (await database.attachments.toArray())
+    .filter((a) => cached.has(a.attachmentId) && (a.locked || lockedNotes.has(a.noteId)))
+    .map((a) => a.attachmentId);
+  await database.blobs.bulkDelete(doomed);
+  for (const id of doomed) {
+    const url = objectUrls.get(id);
+    if (url) URL.revokeObjectURL(url);
+    objectUrls.delete(id);
+  }
+  return doomed.length;
 }
 
 /** Drops decrypted blob URLs, for example when the vault auto-locks. */
