@@ -9,7 +9,9 @@ import {
   seal,
 } from "@/lib/crypto/primitives";
 import {
-  createVault,
+  type PreparedVault,
+  prepareVault,
+  setUpVault,
   extractVaultRaw,
   rewrapWithPassword,
   unlockWithPassword,
@@ -63,7 +65,9 @@ describe("authenticated encryption", () => {
 
 describe("vault", () => {
   test("the password and the recovery key each open the same vault", async () => {
-    const { record, recoveryKey } = await createVault("とても長いパスフレーズ", FAST_ARGON);
+    const prepared = await prepareVault("とても長いパスフレーズ", FAST_ARGON);
+    prepared.adopt();
+    const { record, recoveryKey } = prepared;
     const full = { ...record, passkeys: [], version: 1 };
 
     const noteId = "note-1";
@@ -89,8 +93,7 @@ describe("vault", () => {
   });
 
   test("the wrong password is refused", async () => {
-    const { record } = await createVault("正しいパスワード", FAST_ARGON);
-    vault.lock();
+    const { record } = await prepareVault("正しいパスワード", FAST_ARGON);
     await expect(
       unlockWithPassword({ ...record, passkeys: [], version: 1 }, "ちがうパスワード"),
     ).rejects.toThrow();
@@ -98,7 +101,9 @@ describe("vault", () => {
   });
 
   test("changing the password keeps existing notes readable", async () => {
-    const { record } = await createVault("ふるいパスワード", FAST_ARGON);
+    const prepared = await prepareVault("ふるいパスワード", FAST_ARGON);
+    prepared.adopt();
+    const { record } = prepared;
     const { key, wrapped } = await vault.createNoteKey("n1", 1);
     const sealed = await seal(key, text("変わらない本文"), ctx.yjsUpdate("n1", 1));
 
@@ -119,15 +124,85 @@ describe("vault", () => {
     vault.lock();
   });
 
+  test("a new vault key is not used until the server has stored it", async () => {
+    const prepared = await prepareVault("パスワード", FAST_ARGON);
+    expect(vault.isUnlocked).toBe(false);
+    prepared.adopt();
+    expect(vault.isUnlocked).toBe(true);
+    // Once in use, the same key cannot be adopted a second time.
+    expect(() => prepared.adopt()).toThrow();
+    vault.lock();
+  });
+
+  test("a discarded vault key can never be used", async () => {
+    const prepared = await prepareVault("パスワード", FAST_ARGON);
+    prepared.discard();
+    expect(() => prepared.adopt()).toThrow();
+    expect(vault.isUnlocked).toBe(false);
+    // The recovery key that would have been shown is wiped too.
+    expect(prepared.recoveryKey.every((byte) => byte === 0)).toBe(true);
+  });
+
+  test("creating a vault uses its key only after the server stored it", async () => {
+    let unlockedDuringStore: boolean | null = null;
+    let stored: unknown = null;
+    const result = await setUpVault(
+      "パスワード",
+      async (record) => {
+        unlockedDuringStore = vault.isUnlocked;
+        stored = record;
+        return { status: "ok" };
+      },
+      FAST_ARGON,
+    );
+    expect(unlockedDuringStore).toBe(false);
+    expect(result.status).toBe("ok");
+    expect(vault.isUnlocked).toBe(true);
+    if (result.status === "ok") {
+      expect(result.recoveryKey.some((byte) => byte !== 0)).toBe(true);
+    }
+    // What was stored opens the vault that is now in use.
+    vault.lock();
+    await unlockWithPassword(
+      { ...(stored as PreparedVault["record"]), passkeys: [], version: 1 },
+      "パスワード",
+    );
+    expect(vault.isUnlocked).toBe(true);
+    vault.lock();
+  });
+
+  test("an account that already has a vault keeps it: the new key is dropped", async () => {
+    const result = await setUpVault(
+      "パスワード",
+      async () => ({ status: "already" }),
+      FAST_ARGON,
+    );
+    expect(result.status).toBe("already");
+    expect(vault.isUnlocked).toBe(false);
+  });
+
+  test("a failed request leaves no new key in use", async () => {
+    await expect(
+      setUpVault(
+        "パスワード",
+        async () => {
+          throw new Error("network");
+        },
+        FAST_ARGON,
+      ),
+    ).rejects.toThrow("network");
+    expect(vault.isUnlocked).toBe(false);
+  });
+
   test("locking clears the key and further use throws", async () => {
-    await createVault("パスワード", FAST_ARGON);
+    (await prepareVault("パスワード", FAST_ARGON)).adopt();
     expect(vault.isUnlocked).toBe(true);
     vault.lock();
     await expect(vault.createNoteKey("n1", 1)).rejects.toThrow();
   });
 
   test("the recovery key reproduces the same vault key as the password", async () => {
-    const { record, recoveryKey } = await createVault("パスワード", FAST_ARGON);
+    const { record, recoveryKey } = await prepareVault("パスワード", FAST_ARGON);
     const full = { ...record, passkeys: [], version: 1 };
     const viaPassword = await extractVaultRaw(full, { password: "パスワード" });
     const viaRecovery = await extractVaultRaw(full, { recoveryKey });

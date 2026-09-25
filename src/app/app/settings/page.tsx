@@ -168,7 +168,11 @@ export default function SettingsPage() {
           title={t.vault.title}
           description="ロックしたメモは、この端末の中だけで暗号化・復号されます。サーバーには暗号文しか保存されません。"
         >
-          {!vaultStatus ? (
+          {vaultStatus === undefined ? (
+            // Not known yet, or offline. Offering to create a vault here would
+            // let an account that already has one start a second.
+            <p className="text-muted-foreground text-sm">金庫の情報を読み込んでいます…</p>
+          ) : vaultStatus === null ? (
             <Button onClick={openSetup} className="gap-2">
               <ShieldCheck className="size-4" aria-hidden />
               {t.vault.setupTitle}

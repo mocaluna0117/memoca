@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery } from "convex/react";
 import { Fingerprint, KeyRound, Loader2, ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -23,7 +23,7 @@ import {
   platformAuthenticatorAvailable,
 } from "@/lib/crypto/passkey";
 import {
-  createVault,
+  setUpVault,
   unlockWithPassword,
   unlockWithPrf,
   unlockWithRecoveryKey,
@@ -44,7 +44,7 @@ function grouped(key: Uint8Array): string {
 }
 
 export function VaultDialog() {
-  const { open, mode, close } = useVaultUi();
+  const { open, close } = useVaultUi();
   const status = useQuery(api.vault.status, open ? {} : "skip");
   const setup = useMutation(api.vault.setup);
 
@@ -56,6 +56,10 @@ export function VaultDialog() {
   const [error, setError] = useState<string | null>(null);
   const [freshKey, setFreshKey] = useState<string | null>(null);
   const [biometricReady, setBiometricReady] = useState(false);
+  // One attempt at a time. Enter in the password field bypasses the disabled
+  // button, and a second attempt finishing first would clear `busy` while the
+  // first is still deriving a key or waiting for the server.
+  const inFlight = useRef(false);
 
   // Clear the form the moment the dialog closes, so a password never lingers
   // in memory behind a closed sheet.
@@ -76,7 +80,14 @@ export function VaultDialog() {
     void platformAuthenticatorAvailable().then(setBiometricReady);
   }, []);
 
-  const creating = mode === "setup" || status === null;
+  // Only the server's answer decides between creating and opening. `undefined`
+  // means that answer has not arrived yet, which must never read as "no vault":
+  // offering to create one then is how an existing vault could be replaced.
+  const loading = status === undefined;
+  const creating = status === null;
+  // While a key is being derived or saved, or the one-time recovery key is on
+  // screen, closing would lose work that cannot be redone.
+  const holdOpen = busy || freshKey !== null;
 
   const runSetup = async () => {
     if (password.length < MIN_PASSWORD) {
@@ -87,27 +98,33 @@ export function VaultDialog() {
       setError("2 つのパスワードが一致しません。");
       return;
     }
+    if (inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
-      const { record, recoveryKey } = await createVault(password);
-      await setup({
-        argon: record.argon,
-        saltPw: record.saltPw,
-        pwWrap: record.pwWrap,
-        recWrap: record.recWrap,
-      });
-      setFreshKey(grouped(recoveryKey));
-      recoveryKey.fill(0);
+      const result = await setUpVault(password, (record) => setup(record));
+      if (result.status !== "ok") {
+        // A vault already exists, made on another device or a moment ago in
+        // another tab. Its key is the one every locked note uses.
+        setPassword("");
+        setConfirm("");
+        setError("このアカウントにはすでに金庫があります。金庫のパスワードで開いてください。");
+        return;
+      }
+      setFreshKey(grouped(result.recoveryKey));
+      result.recoveryKey.fill(0);
     } catch {
       setError("設定できませんでした。時間をおいて試してください。");
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
 
   const runUnlock = async () => {
-    if (!status) return;
+    if (!status || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -120,12 +137,14 @@ export function VaultDialog() {
     } catch {
       setError(useRecovery ? "リカバリーキーが正しくありません。" : t.vault.wrongPassword);
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
 
   const runBiometric = async () => {
-    if (!status || status.passkeys.length === 0) return;
+    if (!status || status.passkeys.length === 0 || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError(null);
     try {
@@ -149,15 +168,29 @@ export function VaultDialog() {
           : "生体認証で解除できませんでした。パスワードをお試しください。",
       );
     } finally {
+      inFlight.current = false;
       setBusy(false);
     }
   };
 
   return (
-    <Dialog open={open} onOpenChange={(next) => !next && close(vault.isUnlocked)}>
-      <DialogContent className="sm:max-w-md">
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next && !holdOpen) close(vault.isUnlocked);
+      }}
+    >
+      <DialogContent
+        className="sm:max-w-md"
+        showCloseButton={!holdOpen}
+        onEscapeKeyDown={(event) => holdOpen && event.preventDefault()}
+        onInteractOutside={(event) => holdOpen && event.preventDefault()}
+      >
         {freshKey ? (
-          <>
+          // Each view is keyed so React builds fresh elements. Otherwise the
+          // focused 設定する button is reused as 保管しました, and one more Enter
+          // would dismiss the one-time key before it was read.
+          <Fragment key="recovery">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
                 <ShieldCheck className="size-5" aria-hidden />
@@ -183,9 +216,24 @@ export function VaultDialog() {
               </Button>
               <Button onClick={() => close(true)}>保管しました</Button>
             </DialogFooter>
-          </>
+          </Fragment>
+        ) : loading ? (
+          <Fragment key="loading">
+            <DialogHeader>
+              <DialogTitle>金庫の情報を読み込んでいます…</DialogTitle>
+              <DialogDescription>しばらくお待ちください。</DialogDescription>
+            </DialogHeader>
+            <div className="flex justify-center py-4">
+              <Loader2 className="text-muted-foreground size-5 animate-spin" aria-hidden />
+            </div>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => close(false)}>
+                {t.action.cancel}
+              </Button>
+            </DialogFooter>
+          </Fragment>
         ) : creating ? (
-          <>
+          <Fragment key="create">
             <DialogHeader>
               <DialogTitle>{t.vault.setupTitle}</DialogTitle>
               <DialogDescription>
@@ -217,7 +265,7 @@ export function VaultDialog() {
               {error ? <p className="text-destructive text-sm">{error}</p> : null}
             </div>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => close(false)}>
+              <Button variant="ghost" onClick={() => close(false)} disabled={busy}>
                 {t.action.cancel}
               </Button>
               <Button onClick={runSetup} disabled={busy}>
@@ -225,9 +273,9 @@ export function VaultDialog() {
                 設定する
               </Button>
             </DialogFooter>
-          </>
+          </Fragment>
         ) : (
-          <>
+          <Fragment key="unlock">
             <DialogHeader>
               <DialogTitle>{t.vault.unlock}</DialogTitle>
               <DialogDescription>
@@ -291,7 +339,7 @@ export function VaultDialog() {
             </div>
 
             <DialogFooter>
-              <Button variant="ghost" onClick={() => close(false)}>
+              <Button variant="ghost" onClick={() => close(false)} disabled={busy}>
                 {t.action.cancel}
               </Button>
               <Button onClick={runUnlock} disabled={busy}>
@@ -299,7 +347,7 @@ export function VaultDialog() {
                 {t.vault.unlock}
               </Button>
             </DialogFooter>
-          </>
+          </Fragment>
         )}
       </DialogContent>
     </Dialog>

@@ -20,7 +20,6 @@ import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   const client = useConvex();
   const requestUnlock = useVaultUi((s) => s.requestUnlock);
-  const openSetup = useVaultUi((s) => s.openSetup);
   const [, setUnlocked] = useState(vault.isUnlocked);
 
   useEffect(
@@ -56,11 +55,10 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
   const onRequestFolderLock = useCallback(
     async (folder: FolderNode) => {
+      // Closing the prompt means "not now". The prompt itself offers to create
+      // a vault when the server says there is none, so nothing opens here.
       const hasVault = vault.isUnlocked || (await requestUnlock());
-      if (!hasVault) {
-        if (!vault.isUnlocked) openSetup();
-        return;
-      }
+      if (!hasVault) return;
       const target = !folder.locked;
       const toastId = toast.loading(
         target ? "フォルダをロックしています…" : "ロックを解除しています…",
@@ -81,7 +79,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         );
       }
     },
-    [client, openSetup, requestUnlock],
+    [client, requestUnlock],
   );
 
   return (

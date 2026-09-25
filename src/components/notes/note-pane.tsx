@@ -62,7 +62,6 @@ export function NotePane({
   const title = useNoteTitle(note);
   const unlocked = useVaultUnlocked();
   const requestUnlock = useVaultUi((s) => s.requestUnlock);
-  const openSetup = useVaultUi((s) => s.openSetup);
 
   /**
    * The title field is a controlled draft that knows which note it belongs to
@@ -129,11 +128,9 @@ export function NotePane({
   const toggleLock = async () => {
     setBusy(true);
     try {
+      // Closing the prompt means "not now"; it never leads to creating a vault.
       const ready = unlocked || (await requestUnlock());
-      if (!ready) {
-        openSetup();
-        return;
-      }
+      if (!ready) return;
       const outcome = note.locked
         ? await unlockNote(client, noteId)
         : await lockNote(client, noteId);

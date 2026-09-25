@@ -182,7 +182,7 @@ export const vault = new VaultSession();
 
 /* ------------------------------------------------------------------ setup */
 
-export type VaultSetupResult = {
+export type PreparedVault = {
   record: {
     argon: ArgonParams;
     saltPw: ArrayBuffer;
@@ -191,19 +191,32 @@ export type VaultSetupResult = {
   };
   /** Shown once, never stored. Losing every factor means losing the data. */
   recoveryKey: Uint8Array;
+  /**
+   * Starts using the new key in this session. Call it only once the server
+   * has stored `record`: a key the server never saw opens nothing after a
+   * reload, and anything locked with it in the meantime is lost.
+   */
+  adopt(): void;
+  /** Throws the key away, for when the server already holds a vault. */
+  discard(): void;
 };
 
 /**
- * Creates a vault key and wraps it under both a password and a recovery key.
+ * Makes a vault key and wraps it under both a password and a recovery key,
+ * without using it yet.
  *
  * Two independent wrappings exist from the very first moment on purpose: a
  * single-factor vault is one forgotten password away from permanent data loss,
  * and no one can reset it for the user.
+ *
+ * The key is held back until the caller has the server's answer. Adopting it
+ * straight away is how an account that already had a vault could end up
+ * locking notes under a second key that was never saved.
  */
-export async function createVault(
+export async function prepareVault(
   password: string,
   params: ArgonParams = DEFAULT_ARGON,
-): Promise<VaultSetupResult> {
+): Promise<PreparedVault> {
   const vaultRaw = randomBytes(KEY_BYTES);
 
   const saltPw = randomBytes(16);
@@ -215,7 +228,7 @@ export async function createVault(
   const kekRec = await hkdfKey(recoveryKey, recSalt, HKDF_INFO.recovery);
   const recWrap = await seal(kekRec, vaultRaw, ctx.vaultWrap("recovery"));
 
-  vault.adopt(await importAesKey(vaultRaw));
+  let key: CryptoKey | null = await importAesKey(vaultRaw);
   wipe(vaultRaw);
 
   return {
@@ -230,7 +243,44 @@ export async function createVault(
       },
     },
     recoveryKey,
+    adopt() {
+      if (!key) throw new Error("This vault key was already used or thrown away.");
+      vault.adopt(key);
+      key = null;
+    },
+    discard() {
+      key = null;
+      recoveryKey.fill(0);
+    },
   };
+}
+
+/**
+ * Creates the vault on the server and only then starts using its key.
+ *
+ * `store` sends the record to the server. The order is the whole point: if an
+ * account already has a vault ("already"), or the request fails, the new key
+ * is thrown away and the existing vault stays the only one.
+ */
+export async function setUpVault(
+  password: string,
+  store: (record: PreparedVault["record"]) => Promise<{ status: "ok" | "already" }>,
+  params: ArgonParams = DEFAULT_ARGON,
+): Promise<{ status: "ok"; recoveryKey: Uint8Array } | { status: "already" }> {
+  const prepared = await prepareVault(password, params);
+  let result: { status: "ok" | "already" };
+  try {
+    result = await store(prepared.record);
+  } catch (cause) {
+    prepared.discard();
+    throw cause;
+  }
+  if (result.status !== "ok") {
+    prepared.discard();
+    return { status: "already" };
+  }
+  prepared.adopt();
+  return { status: "ok", recoveryKey: prepared.recoveryKey };
 }
 
 async function adoptFrom(kek: CryptoKey, wrapped: Sealed, method: "password" | "recovery" | "passkey") {
