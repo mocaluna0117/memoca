@@ -14,6 +14,7 @@ import {
 import { useSync } from "@/components/providers/sync-provider";
 import { FolderTree } from "@/components/folders/folder-tree";
 import { SyncBadge } from "@/components/shell/sync-badge";
+import { VaultBadge } from "@/components/vault/vault-badge";
 import { QuotaBar } from "@/components/shell/quota-bar";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -67,6 +68,7 @@ export function Sidebar({
         {/* The close control shares the header row so it can never sit on top
             of the sync badge, and it moves down with the safe-area padding. */}
         <div className="flex items-center gap-1">
+          <VaultBadge compact container={menuContainer} />
           <SyncBadge />
           {onClose ? (
             <Button

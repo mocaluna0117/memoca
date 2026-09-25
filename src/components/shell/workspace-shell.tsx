@@ -16,6 +16,7 @@ import { useVaultRecord } from "@/lib/vault/record";
 import { vault } from "@/lib/crypto/vault";
 import { revokeResolvedUrls } from "@/lib/media/attachments";
 import { flushAll } from "@/lib/sync/docs";
+import { watchVaultActivity } from "@/lib/vault/activity";
 import { requestVault } from "@/lib/store/vault-gate";
 import type { FolderNode } from "@/lib/types";
 import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
@@ -37,6 +38,21 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         // vault has to take them with it.
         if (!unlocked) revokeResolvedUrls();
       }),
+    [],
+  );
+
+  // The vault closes after a period of no use, counted from the last
+  // activity, and says so when it does.
+  useEffect(() => watchVaultActivity(), []);
+  useEffect(
+    () =>
+      vault.onClosed((reason) =>
+        toast(
+          reason === "idle"
+            ? `金庫を閉じました（${vault.autoLockMinutes} 分間操作がなかったため）`
+            : "金庫を閉じました",
+        ),
+      ),
     [],
   );
 
@@ -90,9 +106,14 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     let cancelled = false;
     const run = async () => {
       if (!vault.isUnlocked) return;
-      const repaired = await resumeCascades(client);
-      if (!cancelled && repaired > 0) {
-        toast.success(`${repaired} 件のメモのロックを完了しました`);
+      const release = vault.hold();
+      try {
+        const repaired = await resumeCascades(client);
+        if (!cancelled && repaired > 0) {
+          toast.success(`ロックが途中だったメモ ${repaired} 件をロックしました`);
+        }
+      } finally {
+        release();
       }
     };
     const unsubscribe = vault.subscribe((unlocked) => unlocked && void run());
@@ -122,6 +143,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         ? `フォルダ「${name}」をロックしています…`
         : `フォルダ「${name}」のロックを外しています…`;
       const toastId = toast.loading(doing);
+      // Closing the vault half way would leave the folder half locked.
+      const release = vault.hold();
       try {
         const outcome = await setFolderLocked(client, folder.folderId, locking, (p) => {
           if (p.total > 1) toast.loading(`${doing}（${p.done} / ${p.total}）`, { id: toastId });
@@ -149,6 +172,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
             : "ロックを外せませんでした。インターネット接続を確認して、もう一度お試しください。",
           { id: toastId },
         );
+      } finally {
+        release();
       }
     },
     [client],

@@ -11,6 +11,7 @@ import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { PasskeyManager } from "@/components/vault/passkey-manager";
+import { closeVaultNow } from "@/components/vault/vault-badge";
 import { ResetPasswordDialog } from "@/components/vault/password-dialogs";
 import { RecoverySettings } from "@/components/vault/recovery-settings";
 import { YomiSetting } from "@/components/search/yomi-setting";
@@ -185,7 +186,7 @@ export default function SettingsPage() {
               <div className="flex items-center gap-3">
                 <span className="text-sm">{unlocked ? t.vault.isOpen : t.vault.isClosed}</span>
                 {unlocked ? (
-                  <Button variant="outline" size="sm" onClick={() => void vault.close()}>
+                  <Button variant="outline" size="sm" onClick={() => void closeVaultNow()}>
                     {t.vault.closeNow}
                   </Button>
                 ) : (

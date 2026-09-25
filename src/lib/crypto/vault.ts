@@ -55,6 +55,9 @@ export type BeforeCloseHook = {
 /** How long a close waits for buffered work before closing anyway. */
 const CLOSE_GRACE_MS = 1500;
 
+/** Why the vault closed: someone asked, or nobody did anything for a while. */
+export type CloseReason = "manual" | "idle";
+
 class VaultSession {
   private key: CryptoKey | null = null;
   private noteKeys = new Map<string, CryptoKey>();
@@ -63,6 +66,12 @@ class VaultSession {
   private closing: Promise<void> | null = null;
   private lockTimer: ReturnType<typeof setTimeout> | null = null;
   private autoLockMs = 5 * 60_000;
+  /** When the vault closes if nothing happens before then; 0 when closed. */
+  private deadline = 0;
+  /** Work that must not lose the key half way, such as locking a folder. */
+  private holds = 0;
+  private closeWhenReleased: CloseReason | null = null;
+  private closedListeners = new Set<(reason: CloseReason) => void>();
 
   get isUnlocked(): boolean {
     return this.key !== null;
@@ -79,14 +88,78 @@ class VaultSession {
 
   setAutoLockMinutes(minutes: number) {
     this.autoLockMs = Math.max(1, minutes) * 60_000;
-    if (this.key) this.touch();
+    if (this.key) this.restartCountdown();
   }
 
-  /** Restarts the inactivity countdown. Called on any meaningful interaction. */
+  get autoLockMinutes(): number {
+    return this.autoLockMs / 60_000;
+  }
+
+  /** Called when the vault closes by `close`, with the reason. */
+  onClosed(listener: (reason: CloseReason) => void): () => void {
+    this.closedListeners.add(listener);
+    return () => this.closedListeners.delete(listener);
+  }
+
+  /**
+   * Restarts the inactivity countdown; called on any use of the app.
+   *
+   * Before, nothing called it, so the vault closed a fixed time after it was
+   * opened, often in the middle of typing. A deadline already past is not
+   * extended: a phone that slept through it closes the vault on the first tap
+   * back, rather than letting that tap keep it open.
+   */
   touch() {
     if (!this.key) return;
+    if (this.checkDeadline()) return;
+    this.restartCountdown();
+  }
+
+  /**
+   * Closes the vault if its time is up. Timers do not run while a phone
+   * sleeps or the app is in the background, so this is asked again whenever
+   * the app comes back. Returns whether it is closing.
+   */
+  checkDeadline(): boolean {
+    if (!this.key || this.deadline === 0 || Date.now() < this.deadline) return false;
+    void this.close("idle");
+    return true;
+  }
+
+  /**
+   * Keeps the vault open until the returned release is called, for work that
+   * would otherwise stop half way, such as locking every note in a folder.
+   * A close asked for in the meantime happens once the work is done.
+   */
+  hold(): () => void {
+    this.holds += 1;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.holds -= 1;
+      if (this.holds > 0) return;
+      const pending = this.closeWhenReleased;
+      this.closeWhenReleased = null;
+      if (pending) void this.close(pending);
+      else this.checkDeadline();
+    };
+  }
+
+  private restartCountdown() {
+    this.deadline = Date.now() + this.autoLockMs;
+    this.schedule(this.autoLockMs);
+  }
+
+  private schedule(ms: number) {
     if (this.lockTimer) clearTimeout(this.lockTimer);
-    this.lockTimer = setTimeout(() => void this.close(), this.autoLockMs);
+    this.lockTimer = setTimeout(() => {
+      this.lockTimer = null;
+      if (!this.key) return;
+      const remaining = this.deadline - Date.now();
+      if (remaining > 0) this.schedule(remaining);
+      else void this.close("idle");
+    }, ms);
   }
 
   /** Registers work to finish before the vault closes. Returns an unregister. */
@@ -104,8 +177,13 @@ class VaultSession {
    * still pending, because typing can continue during a save, then gives up
    * after a short grace period so a stuck save cannot keep the vault open.
    */
-  close(): Promise<void> {
-    if (!this.key) return Promise.resolve();
+  close(reason: CloseReason = "manual"): Promise<"closed" | "deferred" | "none"> {
+    if (!this.key) return Promise.resolve("none");
+    if (this.holds > 0) {
+      // An asked-for close wins over an idle one, for the message it gets.
+      if (this.closeWhenReleased !== "manual") this.closeWhenReleased = reason;
+      return Promise.resolve("deferred");
+    }
     this.closing ??= (async () => {
       const deadline = Date.now() + CLOSE_GRACE_MS;
       try {
@@ -130,15 +208,17 @@ class VaultSession {
       } finally {
         this.closing = null;
         this.lock();
+        for (const listener of this.closedListeners) listener(reason);
       }
     })();
-    return this.closing;
+    return this.closing.then(() => "closed" as const);
   }
 
   adopt(key: CryptoKey) {
     this.key = key;
     this.noteKeys.clear();
-    this.touch();
+    this.closeWhenReleased = null;
+    this.restartCountdown();
     this.emit();
   }
 
@@ -149,6 +229,7 @@ class VaultSession {
   lock() {
     if (this.lockTimer) clearTimeout(this.lockTimer);
     this.lockTimer = null;
+    this.deadline = 0;
     this.key = null;
     this.noteKeys.clear();
     this.emit();

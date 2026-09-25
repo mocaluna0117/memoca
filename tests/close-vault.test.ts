@@ -84,16 +84,17 @@ describe("closing the vault", () => {
 
   test("the auto-lock timer closes through close(), which saves first", async () => {
     await openVault();
-    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
     // Only whether the timer takes the saving path; the saving itself is
     // covered above, with real timers.
-    const closing = vi.spyOn(vault, "close").mockResolvedValue();
+    const closing = vi.spyOn(vault, "close").mockResolvedValue("closed");
     try {
       vault.setAutoLockMinutes(1);
       vi.advanceTimersByTime(59_000);
       expect(closing).not.toHaveBeenCalled();
       vi.advanceTimersByTime(1_000);
       expect(closing).toHaveBeenCalledTimes(1);
+      expect(closing).toHaveBeenCalledWith("idle");
     } finally {
       closing.mockRestore();
       vi.useRealTimers();

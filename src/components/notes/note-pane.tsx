@@ -23,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { SyncBadge } from "@/components/shell/sync-badge";
+import { VaultBadge } from "@/components/vault/vault-badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNote } from "@/lib/hooks/data";
@@ -182,6 +183,7 @@ export function NotePane({
     );
     if (!answer.ok) return;
     setBusy(true);
+    const release = vault.hold();
     try {
       const outcome = removing ? await unlockNote(client, noteId) : await lockNote(client, noteId);
       if (outcome.status === "ok") {
@@ -204,6 +206,7 @@ export function NotePane({
           : "ロックできませんでした。インターネット接続を確認して、もう一度お試しください。",
       );
     } finally {
+      release();
       setBusy(false);
     }
   };
@@ -237,6 +240,7 @@ export function NotePane({
           className="h-9 flex-1 border-0 bg-transparent px-2 text-base font-medium shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
 
+        {note.locked ? <VaultBadge compact /> : null}
         <SyncBadge className="mr-1" />
 
         <DropdownMenu>
