@@ -614,7 +614,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                   8 文字以上。Memoca へのログインとは別の、金庫専用のパスワードです。
                 </p>
               </Field>
-              <Field id="vault-confirm" label="確認のためもう一度入力">
+              <Field id="vault-confirm" label={t.vault.passwordAgain}>
                 <PasswordInput
                   id="vault-confirm"
                   value={confirm}
