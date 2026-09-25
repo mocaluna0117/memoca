@@ -44,15 +44,13 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <ShellContext.Provider value={value}>
-      <div className="flex min-h-dvh">
+      {/* On a phone the page itself scrolls, which is what iOS expects while
+          typing. On wider screens the shell is exactly one screen tall and
+          each pane scrolls on its own, so a long note does not move the list
+          beside it. */}
+      <div className="flex min-h-dvh md:h-dvh md:overflow-clip">
         <aside className="hidden w-64 shrink-0 border-r md:block">
-          <div
-            className="sticky top-0"
-            style={{
-              paddingTop: "env(safe-area-inset-top, 0px)",
-              height: "calc(100dvh - env(safe-area-inset-top, 0px))",
-            }}
-          >
+          <div className="h-full" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
             <Sidebar
               selectedFolderId={selection.folderId}
               onSelectFolder={select}
@@ -84,7 +82,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 selectedFolderId={selection.folderId}
                 onSelectFolder={select}
                 onCreatedFolder={selectWithoutClosing}
-                  onNavigate={() => setDrawer(false)}
+                onNavigate={() => setDrawer(false)}
                 onClose={() => setDrawer(false)}
                 menuContainer={drawerElement}
               />
@@ -92,7 +90,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           </SheetContent>
         </Sheet>
 
-        <main className="flex min-w-0 flex-1 flex-col pb-14 md:pb-0">{children}</main>
+        {/* The bottom bar is fixed, so the page ends above it, home indicator
+            included. Pages other than the workspace scroll here on wide screens. */}
+        <main className="flex min-w-0 flex-1 flex-col pb-[calc(3.5rem+env(safe-area-inset-bottom,0px))] md:min-h-0 md:overflow-y-auto md:overscroll-y-contain md:pb-0">
+          {children}
+        </main>
       </div>
       <MobileNav />
     </ShellContext.Provider>

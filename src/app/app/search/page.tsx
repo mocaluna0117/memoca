@@ -47,7 +47,7 @@ export default function SearchPage() {
     yomi.enabled === false && hits.length === 0 && isKanaQuery(query);
 
   return (
-    <div className="flex min-h-dvh flex-1 flex-col">
+    <div className="flex flex-1 flex-col">
       <MobileHeader title={t.nav.search} />
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-4 sm:px-6 sm:py-6">
         <div className="relative">

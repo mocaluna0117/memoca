@@ -91,7 +91,7 @@ export default function TrashPage() {
   };
 
   return (
-    <div className="flex min-h-dvh flex-1 flex-col">
+    <div className="flex flex-1 flex-col">
       <MobileHeader title={t.nav.trash} />
       <div className="mx-auto w-full max-w-3xl flex-1 px-0 sm:px-6 sm:py-6">
         <div className="flex items-center justify-between gap-3 px-4 py-4 sm:px-0">

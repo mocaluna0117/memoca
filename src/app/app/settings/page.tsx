@@ -76,7 +76,7 @@ export default function SettingsPage() {
   }, []);
 
   return (
-    <div className="flex min-h-dvh flex-1 flex-col">
+    <div className="flex flex-1 flex-col">
       <MobileHeader title={t.nav.settings} />
       <div className="mx-auto w-full max-w-2xl space-y-8 px-4 py-6 sm:px-6">
         <h1 className="text-lg font-semibold tracking-tight">{t.nav.settings}</h1>

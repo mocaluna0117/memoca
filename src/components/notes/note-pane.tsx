@@ -11,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -96,6 +96,12 @@ export function NotePane({
   const coverage = useMemo(() => lockCoverage(folders), [folders]);
   const menu = useMenuDialog();
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  // On wide screens the note scrolls in its own pane, which stays mounted
+  // from note to note: the next note opens at its top.
+  const body = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    if (body.current) body.current.scrollTop = 0;
+  }, [noteId]);
 
   /**
    * The title field is a controlled draft that knows which note it belongs to
@@ -318,7 +324,7 @@ export function NotePane({
         </DropdownMenu>
       </header>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={body} data-scroll="note" className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
         {hidden ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
             <Lock className="text-muted-foreground size-8" aria-hidden />

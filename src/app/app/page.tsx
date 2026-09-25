@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useEffect, useLayoutEffect, useRef } from "react";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { NoteList } from "@/components/notes/note-list";
 import { NotePane } from "@/components/notes/note-pane";
@@ -16,13 +16,14 @@ function Workspace() {
   const folder = useFolder(selection.folderId);
   const folderName = useFolderName(folder);
   const heading = selection.folderId ? folderName || "フォルダ" : t.nav.allNotes;
+  usePhoneScroll(selection.noteId);
 
   return (
-    <div className="flex min-h-dvh flex-1">
+    <div className="flex flex-1 md:min-h-0">
       {/* Middle pane: hidden on phones while a note is open. */}
       <section
         className={cn(
-          "min-w-0 flex-col border-r md:flex md:w-80 md:shrink-0",
+          "min-w-0 flex-col border-r md:flex md:min-h-0 md:w-80 md:shrink-0",
           selection.noteId ? "hidden" : "flex flex-1",
         )}
       >
@@ -37,7 +38,10 @@ function Workspace() {
       </section>
 
       <section
-        className={cn("min-w-0 flex-1 flex-col", selection.noteId ? "flex" : "hidden md:flex")}
+        className={cn(
+          "min-w-0 flex-1 flex-col md:min-h-0",
+          selection.noteId ? "flex" : "hidden md:flex",
+        )}
       >
         {selection.noteId ? (
           <NotePane noteId={selection.noteId} onBack={closeNote} />
@@ -49,6 +53,35 @@ function Workspace() {
       </section>
     </div>
   );
+}
+
+const isPhone = () => window.matchMedia("(max-width: 767px)").matches;
+
+/**
+ * On a phone the list and the note take turns on one page that scrolls as a
+ * whole. A note opens at its top, not wherever the list had been scrolled
+ * to, and going back finds the list where it was left.
+ */
+function usePhoneScroll(noteId: string | null) {
+  const listY = useRef(0);
+  const shown = useRef(noteId);
+
+  useEffect(() => {
+    if (noteId !== null) return;
+    const remember = () => {
+      // Opening a note scrolls the page to its top; that is not the list's.
+      if (shown.current === null) listY.current = window.scrollY;
+    };
+    window.addEventListener("scroll", remember, { passive: true });
+    return () => window.removeEventListener("scroll", remember);
+  }, [noteId]);
+
+  useLayoutEffect(() => {
+    const before = shown.current;
+    shown.current = noteId;
+    if (before === noteId || !isPhone()) return;
+    window.scrollTo(0, noteId === null ? listY.current : 0);
+  }, [noteId]);
 }
 
 export default function AppPage() {

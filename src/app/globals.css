@@ -133,5 +133,9 @@
   }
   html {
     @apply font-sans;
+    /* The viewport takes its overscroll from the root element, not body: this
+       is what stops the whole page bouncing on iOS when there is nothing to
+       scroll, and pull-to-refresh reloading it on Android. */
+    overscroll-behavior: none;
   }
 }

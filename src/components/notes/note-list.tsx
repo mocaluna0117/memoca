@@ -212,7 +212,7 @@ export function NoteList({
           </Button>
         </div>
       ) : (
-        <ScrollArea className="min-h-0 flex-1">
+        <ScrollArea data-scroll="list" className="min-h-0 flex-1">
           <p id={hintId} className="sr-only">
             上下の矢印キーで移動、Enter でタイトルを変更、スペースで開きます。
           </p>
