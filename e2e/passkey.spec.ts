@@ -17,18 +17,26 @@ test.describe("passkey unlock", () => {
     await openApp(page);
     await createVaultInSettings(page);
 
-    // Register twice from Settings. The second replaces the first on this
-    // authenticator, leaving a stale entry in the list: the case that used to
-    // bring up the browser's chooser before the working passkey was tried.
-    for (let round = 0; round < 2; round += 1) {
-      await page.getByLabel("登録するには金庫のパスワードを入力してください").fill(VAULT_PASSWORD);
-      await page.getByRole("button", { name: "登録", exact: true }).click();
-      await expect(page.getByText("パスキーを登録しました").first()).toBeVisible({
-        timeout: 30_000,
-      });
-      const rows = page.getByRole("button", { name: /^(iPhone|Android|この端末) を削除$/ });
-      await expect(rows).toHaveCount(round + 1);
-    }
+    // Register this device from Settings: the password, then one tap.
+    const rows = page.getByRole("button", { name: /のパスキーを削除$/ });
+    await page.getByRole("button", { name: /^この端末で .+を使う$/ }).click();
+    const dialog = vaultPrompt(page);
+    await dialog.getByLabel("金庫のパスワード").fill(VAULT_PASSWORD);
+    await dialog.getByRole("button", { name: "次へ" }).click();
+    await dialog.getByRole("button", { name: "登録を始める" }).click({ timeout: 30_000 });
+    await expect(page.getByText(/を使えるようにしました$/)).toBeVisible({ timeout: 30_000 });
+    await expect(rows).toHaveCount(1);
+    await expect(page.getByText("この端末", { exact: true })).toBeVisible();
+
+    // Registering again does not make a second passkey for the same device.
+    await page.getByRole("button", { name: /^この端末で .+を使う$/ }).click();
+    await dialog.getByLabel("金庫のパスワード").fill(VAULT_PASSWORD);
+    await dialog.getByRole("button", { name: "次へ" }).click();
+    await dialog.getByRole("button", { name: "登録を始める" }).click({ timeout: 30_000 });
+    await expect(dialog.getByRole("heading", { name: "この端末のパスキーは登録済みです" })).toBeVisible();
+    await dialog.getByRole("button", { name: /で確認$/ }).click();
+    await expect(page.getByText("この端末のパスキーを使えるようにしました")).toBeVisible();
+    await expect(rows).toHaveCount(1);
 
     // A reload closes the vault. The one tap on 「金庫を開く」 starts the
     // passkey sheet itself: one sheet, and the vault is open.
@@ -61,5 +69,13 @@ test.describe("passkey unlock", () => {
     // Trying again is one more tap and one more sheet; that path is covered
     // by the unit tests, because Chromium's virtual authenticator keeps
     // refusing once it has failed a verification in the same session.
+
+    // Deleting asks first, and the entry goes.
+    await page.keyboard.press("Escape");
+    await rows.first().click();
+    await expect(vaultPrompt(page).getByRole("heading", { name: /のパスキーを削除しますか？$/ })).toBeVisible();
+    await vaultPrompt(page).getByRole("button", { name: "削除する" }).click();
+    await expect(page.getByText("パスキーを削除しました")).toBeVisible();
+    await expect(rows).toHaveCount(0);
   });
 });

@@ -1,115 +1,80 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { Fingerprint, Loader2, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { Fingerprint, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@convex/_generated/api";
-import { useSync } from "@/components/providers/sync-provider";
+import { PasskeyEnrollDialog } from "@/components/vault/passkey-enroll";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { toArrayBuffer } from "@/lib/bytes";
 import {
-  PrfUnsupportedError,
-  platformAuthenticatorAvailable,
-  registerPasskey,
-} from "@/lib/crypto/passkey";
-import { extractVaultRaw, wrapForPasskey } from "@/lib/crypto/vault";
-import { rememberLocalPasskey } from "@/lib/vault/local-passkeys";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { withMethod } from "@/lib/crypto/platform";
+import { useOnline } from "@/lib/hooks/use-online";
+import {
+  forgetLocalPasskey,
+  useLocalPasskeyIds,
+  usePlatformPasskey,
+} from "@/lib/vault/local-passkeys";
 import { useVaultRecord } from "@/lib/vault/record";
+import { useUnlockMethod } from "@/lib/vault/use-vault-labels";
+
+type Entry = { credentialId: string; label: string; createdAt: number };
 
 /**
- * Registers Face ID / Touch ID as a way into the vault.
+ * The passkeys that can open the vault, and registering this device's.
  *
- * The passkey's PRF output wraps the same vault key the password already wraps,
- * so this adds a convenient route without becoming a single point of failure:
+ * Each passkey's PRF output wraps the same vault key the password already
+ * wraps, so this adds a convenient way in without becoming the only one:
  * losing the phone still leaves the password and the recovery key.
  */
 export function PasskeyManager() {
-  const { me } = useSync();
-  const status = useVaultRecord((s) => s.record);
-  const addPasskey = useMutation(api.vault.addPasskey);
-  const removePasskey = useMutation(api.vault.removePasskey);
+  const record = useVaultRecord((s) => s.record);
+  const platform = usePlatformPasskey();
+  const method = useUnlockMethod();
+  const online = useOnline();
+  const local = useLocalPasskeyIds();
+  const [enrolling, setEnrolling] = useState(false);
+  const [removing, setRemoving] = useState<Entry | null>(null);
 
-  const [available, setAvailable] = useState(false);
-  const [password, setPassword] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    void platformAuthenticatorAvailable().then(setAvailable);
-  }, []);
-
-  if (!status) {
-    return (
-      <p className="text-muted-foreground text-sm">
-        先に金庫を作成すると、パスキーを登録できます。
-      </p>
-    );
-  }
-
-  const register = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      // The session key is deliberately non-extractable, so the raw bytes are
-      // re-derived from the password the user just typed.
-      const raw = await extractVaultRaw(status, { password });
-      const created = await registerPasskey({
-        userId: me?.email ?? "memoca",
-        userName: me?.email ?? "memoca",
-        displayName: me?.name ?? "Memoca",
-      });
-      const wrap = await wrapForPasskey(created.prfOutput, raw);
-      raw.fill(0);
-
-      await addPasskey({
-        credentialId: created.credentialId,
-        prfInput: toArrayBuffer(created.prfInput),
-        hkdfSalt: wrap.hkdfSalt,
-        ct: wrap.ct,
-        iv: wrap.iv,
-        label: navigator.userAgent.includes("iPhone")
-          ? "iPhone"
-          : navigator.userAgent.includes("Android")
-            ? "Android"
-            : "この端末",
-      });
-      // Created here, so it is this device's: unlock offers it first.
-      await rememberLocalPasskey(created.credentialId);
-      setPassword("");
-      toast.success("パスキーを登録しました");
-    } catch (cause) {
-      setError(
-        cause instanceof PrfUnsupportedError
-          ? cause.message
-          : "登録できませんでした。パスワードが正しいか確認してください。",
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
+  if (!record) return null;
 
   return (
-    <div className="space-y-4">
-      {status.passkeys.length > 0 ? (
+    <div className="space-y-3">
+      <p className="text-muted-foreground text-sm">
+        登録すると、パスワードを入力せずに Face ID や Touch ID
+        で金庫を開けます。パスキーは端末のパスワード管理（iCloud キーチェーンや Google
+        パスワードマネージャー）に「Memoca の金庫」として保存されます。
+      </p>
+
+      {record.passkeys.length > 0 ? (
         <ul className="divide-y rounded-md border">
-          {status.passkeys.map((key) => (
-            <li key={key.credentialId} className="flex items-center gap-3 px-3 py-2">
-              <Fingerprint className="text-muted-foreground size-4" aria-hidden />
-              <span className="flex-1 text-sm">{key.label}</span>
-              <span className="text-muted-foreground text-xs">
-                {new Date(key.createdAt).toLocaleDateString("ja-JP")}
+          {record.passkeys.map((entry) => (
+            <li key={entry.credentialId} className="flex items-center gap-3 px-3 py-2">
+              <Fingerprint className="text-muted-foreground size-4 shrink-0" aria-hidden />
+              <span className="min-w-0 flex-1">
+                <span className="flex items-center gap-2 text-sm">
+                  <span className="truncate">{entry.label}</span>
+                  {local.includes(entry.credentialId) ? (
+                    <Badge variant="secondary">この端末</Badge>
+                  ) : null}
+                </span>
+                <span className="text-muted-foreground text-xs">
+                  {new Date(entry.createdAt).toLocaleDateString("ja-JP")} に登録
+                </span>
               </span>
               <Button
                 variant="ghost"
                 size="icon"
-                aria-label={`${key.label} を削除`}
-                onClick={async () => {
-                  await removePasskey({ credentialId: key.credentialId });
-                  toast.success("削除しました");
-                }}
+                aria-label={`${entry.label} のパスキーを削除`}
+                onClick={() => setRemoving(entry)}
               >
                 <Trash2 className="size-4" aria-hidden />
               </Button>
@@ -118,31 +83,72 @@ export function PasskeyManager() {
         </ul>
       ) : null}
 
-      {available ? (
-        <div className="space-y-2">
-          <Label htmlFor="passkey-password">
-            登録するには金庫のパスワードを入力してください
-          </Label>
-          <div className="flex gap-2">
-            <Input
-              id="passkey-password"
-              type="password"
-              value={password}
-              autoComplete="current-password"
-              onChange={(event) => setPassword(event.target.value)}
-            />
-            <Button onClick={register} disabled={busy || password.length === 0}>
-              {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-              登録
-            </Button>
-          </div>
-          {error ? <p className="text-destructive text-sm">{error}</p> : null}
-        </div>
+      {platform ? (
+        <Button variant="outline" onClick={() => setEnrolling(true)} disabled={!online} className="gap-2">
+          <Fingerprint className="size-4" aria-hidden />
+          {withMethod(`この端末で ${method}`, "を使う")}
+        </Button>
       ) : (
         <p className="text-muted-foreground text-sm">
           この端末ではパスキー（Face ID など）を使えません。金庫はパスワードで開けます。
         </p>
       )}
+
+      <PasskeyEnrollDialog
+        open={enrolling}
+        onOpenChange={setEnrolling}
+        record={record}
+        onDone={(result) =>
+          toast.success(
+            result === "added"
+              ? withMethod(`この端末で ${method}`, "を使えるようにしました")
+              : "この端末のパスキーを使えるようにしました",
+          )
+        }
+      />
+      <RemoveDialog entry={removing} onClose={() => setRemoving(null)} />
     </div>
+  );
+}
+
+function RemoveDialog({ entry, onClose }: { entry: Entry | null; onClose: () => void }) {
+  const remove = useMutation(api.vault.removePasskey);
+  const [busy, setBusy] = useState(false);
+
+  const confirm = async () => {
+    if (!entry) return;
+    setBusy(true);
+    try {
+      const result = await remove({ credentialId: entry.credentialId });
+      if (result.status !== "ok") throw new Error(result.status);
+      await forgetLocalPasskey(entry.credentialId);
+      toast.success("パスキーを削除しました");
+      onClose();
+    } catch {
+      toast.error("削除できませんでした。インターネット接続を確認してください。");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Dialog open={entry !== null} onOpenChange={(open) => !open && !busy && onClose()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>「{entry?.label}」のパスキーを削除しますか？</DialogTitle>
+          <DialogDescription>
+            この登録では金庫を開けなくなります。金庫のパスワードとリカバリーキーはそのまま使えます。端末のパスワード管理に残るパスキーは、必要なら端末の設定から削除してください。
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="ghost" onClick={onClose} disabled={busy}>
+            キャンセル
+          </Button>
+          <Button variant="destructive" onClick={() => void confirm()} disabled={busy}>
+            削除する
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

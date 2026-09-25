@@ -13,10 +13,16 @@ import { META } from "@/lib/db/meta";
  */
 let known: string[] = [];
 let loaded: Promise<void> | null = null;
+const knownListeners = new Set<() => void>();
+
+function setKnown(next: string[]) {
+  known = next;
+  for (const listener of knownListeners) listener();
+}
 
 export function loadLocalPasskeys(): Promise<void> {
   loaded ??= getMeta<string[]>(META.passkeyLocal, []).then((ids) => {
-    known = Array.from(new Set([...known, ...ids]));
+    setKnown(Array.from(new Set([...known, ...ids])));
   });
   return loaded;
 }
@@ -25,9 +31,27 @@ export function localPasskeyIds(): string[] {
   return known;
 }
 
+export function useLocalPasskeyIds(): string[] {
+  return useSyncExternalStore(
+    (listener) => {
+      knownListeners.add(listener);
+      return () => knownListeners.delete(listener);
+    },
+    () => known,
+    () => EMPTY,
+  );
+}
+const EMPTY: string[] = [];
+
 export async function rememberLocalPasskey(credentialId: string): Promise<void> {
   if (known.includes(credentialId)) return;
-  known = [...known, credentialId];
+  setKnown([...known, credentialId]);
+  await setMeta(META.passkeyLocal, known);
+}
+
+export async function forgetLocalPasskey(credentialId: string): Promise<void> {
+  if (!known.includes(credentialId)) return;
+  setKnown(known.filter((id) => id !== credentialId));
   await setMeta(META.passkeyLocal, known);
 }
 
@@ -64,7 +88,7 @@ export function usePlatformPasskey(): boolean {
 
 /** For tests: forget everything in memory. */
 export function resetLocalPasskeysForTests(): void {
-  known = [];
+  setKnown([]);
   loaded = null;
   platform = null;
 }

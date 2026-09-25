@@ -169,53 +169,86 @@ function prfResult(credential: PublicKeyCredential): Uint8Array | null {
   return first ? new Uint8Array(first) : null;
 }
 
-export type RegisteredPasskey = {
+/**
+ * This device's authenticator already holds one of the vault's passkeys, so
+ * nothing new was made. It can be put to use by opening the vault with it.
+ */
+export class PasskeyAlreadyRegisteredError extends Error {
+  constructor() {
+    super("already registered");
+    this.name = "PasskeyAlreadyRegisteredError";
+  }
+}
+
+// WebAuthn Level 3 `hints` is only in the DOM lib's JSON option types.
+type CreationOptions = PublicKeyCredentialCreationOptions & { hints?: string[] };
+
+/** The name the passkey is stored under in the device's password manager. */
+const PASSKEY_NAME = "Memoca の金庫";
+
+export type CreatedPasskey = {
   credentialId: string;
   prfInput: Uint8Array;
-  prfOutput: Uint8Array;
+  /**
+   * Null when the browser does not return PRF at creation (Safari). The PRF
+   * then takes one more sheet, which needs a tap of its own.
+   */
+  prfOutput: Uint8Array | null;
 };
 
 /**
- * Creates a platform passkey and reads its PRF output.
+ * Creates a platform passkey for the vault and reads its PRF output if the
+ * browser gives it at creation.
  *
- * Some browsers return the PRF value straight from creation and some only from
- * a subsequent assertion, so both paths are tried before giving up. A user
- * whose device cannot do this still has the password and recovery key.
+ * Call it straight from a tap, with nothing awaited first: WebKit only shows
+ * the sheet while the tap still counts, which is why it never asks for the
+ * PRF itself afterwards. The passkey is not tied to the account: a random
+ * user handle, and a name that says what it is for rather than the email,
+ * which made it look like a sign-in passkey. `exclude` lists the vault's
+ * passkeys so the same device is not registered twice.
  */
-export async function registerPasskey(opts: {
-  userId: string;
-  userName: string;
-  displayName: string;
-}): Promise<RegisteredPasskey> {
-  if (!(await platformAuthenticatorAvailable())) throw new PrfUnsupportedError();
-
+export async function createPasskey(exclude: string[]): Promise<CreatedPasskey> {
   const prfInput = randomBytes(32);
-  const created = (await navigator.credentials.create({
-    publicKey: {
-      rp: { name: "Memoca", id: window.location.hostname },
-      user: {
-        id: toArrayBuffer(new TextEncoder().encode(opts.userId)),
-        name: opts.userName,
-        displayName: opts.displayName,
-      },
-      challenge: toArrayBuffer(randomBytes(32)),
-      pubKeyCredParams: [
-        { type: "public-key", alg: -7 },
-        { type: "public-key", alg: -257 },
-      ],
-      authenticatorSelection: {
-        authenticatorAttachment: "platform",
-        residentKey: "required",
-        userVerification: "required",
-      },
-      timeout: 60_000,
-      extensions: {
-        prf: { eval: { first: toArrayBuffer(prfInput) } },
-      } as AuthenticationExtensionsClientInputs,
+  const options: CreationOptions = {
+    rp: { name: "Memoca", id: window.location.hostname },
+    user: {
+      id: toArrayBuffer(randomBytes(16)),
+      name: PASSKEY_NAME,
+      displayName: PASSKEY_NAME,
     },
-  })) as PublicKeyCredential | null;
+    challenge: toArrayBuffer(randomBytes(32)),
+    pubKeyCredParams: [
+      { type: "public-key", alg: -7 },
+      { type: "public-key", alg: -257 },
+    ],
+    authenticatorSelection: {
+      authenticatorAttachment: "platform",
+      residentKey: "required",
+      userVerification: "required",
+    },
+    excludeCredentials: exclude.map((id) => ({
+      type: "public-key" as const,
+      id: base64UrlToBuffer(id),
+      transports: ["internal" as const],
+    })),
+    hints: ["client-device"],
+    attestation: "none",
+    timeout: 60_000,
+    extensions: {
+      prf: { eval: { first: toArrayBuffer(prfInput) } },
+    } as AuthenticationExtensionsClientInputs,
+  };
 
-  if (!created) throw new PrfUnsupportedError("登録をキャンセルしました。");
+  let created: PublicKeyCredential | null;
+  try {
+    created = (await navigator.credentials.create({ publicKey: options })) as PublicKeyCredential | null;
+  } catch (cause) {
+    const name = cause instanceof Error ? cause.name : "";
+    if (name === "InvalidStateError") throw new PasskeyAlreadyRegisteredError();
+    if (name === "NotAllowedError" || name === "AbortError") throw new PasskeyCancelledError();
+    throw cause;
+  }
+  if (!created) throw new PasskeyCancelledError();
 
   const extensions = created.getClientExtensionResults() as PrfExtensionResults;
   if (extensions.prf?.enabled === false) {
@@ -223,48 +256,11 @@ export async function registerPasskey(opts: {
       "この端末のパスキーは、金庫を開く機能に対応していません。金庫はパスワードで開けます。",
     );
   }
-
-  const credentialId = bufferToBase64Url(created.rawId);
-  const atCreate = prfResult(created);
-  if (atCreate) return { credentialId, prfInput, prfOutput: atCreate };
-
-  // Safari does not return PRF at creation time; ask for it with an assertion.
-  const prfOutput = await evaluatePrf(credentialId, prfInput);
-  return { credentialId, prfInput, prfOutput };
-}
-
-/** Asks the authenticator for the PRF output behind a biometric check. */
-export async function evaluatePrf(
-  credentialId: string,
-  prfInput: Uint8Array,
-): Promise<Uint8Array> {
-  const assertion = (await navigator.credentials.get({
-    publicKey: {
-      challenge: toArrayBuffer(randomBytes(32)),
-      allowCredentials: [
-        {
-          type: "public-key",
-          id: base64UrlToBuffer(credentialId),
-          // Internal only: "hybrid" is what offers another device and a QR code.
-          transports: ["internal"],
-        },
-      ],
-      userVerification: "required",
-      timeout: 60_000,
-      extensions: {
-        prf: { eval: { first: toArrayBuffer(prfInput) } },
-      } as AuthenticationExtensionsClientInputs,
-    },
-  })) as PublicKeyCredential | null;
-
-  if (!assertion) throw new PrfUnsupportedError("確認をキャンセルしました。");
-  const output = prfResult(assertion);
-  if (!output) {
-    throw new PrfUnsupportedError(
-      "この端末のパスキーでは金庫を開けませんでした。パスワードを使ってください。",
-    );
-  }
-  return output;
+  return {
+    credentialId: bufferToBase64Url(created.rawId),
+    prfInput,
+    prfOutput: prfResult(created),
+  };
 }
 
 export const passkeyBytes = {
