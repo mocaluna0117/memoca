@@ -40,6 +40,15 @@ export const COMPACT_UPDATE_BYTES = 256 * 1024;
 /** Snapshots above this go to file storage instead of inline bytes (1 MiB doc cap). */
 export const SNAPSHOT_INLINE_LIMIT = 900_000;
 
+/**
+ * Passkeys one vault accepts. Each is one wrapping of the vault key, and the
+ * list travels with every read of the vault record.
+ */
+export const MAX_PASSKEYS = 10;
+
+/** Longest passkey label kept. Labels are generated, but arrive from clients. */
+export const PASSKEY_LABEL_MAX = 64;
+
 /** An upload reservation this old is assumed abandoned. */
 export const RESERVATION_TTL_MS = 60 * 60 * 1000;
 /** Grace period before an attachment no block references is deleted. */

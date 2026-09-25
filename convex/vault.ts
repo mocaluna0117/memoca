@@ -1,10 +1,10 @@
 import { v } from "convex/values";
-import type { Id } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
-import { SNAPSHOT_INLINE_LIMIT } from "./lib/constants";
+import { MAX_PASSKEYS, PASSKEY_LABEL_MAX, SNAPSHOT_INLINE_LIMIT } from "./lib/constants";
 import { sealedV, stampV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
-import { requireUser } from "./lib/user";
+import { getUser, requireUser } from "./lib/user";
 
 const wrapV = v.object({ hkdfSalt: v.bytes(), ct: v.bytes(), iv: v.bytes() });
 
@@ -15,12 +15,35 @@ const snapshotV = v.object({
   iv: v.optional(v.bytes()),
 });
 
+/** What a client may see of its vault: ciphertext and salts only. */
+function shape(vault: Doc<"vaults">) {
+  return {
+    argon: vault.argon,
+    saltPw: vault.saltPw,
+    pwWrap: vault.pwWrap,
+    hasRecovery: vault.recWrap !== null,
+    recWrap: vault.recWrap,
+    passkeys: vault.prfWraps.map((p) => ({
+      credentialId: p.credentialId,
+      prfInput: p.prfInput,
+      hkdfSalt: p.hkdfSalt,
+      ct: p.ct,
+      iv: p.iv,
+      label: p.label,
+      createdAt: p.createdAt,
+    })),
+    version: vault.version,
+  };
+}
+
 /**
  * The wrapped vault key and its unlock methods.
  *
  * Everything here is ciphertext or a salt. The vault key itself is generated in
  * the browser and never sent, so the server can hand this straight back without
  * being able to open anything.
+ *
+ * Kept for clients from before `record`; it throws before sign-in.
  */
 export const status = query({
   args: {},
@@ -30,23 +53,34 @@ export const status = query({
       .query("vaults")
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .unique();
-    if (!vault) return null;
+    return vault ? shape(vault) : null;
+  },
+});
+
+/**
+ * The vault record, safe to keep subscribed from app start.
+ *
+ * Unlike `status`, it answers before sign-in instead of throwing, and it says
+ * which of three states applies. "none" and "signed out" must never be
+ * confused: only a confirmed "none" may lead to creating a vault.
+ */
+export const record = query({
+  args: {},
+  handler: async (ctx) => {
+    const user = await getUser(ctx);
+    if (!user) return { state: "signedOut" as const };
+    const vault = await ctx.db
+      .query("vaults")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .unique();
+    if (!vault) return { state: "none" as const };
     return {
-      argon: vault.argon,
-      saltPw: vault.saltPw,
-      pwWrap: vault.pwWrap,
-      hasRecovery: vault.recWrap !== null,
-      recWrap: vault.recWrap,
-      passkeys: vault.prfWraps.map((p) => ({
-        credentialId: p.credentialId,
-        prfInput: p.prfInput,
-        hkdfSalt: p.hkdfSalt,
-        ct: p.ct,
-        iv: p.iv,
-        label: p.label,
-        createdAt: p.createdAt,
-      })),
-      version: vault.version,
+      state: "exists" as const,
+      record: {
+        ...shape(vault),
+        recoveryFormat: vault.recoveryFormat ?? null,
+        recoveryCheckedAt: vault.recoveryCheckedAt ?? null,
+      },
     };
   },
 });
@@ -57,6 +91,7 @@ export const setup = mutation({
     saltPw: v.bytes(),
     pwWrap: sealedV,
     recWrap: wrapV,
+    recoveryFormat: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -74,6 +109,7 @@ export const setup = mutation({
       prfWraps: [],
       version: 1,
       updatedAt: Date.now(),
+      ...(args.recoveryFormat !== undefined ? { recoveryFormat: args.recoveryFormat } : {}),
     });
     return { status: "ok" as const };
   },
@@ -91,6 +127,12 @@ export const rewrap = mutation({
     saltPw: v.optional(v.bytes()),
     pwWrap: v.optional(sealedV),
     recWrap: v.optional(wrapV),
+    /**
+     * The version the client based this on. Two devices changing the password
+     * or recovery key at once would otherwise silently keep only the last.
+     */
+    expectedVersion: v.optional(v.number()),
+    recoveryFormat: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -99,14 +141,40 @@ export const rewrap = mutation({
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .unique();
     if (!vault) return { status: "noVault" as const };
-    await ctx.db.patch(vault._id, {
+    if (args.expectedVersion !== undefined && args.expectedVersion !== vault.version) {
+      return { status: "stale" as const, version: vault.version };
+    }
+    await ctx.db.patch("vaults", vault._id, {
       ...(args.argon ? { argon: args.argon } : {}),
       ...(args.saltPw ? { saltPw: args.saltPw } : {}),
       ...(args.pwWrap ? { pwWrap: args.pwWrap } : {}),
-      ...(args.recWrap ? { recWrap: args.recWrap } : {}),
+      // A new recovery key has not been confirmed as kept, whatever the old
+      // one's state was.
+      ...(args.recWrap
+        ? {
+            recWrap: args.recWrap,
+            recoveryFormat: args.recoveryFormat,
+            recoveryCheckedAt: undefined,
+          }
+        : {}),
       version: vault.version + 1,
       updatedAt: Date.now(),
     });
+    return { status: "ok" as const, version: vault.version + 1 };
+  },
+});
+
+/** Records that the person proved they kept the current recovery key. */
+export const markRecoveryChecked = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await requireUser(ctx);
+    const vault = await ctx.db
+      .query("vaults")
+      .withIndex("by_user", (q) => q.eq("userId", user._id))
+      .unique();
+    if (!vault) return { status: "noVault" as const };
+    await ctx.db.patch("vaults", vault._id, { recoveryCheckedAt: Date.now() });
     return { status: "ok" as const };
   },
 });
@@ -128,11 +196,13 @@ export const addPasskey = mutation({
       .withIndex("by_user", (q) => q.eq("userId", user._id))
       .unique();
     if (!vault) return { status: "noVault" as const };
+    const others = vault.prfWraps.filter((p) => p.credentialId !== args.credentialId);
+    if (others.length >= MAX_PASSKEYS) return { status: "tooMany" as const };
     const prfWraps = [
-      ...vault.prfWraps.filter((p) => p.credentialId !== args.credentialId),
-      { ...args, createdAt: Date.now() },
+      ...others,
+      { ...args, label: args.label.slice(0, PASSKEY_LABEL_MAX), createdAt: Date.now() },
     ];
-    await ctx.db.patch(vault._id, { prfWraps, updatedAt: Date.now() });
+    await ctx.db.patch("vaults", vault._id, { prfWraps, updatedAt: Date.now() });
     return { status: "ok" as const };
   },
 });

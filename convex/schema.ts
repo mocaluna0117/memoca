@@ -252,5 +252,13 @@ export default defineSchema({
     ),
     version: v.number(),
     updatedAt: v.number(),
+    /**
+     * How the recovery key was shown when this wrapping was made: 2 means in
+     * full. Missing means before that fix, when the display cut the key short
+     * and it could never open the vault.
+     */
+    recoveryFormat: v.optional(v.number()),
+    /** When the person last confirmed they kept the current recovery key. */
+    recoveryCheckedAt: v.optional(v.number()),
   }).index("by_user", ["userId"]),
 });

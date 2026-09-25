@@ -1,6 +1,12 @@
 import { fromBase32, toBase32 } from "@/lib/bytes";
 import { KEY_BYTES } from "./primitives";
 
+/**
+ * Stored with a vault's recovery wrapping: 2 means the key was shown in full.
+ * Anything older was shown cut short and cannot open the vault.
+ */
+export const RECOVERY_FORMAT = 2;
+
 /** Base32 characters in a full 32-byte recovery key. */
 export const RECOVERY_KEY_LENGTH = 52;
 

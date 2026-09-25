@@ -22,6 +22,7 @@ import {
   platformAuthenticatorAvailable,
 } from "@/lib/crypto/passkey";
 import {
+  RECOVERY_FORMAT,
   RECOVERY_KEY_LENGTH,
   formatRecoveryKey,
   parseRecoveryKey,
@@ -99,7 +100,9 @@ export function VaultDialog() {
     setBusy(true);
     setError(null);
     try {
-      const result = await setUpVault(password, (record) => setup(record));
+      const result = await setUpVault(password, (record) =>
+        setup({ ...record, recoveryFormat: RECOVERY_FORMAT }),
+      );
       if (result.status !== "ok") {
         // A vault already exists, made on another device or a moment ago in
         // another tab. Its key is the one every locked note uses.

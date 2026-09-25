@@ -11,6 +11,7 @@ import schema from "./schema";
 const modules = import.meta.glob("./**/*.ts");
 
 const AUTH_A = "authuser_a";
+const AUTH_B = "authuser_b";
 
 /** The issuer convex-test stamps on an identity when none is given. */
 const TEST_ISSUER = "https://convex.test";
@@ -68,5 +69,141 @@ describe("vault setup", () => {
     // Still the first vault's wrapping, unchanged.
     expect(new Uint8Array(status!.pwWrap.ct)).toEqual(new Uint8Array([1, 2]));
     expect(status!.version).toBe(1);
+  });
+});
+
+describe("vault record", () => {
+  test("says signed out, none, or exists, and never shows another person's vault", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    await seedUser(t, AUTH_B);
+    const asA = t.withIdentity({ subject: AUTH_A });
+    const asB = t.withIdentity({ subject: AUTH_B });
+
+    expect(await t.query(api.vault.record, {})).toEqual({ state: "signedOut" });
+    expect(await asA.query(api.vault.record, {})).toEqual({ state: "none" });
+
+    await asA.mutation(api.vault.setup, { ...record(1), recoveryFormat: 2 });
+    const mine = await asA.query(api.vault.record, {});
+    expect(mine.state).toBe("exists");
+    if (mine.state === "exists") {
+      expect(mine.record.recoveryFormat).toBe(2);
+      expect(mine.record.recoveryCheckedAt).toBeNull();
+      expect(mine.record.version).toBe(1);
+    }
+    expect(await asB.query(api.vault.record, {})).toEqual({ state: "none" });
+  });
+
+  test("a vault made before the recovery key fix reports no format", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.vault.setup, record(1));
+    const read = await as.query(api.vault.record, {});
+    expect(read.state === "exists" && read.record.recoveryFormat).toBeNull();
+  });
+});
+
+describe("vault rewrap", () => {
+  test("a change based on an old version is refused and writes nothing", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.vault.setup, record(1));
+
+    const stale = await as.mutation(api.vault.rewrap, {
+      pwWrap: { ct: bytes(9, 9), iv: bytes(9, 9) },
+      expectedVersion: 7,
+    });
+    expect(stale).toEqual({ status: "stale", version: 1 });
+    const unchanged = await as.query(api.vault.status, {});
+    expect(new Uint8Array(unchanged!.pwWrap.ct)).toEqual(new Uint8Array([1, 2]));
+    expect(unchanged!.version).toBe(1);
+  });
+
+  test("a new recovery key is stored with its format and is not yet confirmed", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.vault.setup, record(1));
+    await as.mutation(api.vault.markRecoveryChecked, {});
+
+    const done = await as.mutation(api.vault.rewrap, {
+      recWrap: record(3).recWrap,
+      recoveryFormat: 2,
+      expectedVersion: 1,
+    });
+    expect(done).toEqual({ status: "ok", version: 2 });
+    const read = await as.query(api.vault.record, {});
+    expect(read.state).toBe("exists");
+    if (read.state === "exists") {
+      expect(read.record.recoveryFormat).toBe(2);
+      expect(read.record.recoveryCheckedAt).toBeNull();
+      expect(new Uint8Array(read.record.recWrap!.ct)).toEqual(new Uint8Array([3, 5]));
+    }
+  });
+
+  test("confirming the recovery key records when", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.vault.setup, record(1));
+    expect(await as.mutation(api.vault.markRecoveryChecked, {})).toEqual({ status: "ok" });
+    const read = await as.query(api.vault.record, {});
+    expect(read.state === "exists" && typeof read.record.recoveryCheckedAt).toBe("number");
+  });
+});
+
+describe("vault passkeys", () => {
+  const passkey = (credentialId: string, label = "iPhone") => ({
+    credentialId,
+    prfInput: bytes(1),
+    hkdfSalt: bytes(2),
+    ct: bytes(3),
+    iv: bytes(4),
+    label,
+  });
+
+  test("registering the same passkey again replaces it rather than adding one", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.vault.setup, record(1));
+    await as.mutation(api.vault.addPasskey, passkey("cred-1", "古い名前"));
+    await as.mutation(api.vault.addPasskey, passkey("cred-1", "新しい名前"));
+    const read = await as.query(api.vault.status, {});
+    expect(read!.passkeys.map((p) => p.label)).toEqual(["新しい名前"]);
+  });
+
+  test("at most ten passkeys, and labels are kept short", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.vault.setup, record(1));
+    for (let i = 0; i < 10; i += 1) {
+      expect(await as.mutation(api.vault.addPasskey, passkey(`cred-${i}`))).toEqual({
+        status: "ok",
+      });
+    }
+    expect(await as.mutation(api.vault.addPasskey, passkey("cred-10"))).toEqual({
+      status: "tooMany",
+    });
+    // Replacing an existing one is still allowed at the limit.
+    await as.mutation(api.vault.addPasskey, passkey("cred-0", "あ".repeat(200)));
+    const read = await as.query(api.vault.status, {});
+    expect(read!.passkeys).toHaveLength(10);
+    expect(read!.passkeys.find((p) => p.credentialId === "cred-0")!.label).toHaveLength(64);
+  });
+
+  test("removing a passkey leaves the password wrapping alone", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.vault.setup, record(1));
+    await as.mutation(api.vault.addPasskey, passkey("cred-1"));
+    await as.mutation(api.vault.removePasskey, { credentialId: "cred-1" });
+    const read = await as.query(api.vault.status, {});
+    expect(read!.passkeys).toHaveLength(0);
+    expect(new Uint8Array(read!.pwWrap.ct)).toEqual(new Uint8Array([1, 2]));
   });
 });
