@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNote } from "@/lib/hooks/data";
 import { useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
+import { vault } from "@/lib/crypto/vault";
 import { useVaultUi } from "@/lib/store/vault-ui";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { moveNote, renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
@@ -35,6 +36,26 @@ import { t } from "@/lib/i18n/ja";
 
 /** Long enough to coalesce typing, short enough not to feel unsaved. */
 const TITLE_DEBOUNCE_MS = 250;
+
+/**
+ * Title saves under way. A locked note's title is encrypted as it is saved,
+ * so a save that has started must finish before the vault drops its key.
+ * Tracked here rather than per pane, since it has to outlive the pane.
+ */
+const titleSaves = new Set<Promise<void>>();
+
+function saveTitle(noteId: string, value: string): Promise<void> {
+  const saving = renameNote(noteId, value).finally(() => titleSaves.delete(saving));
+  titleSaves.add(saving);
+  return saving;
+}
+
+vault.onBeforeClose({
+  save: async () => {
+    await Promise.allSettled([...titleSaves]);
+  },
+  pending: () => titleSaves.size > 0,
+});
 
 // BlockNote touches the DOM on construction, so it never renders on the server.
 const NoteEditor = dynamic(
@@ -88,14 +109,34 @@ export function NotePane({
   const pendingTitle = useRef<{ noteId: string; value: string } | null>(null);
 
   useEffect(() => {
-    if (!draft.dirty || draft.noteId !== noteId || draft.value === title) return;
+    if (!draft.dirty || draft.noteId !== noteId || draft.value === title) {
+      // Nothing left to save. A value left behind here would be saved again
+      // later, with a fresh timestamp, over any rename made in the meantime.
+      pendingTitle.current = null;
+      return;
+    }
     pendingTitle.current = { noteId: draft.noteId, value: draft.value };
     const handle = setTimeout(() => {
       pendingTitle.current = null;
-      void renameNote(draft.noteId, draft.value);
+      void saveTitle(draft.noteId, draft.value);
     }, TITLE_DEBOUNCE_MS);
     return () => clearTimeout(handle);
   }, [draft, title, noteId]);
+
+  // A locked note's title can only be written while the vault is open, so a
+  // title still waiting on its debounce is saved before the vault closes.
+  useEffect(
+    () =>
+      vault.onBeforeClose({
+        save: async () => {
+          const pending = pendingTitle.current;
+          pendingTitle.current = null;
+          if (pending) await saveTitle(pending.noteId, pending.value);
+        },
+        pending: () => pendingTitle.current !== null,
+      }),
+    [],
+  );
 
   // A debounce still counting when the pane leaves this note, or goes away
   // entirely, would lose the edit. Keyed on the note so the cleanup runs at
@@ -104,7 +145,7 @@ export function NotePane({
     () => () => {
       const pending = pendingTitle.current;
       pendingTitle.current = null;
-      if (pending) void renameNote(pending.noteId, pending.value);
+      if (pending) void saveTitle(pending.noteId, pending.value);
     },
     [noteId],
   );

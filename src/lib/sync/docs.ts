@@ -24,6 +24,19 @@ type Handle = {
 
 const handles = new Map<string, Handle>();
 const bodyListeners = new Set<(noteId: string) => void>();
+/** Writes that have taken edits out of a buffer but not stored them yet. */
+const writesInFlight = new Set<Promise<void>>();
+
+/**
+ * Whether any typed edit is not in local storage yet: still in a buffer, or
+ * being written. The vault waits on this before closing, because a locked
+ * note's edits can only be written while its key is available.
+ */
+export function hasUnsavedEdits(): boolean {
+  if (writesInFlight.size > 0) return true;
+  for (const handle of handles.values()) if (handle.buffer.length > 0) return true;
+  return false;
+}
 
 export function onBodyChanged(listener: (noteId: string) => void): () => void {
   bodyListeners.add(listener);
@@ -80,12 +93,22 @@ async function hydrate(noteId: string, note: Note | undefined, doc: Y.Doc): Prom
 }
 
 async function flush(handle: Handle): Promise<void> {
+  if (handle.timer) clearTimeout(handle.timer);
   handle.timer = null;
   if (handle.buffer.length === 0) return;
   const merged =
     handle.buffer.length === 1 ? handle.buffer[0]! : Y.mergeUpdates(handle.buffer);
   handle.buffer = [];
+  const writing = write(handle, merged);
+  writesInFlight.add(writing);
+  try {
+    await writing;
+  } finally {
+    writesInFlight.delete(writing);
+  }
+}
 
+async function write(handle: Handle, merged: Uint8Array): Promise<void> {
   const database = db();
   const note = await database.notes.get(handle.noteId);
   if (!note) return;
@@ -261,6 +284,17 @@ export async function reloadDoc(noteId: string): Promise<void> {
 export async function flushAll(): Promise<void> {
   await Promise.all([...handles.values()].map((handle) => flush(handle)));
 }
+
+// Buffered edits to a locked note are written encrypted, so they have to be
+// saved before the vault drops its key, not after. That includes writes some
+// other flush already started: they still need the key to finish.
+vault.onBeforeClose({
+  save: async () => {
+    await flushAll();
+    await Promise.allSettled([...writesInFlight]);
+  },
+  pending: hasUnsavedEdits,
+});
 
 /**
  * Builds a document from storage without keeping it open. Used by locking,

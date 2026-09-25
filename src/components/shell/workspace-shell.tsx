@@ -9,6 +9,7 @@ import { PwaPrompts } from "@/components/shell/pwa-prompts";
 import { VaultDialog } from "@/components/vault/vault-dialog";
 import { vault } from "@/lib/crypto/vault";
 import { revokeResolvedUrls } from "@/lib/media/attachments";
+import { flushAll } from "@/lib/sync/docs";
 import { useVaultUi } from "@/lib/store/vault-ui";
 import type { FolderNode } from "@/lib/types";
 import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
@@ -32,6 +33,22 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       }),
     [],
   );
+
+  // A phone can suspend or kill a backgrounded app without warning. Writing
+  // buffered edits as soon as the app is hidden means none are lost, and for
+  // a locked note they are written while the vault can still encrypt them.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") void flushAll();
+    };
+    const onPageHide = () => void flushAll();
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("pagehide", onPageHide);
+    };
+  }, []);
 
   // A folder can be marked locked while some of its notes are still plaintext,
   // for example if the tab closed mid-cascade. Finish the job as soon as the

@@ -42,10 +42,25 @@ export type VaultRecord = {
  * a tab close or the auto-lock timer all drop it, and the next unlock is one
  * Face ID prompt away.
  */
+/**
+ * Work that has to finish while the key is still available, such as writing
+ * edits that are still buffered. `pending` says whether any is left, so a
+ * close can keep saving until nothing is.
+ */
+export type BeforeCloseHook = {
+  save: () => Promise<void> | void;
+  pending?: () => boolean;
+};
+
+/** How long a close waits for buffered work before closing anyway. */
+const CLOSE_GRACE_MS = 1500;
+
 class VaultSession {
   private key: CryptoKey | null = null;
   private noteKeys = new Map<string, CryptoKey>();
   private listeners = new Set<(unlocked: boolean) => void>();
+  private beforeClose = new Set<BeforeCloseHook>();
+  private closing: Promise<void> | null = null;
   private lockTimer: ReturnType<typeof setTimeout> | null = null;
   private autoLockMs = 5 * 60_000;
 
@@ -71,7 +86,53 @@ class VaultSession {
   touch() {
     if (!this.key) return;
     if (this.lockTimer) clearTimeout(this.lockTimer);
-    this.lockTimer = setTimeout(() => this.lock(), this.autoLockMs);
+    this.lockTimer = setTimeout(() => void this.close(), this.autoLockMs);
+  }
+
+  /** Registers work to finish before the vault closes. Returns an unregister. */
+  onBeforeClose(hook: BeforeCloseHook): () => void {
+    this.beforeClose.add(hook);
+    return () => this.beforeClose.delete(hook);
+  }
+
+  /**
+   * Closes the vault after saving what is still buffered.
+   *
+   * Dropping the key first lost the last half second of typing in a locked
+   * note: those edits can only be written encrypted, and once the key was gone
+   * they were thrown away with the editor. Saving repeats while anything is
+   * still pending, because typing can continue during a save, then gives up
+   * after a short grace period so a stuck save cannot keep the vault open.
+   */
+  close(): Promise<void> {
+    if (!this.key) return Promise.resolve();
+    this.closing ??= (async () => {
+      const deadline = Date.now() + CLOSE_GRACE_MS;
+      try {
+        do {
+          const remaining = Math.max(0, deadline - Date.now());
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          await Promise.race([
+            Promise.allSettled([...this.beforeClose].map(async (hook) => hook.save())),
+            new Promise((resolve) => {
+              timer = setTimeout(resolve, remaining);
+            }),
+          ]);
+          clearTimeout(timer);
+          // Give the event loop a turn before asking again. Pending work may be
+          // waiting on I/O that only completes in a later task, and asking from
+          // microtasks alone would spin without ever letting it finish.
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        } while (
+          [...this.beforeClose].some((hook) => hook.pending?.() ?? false) &&
+          Date.now() < deadline
+        );
+      } finally {
+        this.closing = null;
+        this.lock();
+      }
+    })();
+    return this.closing;
   }
 
   adopt(key: CryptoKey) {
@@ -81,6 +142,10 @@ class VaultSession {
     this.emit();
   }
 
+  /**
+   * Drops the key at once, without saving anything first. For signing out and
+   * switching accounts; everything else goes through `close`.
+   */
   lock() {
     if (this.lockTimer) clearTimeout(this.lockTimer);
     this.lockTimer = null;

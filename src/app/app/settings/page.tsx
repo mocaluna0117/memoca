@@ -184,7 +184,7 @@ export default function SettingsPage() {
                   状態：{unlocked ? "解除中" : t.vault.locked}
                 </span>
                 {unlocked ? (
-                  <Button variant="outline" size="sm" onClick={() => vault.lock()}>
+                  <Button variant="outline" size="sm" onClick={() => void vault.close()}>
                     {t.vault.lockNow}
                   </Button>
                 ) : (
