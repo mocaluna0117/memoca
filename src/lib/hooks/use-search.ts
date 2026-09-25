@@ -48,7 +48,7 @@ export function useSearch(query: string): { hits: SearchHit[]; total: number } {
         .map((note) => ({
           noteId: note.noteId,
           folderId: note.folderId,
-          title: note.locked ? "🔒 ロック中のメモ" : (note.title ?? ""),
+          title: note.locked ? "ロックされたメモ" : (note.title ?? ""),
           body: note.locked && !unlocked ? null : (text.get(note.noteId) ?? null),
           folderName: note.folderId ? (folderName.get(note.folderId) ?? "") : "",
           locked: note.locked,

@@ -28,7 +28,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { useNote } from "@/lib/hooks/data";
 import { useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { vault } from "@/lib/crypto/vault";
-import { useVaultUi } from "@/lib/store/vault-ui";
+import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
+import { requestVault } from "@/lib/store/vault-gate";
+import { useOpenVaultLabel } from "@/lib/vault/use-vault-labels";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { moveNote, renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { lockNote, unlockNote } from "@/lib/vault/actions";
@@ -82,7 +84,9 @@ export function NotePane({
   const note = useNote(noteId);
   const title = useNoteTitle(note);
   const unlocked = useVaultUnlocked();
-  const requestUnlock = useVaultUi((s) => s.requestUnlock);
+  const openLabel = useOpenVaultLabel();
+  const menu = useMenuDialog();
+  const menuTrigger = useRef<HTMLButtonElement>(null);
 
   /**
    * The title field is a controlled draft that knows which note it belongs to
@@ -167,23 +171,38 @@ export function NotePane({
   }
 
   const toggleLock = async () => {
+    const removing = note.locked;
+    // Asked straight from the tap, with nothing awaited first, so the prompt
+    // can start Face ID / Touch ID inside it. Closing it means "not now".
+    const answer = await requestVault(
+      removing
+        ? { kind: "unlockNote", title: unlocked ? title || null : null }
+        : { kind: "lockNote", title: title || null },
+      { gesture: true, returnFocus: menuTrigger.current },
+    );
+    if (!answer.ok) return;
     setBusy(true);
     try {
-      // Closing the prompt means "not now"; it never leads to creating a vault.
-      const ready = unlocked || (await requestUnlock());
-      if (!ready) return;
-      const outcome = note.locked
-        ? await unlockNote(client, noteId)
-        : await lockNote(client, noteId);
+      const outcome = removing ? await unlockNote(client, noteId) : await lockNote(client, noteId);
       if (outcome.status === "ok") {
-        toast.success(note.locked ? "ロックを解除しました" : "ロックしました");
+        toast.success(removing ? "メモのロックを外しました" : "メモをロックしました");
       } else if (outcome.status === "skipped" && outcome.reason === "behind") {
         toast.error("同期が終わってからもう一度お試しください。");
       } else if (outcome.status === "skipped" && outcome.reason === "unsent") {
         toast.error("未送信の変更があります。同期後にもう一度お試しください。");
       } else {
-        toast.error("処理できませんでした。");
+        toast.error(
+          removing
+            ? "ロックを外せませんでした。もう一度お試しください。"
+            : "ロックできませんでした。もう一度お試しください。",
+        );
       }
+    } catch {
+      toast.error(
+        removing
+          ? "ロックを外せませんでした。インターネット接続を確認して、もう一度お試しください。"
+          : "ロックできませんでした。インターネット接続を確認して、もう一度お試しください。",
+      );
     } finally {
       setBusy(false);
     }
@@ -222,11 +241,15 @@ export function NotePane({
 
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon" aria-label="メモの操作">
+            <Button ref={menuTrigger} variant="ghost" size="icon" aria-label="メモの操作">
               <MoreHorizontal className="size-5" aria-hidden />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuContent
+            align="end"
+            className="w-48"
+            onCloseAutoFocus={menu.onCloseAutoFocus}
+          >
             <DropdownMenuItem onSelect={() => void setNotePinned(noteId, !note.pinned)}>
               {note.pinned ? (
                 <PinOff className="size-4" aria-hidden />
@@ -235,11 +258,14 @@ export function NotePane({
               )}
               {note.pinned ? t.action.unpin : t.action.pin}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => setMoving(true)}>
+            <DropdownMenuItem onSelect={() => menu.openDialog(() => setMoving(true))}>
               <FolderInput className="size-4" aria-hidden />
               {t.action.move}
             </DropdownMenuItem>
-            <DropdownMenuItem disabled={busy} onSelect={() => void toggleLock()}>
+            <DropdownMenuItem
+              disabled={busy}
+              onSelect={() => menu.openDialog(() => void toggleLock())}
+            >
               {note.locked ? (
                 <LockOpen className="size-4" aria-hidden />
               ) : (
@@ -272,10 +298,18 @@ export function NotePane({
         {hidden ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
             <Lock className="text-muted-foreground size-8" aria-hidden />
-            <p className="text-sm font-medium">{t.empty.lockedNote}</p>
-            <p className="text-muted-foreground text-xs">{t.empty.lockedHint}</p>
-            <Button className="mt-2" onClick={() => void requestUnlock()}>
-              {t.vault.unlock}
+            <p className="text-sm font-medium">このメモはロックされています</p>
+            <p className="text-muted-foreground text-xs">読むには金庫を開いてください。</p>
+            <Button
+              className="mt-2"
+              onClick={(event) =>
+                void requestVault(
+                  { kind: "open", from: "note" },
+                  { gesture: true, returnFocus: event.currentTarget },
+                )
+              }
+            >
+              {openLabel}
             </Button>
           </div>
         ) : (

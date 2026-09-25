@@ -35,7 +35,7 @@ export default function PrivacyPage() {
       <section className="space-y-2">
         <h2 className="font-medium">パスワードを忘れた場合</h2>
         <p className="text-muted-foreground text-sm">
-          ロック用のパスワード、リカバリーキー、登録した生体認証をすべて失うと、
+          金庫のパスワード、リカバリーキー、登録したパスキー（Face ID など）をすべて失うと、
           ロックしたメモは復元できません。提供者による復旧もできません。
         </p>
       </section>

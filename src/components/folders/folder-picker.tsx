@@ -120,7 +120,7 @@ export function FolderPicker({
                   ) : (
                     <FolderIcon className="size-4 opacity-70" aria-hidden />
                   )}
-                  {node.name ?? "ロック中のフォルダ"}
+                  {node.name ?? "ロックされたフォルダ"}
                 </CommandItem>
               ))}
             </CommandGroup>

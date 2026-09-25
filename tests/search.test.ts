@@ -25,7 +25,7 @@ const rows = [
   {
     noteId: "n3",
     folderId: null,
-    title: "🔒 ロック中のメモ",
+    title: "ロックされたメモ",
     body: null,
     folderName: "秘密",
     locked: true,

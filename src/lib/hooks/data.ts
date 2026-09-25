@@ -118,7 +118,7 @@ export function useTrash(): TrashEntry[] {
       entries.push({
         kind: "folder",
         id: folder.folderId,
-        label: folder.name ?? "🔒 ロック中のフォルダ",
+        label: folder.name ?? "ロックされたフォルダ",
         deletedAt: folder.deletedAt,
         locked: folder.locked,
       });
@@ -129,7 +129,7 @@ export function useTrash(): TrashEntry[] {
       entries.push({
         kind: "note",
         id: note.noteId,
-        label: note.locked ? "🔒 ロック中のメモ" : note.title || "無題のメモ",
+        label: note.locked ? "ロックされたメモ" : note.title || "無題のメモ",
         deletedAt: note.deletedAt,
         locked: note.locked,
       });

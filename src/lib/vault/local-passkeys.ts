@@ -1,5 +1,7 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
+import { platformAuthenticatorAvailable } from "@/lib/crypto/passkey";
 import { getMeta, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 
@@ -29,8 +31,45 @@ export async function rememberLocalPasskey(credentialId: string): Promise<void> 
   await setMeta(META.passkeyLocal, known);
 }
 
+/**
+ * Whether this device has a platform authenticator (Face ID, Touch ID and so
+ * on). The browser only answers asynchronously, so it is asked once at start
+ * and kept, for the same reason as above: a tap cannot wait for it.
+ */
+let platform: boolean | null = null;
+const platformListeners = new Set<() => void>();
+
+export function loadPlatformSupport(): void {
+  if (platform !== null) return;
+  void platformAuthenticatorAvailable().then((available) => {
+    platform = available;
+    for (const listener of platformListeners) listener();
+  });
+}
+
+export function platformPasskeyAvailable(): boolean {
+  return platform === true;
+}
+
+export function usePlatformPasskey(): boolean {
+  return useSyncExternalStore(
+    (listener) => {
+      platformListeners.add(listener);
+      return () => platformListeners.delete(listener);
+    },
+    () => platform === true,
+    () => false,
+  );
+}
+
 /** For tests: forget everything in memory. */
 export function resetLocalPasskeysForTests(): void {
   known = [];
   loaded = null;
+  platform = null;
+}
+
+/** For tests: pretend the platform authenticator question was answered. */
+export function setPlatformSupportForTests(available: boolean): void {
+  platform = available;
 }

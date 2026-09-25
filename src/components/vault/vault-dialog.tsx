@@ -1,10 +1,12 @@
 "use client";
 
+import { useLiveQuery } from "dexie-react-hooks";
 import { useMutation } from "convex/react";
 import { Fingerprint, KeyRound, Loader2 } from "lucide-react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Fragment, useEffect, useRef, useState } from "react";
 import { api } from "@convex/_generated/api";
+import { PasswordInput } from "@/components/vault/password-input";
 import { RecoveryKeyView, recordKeptKey } from "@/components/vault/recovery-key-view";
 import { Button } from "@/components/ui/button";
 import {
@@ -21,9 +23,10 @@ import {
   PasskeyCancelledError,
   PasskeyNeedsRetryError,
   PrfUnsupportedError,
-  platformAuthenticatorAvailable,
   startPasskey,
 } from "@/lib/crypto/passkey";
+import { unlockMethodName, withMethod } from "@/lib/crypto/platform";
+import { wipe } from "@/lib/crypto/primitives";
 import {
   RECOVERY_FORMAT,
   RECOVERY_KEY_LENGTH,
@@ -32,86 +35,318 @@ import {
   recoveryKeyCharacters,
 } from "@/lib/crypto/recovery-key";
 import {
+  openVaultRaw,
+  rewrapPasswordFromRaw,
   setUpVault,
   unlockWithPassword,
   unlockWithPrf,
   unlockWithRecoveryKey,
-  vault,
 } from "@/lib/crypto/vault";
+import { db } from "@/lib/db";
+import { useMediaQuery } from "@/lib/hooks/use-client-value";
+import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
+import { useKeyboardInset } from "@/lib/hooks/use-keyboard-inset";
 import { useOnline } from "@/lib/hooks/use-online";
-import { useVaultUi } from "@/lib/store/vault-ui";
-import { localPasskeyIds, rememberLocalPasskey } from "@/lib/vault/local-passkeys";
-import { useVaultRecord } from "@/lib/vault/record";
 import { t } from "@/lib/i18n/ja";
+import { type AutoPasskey, type VaultRequest, useVaultGate } from "@/lib/store/vault-gate";
+import { subtreeIds } from "@/lib/tree";
+import { cn } from "@/lib/utils";
+import {
+  type GateContext,
+  type GateView,
+  dismissResult,
+  gateReducer,
+  holdsOpen,
+  startGate,
+} from "@/lib/vault/gate-machine";
+import {
+  localPasskeyIds,
+  rememberLocalPasskey,
+  usePlatformPasskey,
+} from "@/lib/vault/local-passkeys";
+import {
+  type VaultPurpose,
+  needsServer,
+  passkeyAction,
+  purposeCopy,
+} from "@/lib/vault/purpose";
+import { useVaultRecord } from "@/lib/vault/record";
 
 const MIN_PASSWORD = 8;
 
+/** How long the prompt waits for the vault record before calling it offline. */
+const LOADING_GRACE_MS = 10_000;
+
+/** Lets a "確認しています…" state paint before Argon2 blocks the main thread. */
+const nextFrame = () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+/** The one prompt that opens, creates or confirms the vault for a purpose. */
 export function VaultDialog() {
-  const { open, close } = useVaultUi();
-  // The device's copy of the vault record, so opening never waits on the
-  // network and works offline.
+  const request = useVaultGate((s) => s.request);
+  // Keyed per request, so nothing typed for one survives into the next.
+  return request ? <VaultPrompt key={request.id} request={request} /> : null;
+}
+
+/** How many notes a folder lock would change, for the confirmation text. */
+function useFolderNoteCount(purpose: VaultPurpose): number | null {
+  const folderId =
+    purpose.kind === "lockFolder" || purpose.kind === "unlockFolder" ? purpose.folderId : null;
+  const locking = purpose.kind === "lockFolder";
+  return (
+    useLiveQuery(
+      async () => {
+        if (!folderId) return null;
+        const inside = new Set(subtreeIds(await db().folders.toArray(), folderId));
+        return db()
+          .notes.filter(
+            (note) =>
+              note.folderId !== null &&
+              inside.has(note.folderId) &&
+              !note.purged &&
+              note.deletedAt === null &&
+              note.locked !== locking,
+          )
+          .count();
+      },
+      [folderId, locking],
+      null,
+    ) ?? null
+  );
+}
+
+function VaultPrompt({ request }: { request: VaultRequest }) {
+  const { purpose } = request;
+  const finish = useVaultGate((s) => s.finish);
   const availability = useVaultRecord((s) => s.availability);
-  const status = useVaultRecord((s) => s.record);
+  const record = useVaultRecord((s) => s.record);
   const online = useOnline();
+  const unlocked = useVaultUnlocked();
+  const platform = usePlatformPasskey();
   const setup = useMutation(api.vault.setup);
   const markChecked = useMutation(api.vault.markRecoveryChecked);
+  const rewrap = useMutation(api.vault.rewrap);
 
+  const passkeyReady = platform && (record?.passkeys.length ?? 0) > 0;
+  const ctx: GateContext = { availability, online, unlocked, passkeyReady };
+  const [method] = useState(() => unlockMethodName());
+  const noteCount = useFolderNoteCount(purpose);
+  const copy = purposeCopy(purpose, { method, noteCount });
+  const blockedOffline = needsServer(purpose) && !online;
+
+  const [gate, dispatch] = useReducer(gateReducer, undefined, () => {
+    const start = startGate(purpose, ctx);
+    if ("immediate" in start) return { view: "confirm" as GateView, notice: null };
+    // A sheet the tap already started belongs on the passkey screen.
+    if (request.auto && start.view !== "create") return { view: "passkey" as GateView, notice: null };
+    return { view: start.view, notice: null };
+  });
+  const { view, notice } = gate;
+
+  const [error, setError] = useState<string | null>(null);
+  // "passkey": a system sheet is up, which closing may cancel. "work": a key
+  // is being derived or saved, which closing must not interrupt.
+  const [pending, setPending] = useState<"passkey" | "work" | null>(null);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [recoveryInput, setRecoveryInput] = useState("");
-  const [useRecovery, setUseRecovery] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [freshKey, setFreshKey] = useState<string | null>(null);
-  const [freshIv, setFreshIv] = useState<ArrayBuffer | null>(null);
-  const [biometricReady, setBiometricReady] = useState(false);
-  // One attempt at a time. Enter in the password field bypasses the disabled
-  // button, and a second attempt finishing first would clear `busy` while the
-  // first is still deriving a key or waiting for the server.
-  const inFlight = useRef(false);
-  // The passkey to ask on its own next time, after a combined request came
-  // back without its PRF output.
   const [retryPasskey, setRetryPasskey] = useState<string | null>(null);
-  const passkeyAbort = useRef<AbortController | null>(null);
-
-  // Clear the form the moment the dialog closes, so a password never lingers
-  // in memory behind a closed sheet.
-  const [wasOpen, setWasOpen] = useState(open);
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (!open) {
-      setPassword("");
-      setConfirm("");
-      setRecoveryInput("");
-      setUseRecovery(false);
-      setError(null);
-      setFreshKey(null);
-      setRetryPasskey(null);
-    }
-  }
-
-  // A system sheet left open by a closed prompt would unlock nothing useful.
-  useEffect(() => {
-    if (!open) passkeyAbort.current?.abort();
-  }, [open]);
+  const [freshKey, setFreshKey] = useState<{ key: string; iv: ArrayBuffer } | null>(null);
+  const [newPassword, setNewPassword] = useState<{ open: boolean; value: string; again: string }>({
+    open: false,
+    value: "",
+    again: "",
+  });
+  const abort = useRef<AbortController | null>(null);
+  // The recovery key that opened the vault, kept only while the offer to set a
+  // new password is on screen.
+  const recoveredKey = useRef<Uint8Array | null>(null);
+  const content = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    void platformAuthenticatorAvailable().then(setBiometricReady);
+    dispatch({ type: "context", ctx: { availability, online, unlocked, passkeyReady } });
+  }, [availability, online, unlocked, passkeyReady]);
+
+  // Opened while the vault was already open and nothing needs confirming.
+  useEffect(() => {
+    if ("immediate" in startGate(purpose, ctx)) finish({ ok: true });
+    // Only at mount: later changes are handled by the reducer.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Only the server's answer decides between creating and opening. "unknown"
-  // means neither the device nor the server has answered yet, which must never
-  // read as "no vault": offering to create one then is how an existing vault
-  // could be replaced.
-  const unknown = availability === "unknown";
-  const loading = unknown && online;
-  const unreachable = unknown && !online;
-  const creating = availability === "none";
-  // While a key is being derived or saved, or the one-time recovery key is on
-  // screen, closing would lose work that cannot be redone.
-  const holdOpen = busy || freshKey !== null;
+  useEffect(() => {
+    if (view !== "loading") return;
+    const timer = setTimeout(() => dispatch({ type: "loadingTimedOut" }), LOADING_GRACE_MS);
+    return () => clearTimeout(timer);
+  }, [view]);
 
-  const runSetup = async () => {
+  useEffect(
+    () => () => {
+      abort.current?.abort();
+      if (recoveredKey.current) wipe(recoveredKey.current);
+    },
+    [],
+  );
+
+  // Focus the screen's main control. A text field only with a mouse or
+  // trackpad: on a phone it would raise the keyboard over the prompt.
+  const fine = useMediaQuery("(pointer: fine)");
+  useEffect(() => {
+    const target = content.current?.querySelector<HTMLElement>("[data-autofocus]");
+    if (!target) return;
+    if (target instanceof HTMLInputElement && !fine) return;
+    target.focus();
+  }, [view, fine, newPassword.open]);
+
+  const narrow = useMediaQuery("(max-width: 639px)");
+  const keyboard = useKeyboardInset();
+
+  const ok = () => finish({ ok: true });
+  const cancel = () => {
+    abort.current?.abort();
+    finish(dismissResult(view) === "ok" ? { ok: true } : { ok: false, reason: "cancelled" });
+  };
+
+  const handleAttempt = ({ attempt, controller }: AutoPasskey) => {
+    abort.current = controller;
+    setPending("passkey");
+    setError(null);
+    void attempt
+      .then(async ({ entry, output }) => {
+        const full = record?.passkeys.find((p) => p.credentialId === entry.credentialId);
+        if (!full) throw new PrfUnsupportedError();
+        try {
+          await unlockWithPrf(full, output);
+        } catch {
+          // The passkey answered, but its secret no longer opens this vault.
+          throw new StalePasskeyError();
+        }
+        void rememberLocalPasskey(entry.credentialId);
+        setRetryPasskey(null);
+        ok();
+      })
+      .catch((cause) => {
+        if (controller.signal.aborted || cause instanceof PasskeyCancelledError) return;
+        if (cause instanceof PasskeyNeedsRetryError) {
+          setRetryPasskey(cause.credentialId);
+          setError(`もう一度 ${method} で確認してください。`);
+          return;
+        }
+        setError(
+          cause instanceof StalePasskeyError
+            ? withMethod(method, "の登録が古くなっています。パスワードで開いたあと、設定で登録し直してください。")
+            : cause instanceof PrfUnsupportedError
+              ? cause.message
+              : withMethod(method, "で開けませんでした。パスワードを使ってください。"),
+        );
+        dispatch({ type: "passkeyFailed" });
+      })
+      .finally(() => {
+        if (abort.current === controller) abort.current = null;
+        setPending(null);
+      });
+  };
+
+  // Started from the tap that asked, before the prompt was even drawn.
+  const autoHandled = useRef(false);
+  useEffect(() => {
+    if (autoHandled.current || !request.auto) return;
+    autoHandled.current = true;
+    handleAttempt(request.auto);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  /** One tap, one system sheet: nothing is awaited before it starts. */
+  const runPasskey = () => {
+    if (!record || pending) return;
+    const controller = new AbortController();
+    const attempt = startPasskey(record.passkeys, localPasskeyIds(), {
+      signal: controller.signal,
+      only: retryPasskey ?? undefined,
+    });
+    handleAttempt({ attempt, controller });
+  };
+
+  const work = async (run: () => Promise<void>) => {
+    if (pending) return;
+    setPending("work");
+    setError(null);
+    await nextFrame();
+    try {
+      await run();
+    } finally {
+      setPending(null);
+    }
+  };
+
+  const submitPassword = () =>
+    work(async () => {
+      if (!record) return;
+      if (password.length === 0) {
+        setError("金庫のパスワードを入力してください。");
+        return;
+      }
+      try {
+        await unlockWithPassword(record, password);
+      } catch {
+        setError(t.vault.wrongPassword);
+        return;
+      }
+      ok();
+    });
+
+  const submitRecovery = () =>
+    work(async () => {
+      if (!record) return;
+      const parsed = parseRecoveryKey(recoveryInput);
+      if (!parsed.ok) {
+        setError(
+          parsed.reason === "legacy"
+            ? "このリカバリーキーは、以前の不具合で一部しか表示されていなかったため使えません。金庫のパスワードで開いたあと、設定でリカバリーキーを作り直してください。"
+            : `リカバリーキーは ${RECOVERY_KEY_LENGTH} 文字です（いま ${parsed.length} 文字）。`,
+        );
+        return;
+      }
+      try {
+        await unlockWithRecoveryKey(record, parsed.key);
+      } catch {
+        setError("このリカバリーキーでは開けません。");
+        return;
+      }
+      recoveredKey.current = parsed.key;
+      dispatch({ type: "openedWithRecovery" });
+    });
+
+  const saveNewPassword = () =>
+    work(async () => {
+      if (!record || !recoveredKey.current) return;
+      if (newPassword.value.length < MIN_PASSWORD) {
+        setError(`新しいパスワードは ${MIN_PASSWORD} 文字以上にしてください。`);
+        return;
+      }
+      if (newPassword.value !== newPassword.again) {
+        setError("2 つの新しいパスワードが一致しません。");
+        return;
+      }
+      const raw = await openVaultRaw(record, { recoveryKey: recoveredKey.current });
+      try {
+        const next = await rewrapPasswordFromRaw(raw, newPassword.value);
+        const result = await rewrap({ ...next, expectedVersion: record.version });
+        if (result.status === "stale") {
+          setError("ほかの端末で金庫の設定が変わりました。あとで設定からもう一度お試しください。");
+          return;
+        }
+        if (result.status !== "ok") throw new Error(result.status);
+      } catch {
+        setError("変更できませんでした。インターネット接続を確認して、もう一度お試しください。");
+        return;
+      } finally {
+        wipe(raw);
+      }
+      toast.success("金庫のパスワードを再設定しました");
+      ok();
+    });
+
+  const submitCreate = () => {
     if (password.length < MIN_PASSWORD) {
       setError(`パスワードは ${MIN_PASSWORD} 文字以上にしてください。`);
       return;
@@ -120,141 +355,72 @@ export function VaultDialog() {
       setError("2 つのパスワードが一致しません。");
       return;
     }
-    if (inFlight.current) return;
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await setUpVault(password, (record) =>
-        setup({ ...record, recoveryFormat: RECOVERY_FORMAT }),
-      );
-      if (result.status !== "ok") {
-        // A vault already exists, made on another device or a moment ago in
-        // another tab. Its key is the one every locked note uses.
-        setPassword("");
-        setConfirm("");
-        setError("このアカウントにはすでに金庫があります。金庫のパスワードで開いてください。");
-        return;
-      }
-      setFreshKey(formatRecoveryKey(result.recoveryKey));
-      setFreshIv(result.recWrapIv);
-      result.recoveryKey.fill(0);
-    } catch {
-      setError("設定できませんでした。時間をおいて試してください。");
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
-  };
-
-  const runUnlock = async () => {
-    if (!status || inFlight.current) return;
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
-    try {
-      if (useRecovery) {
-        const parsed = parseRecoveryKey(recoveryInput);
-        if (!parsed.ok) {
-          setError(
-            parsed.reason === "legacy"
-              ? "このリカバリーキーは、以前の不具合で一部しか表示されていなかったため使えません。金庫のパスワードで開いたあと、設定でリカバリーキーを作り直してください。"
-              : `リカバリーキーは ${RECOVERY_KEY_LENGTH} 文字です（いま ${parsed.length} 文字）。`,
-          );
-          return;
-        }
-        await unlockWithRecoveryKey(status, parsed.key);
-      } else {
-        await unlockWithPassword(status, password);
-      }
-      close(true);
-    } catch {
-      setError(useRecovery ? "このリカバリーキーでは開けません。" : t.vault.wrongPassword);
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
-  };
-
-  /**
-   * One tap, one system sheet. Before, every registered passkey was tried in
-   * turn, including ones on other devices, so the browser showed its chooser or
-   * a QR code, and cancelling one sheet opened the next.
-   */
-  const runBiometric = () => {
-    if (!status || status.passkeys.length === 0 || inFlight.current) return;
-    inFlight.current = true;
-    setBusy(true);
-    setError(null);
-    const controller = new AbortController();
-    passkeyAbort.current = controller;
-    // Nothing is awaited before this call, so the tap still counts for it.
-    void startPasskey(status.passkeys, localPasskeyIds(), {
-      signal: controller.signal,
-      only: retryPasskey ?? undefined,
-    })
-      .then(async ({ entry, output }) => {
-        const full = status.passkeys.find((p) => p.credentialId === entry.credentialId)!;
-        await unlockWithPrf(full, output);
-        void rememberLocalPasskey(entry.credentialId);
-        setRetryPasskey(null);
-        close(true);
-      })
-      .catch((cause) => {
-        if (cause instanceof PasskeyCancelledError) return;
-        if (cause instanceof PasskeyNeedsRetryError) {
-          setRetryPasskey(cause.credentialId);
-          setError("もう一度 Face ID / Touch ID で確認してください。");
-          return;
-        }
-        setError(
-          cause instanceof PrfUnsupportedError
-            ? cause.message
-            : "Face ID / Touch ID で開けませんでした。パスワードを使ってください。",
+    dispatch({ type: "setupStarted" });
+    void work(async () => {
+      try {
+        const result = await setUpVault(password, (prepared) =>
+          setup({ ...prepared, recoveryFormat: RECOVERY_FORMAT }),
         );
-      })
-      .finally(() => {
-        if (passkeyAbort.current === controller) passkeyAbort.current = null;
-        inFlight.current = false;
-        setBusy(false);
-      });
+        if (result.status !== "ok") {
+          // A vault already exists, made on another device or a moment ago in
+          // another tab. Its key is the one every locked note uses.
+          setPassword("");
+          setConfirm("");
+          dispatch({ type: "setupAlready" });
+          return;
+        }
+        setFreshKey({ key: formatRecoveryKey(result.recoveryKey), iv: result.recWrapIv });
+        wipe(result.recoveryKey);
+        dispatch({ type: "setupSucceeded" });
+      } catch {
+        setError("金庫を作成できませんでした。インターネット接続を確認して、もう一度お試しください。");
+        dispatch({ type: "setupFailed" });
+      }
+    });
   };
+
+  const locked = pending === "work" || holdsOpen(view);
 
   return (
     <Dialog
-      open={open}
+      open
       onOpenChange={(next) => {
-        if (!next && !holdOpen) close(vault.isUnlocked);
+        if (!next && !locked) cancel();
       }}
     >
       <DialogContent
-        className="sm:max-w-md"
-        showCloseButton={!holdOpen}
-        onEscapeKeyDown={(event) => holdOpen && event.preventDefault()}
-        onInteractOutside={(event) => holdOpen && event.preventDefault()}
+        ref={content}
+        className={cn(
+          "sm:max-w-md",
+          // On a phone, a sheet from the bottom, lifted above the keyboard.
+          "max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[85dvh] max-sm:max-w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:rounded-b-none max-sm:rounded-t-2xl max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]",
+        )}
+        style={narrow ? { bottom: keyboard } : undefined}
+        showCloseButton={!locked}
+        onOpenAutoFocus={(event) => event.preventDefault()}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          if (request.returnFocus?.isConnected) request.returnFocus.focus();
+        }}
+        onEscapeKeyDown={(event) => locked && event.preventDefault()}
+        onInteractOutside={(event) => locked && event.preventDefault()}
       >
-        {freshKey ? (
-          // Each view is keyed so React builds fresh elements. Otherwise the
-          // focused 設定する button is reused inside the key view, and one more
-          // Enter could move past the one-time key before it was read.
-          <Fragment key="recovery">
-            <RecoveryKeyView
-              recoveryKey={freshKey}
-              onConfirmed={async () => {
-                if (freshIv) {
-                  const outcome = await recordKeptKey(() => markChecked({ recWrapIv: freshIv }));
-                  if (outcome === "stale") {
-                    toast.error(
-                      "ほかの端末でリカバリーキーが作り直されました。このキーは使えません。設定で作り直してください。",
-                    );
-                  }
-                }
-                close(true);
-              }}
-            />
-          </Fragment>
-        ) : unreachable ? (
-          <Fragment key="offline">
+        {view === "createKey" && freshKey ? (
+          <RecoveryKeyView
+            recoveryKey={freshKey.key}
+            onConfirmed={async () => {
+              const outcome = await recordKeptKey(() => markChecked({ recWrapIv: freshKey.iv }));
+              if (outcome === "stale") {
+                toast.error(
+                  "ほかの端末でリカバリーキーが作り直されました。このキーは使えません。設定で作り直してください。",
+                );
+              }
+              dispatch({ type: "keyConfirmed", passkeyOffer: false });
+              ok();
+            }}
+          />
+        ) : view === "offline" ? (
+          <>
             <DialogHeader>
               <DialogTitle>金庫を開けません</DialogTitle>
               <DialogDescription>
@@ -262,162 +428,322 @@ export function VaultDialog() {
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => close(false)}>
+              <Button variant="ghost" onClick={cancel} data-autofocus>
                 {t.action.close}
               </Button>
             </DialogFooter>
-          </Fragment>
-        ) : loading ? (
-          <Fragment key="loading">
-            <DialogHeader>
-              <DialogTitle>金庫の情報を読み込んでいます…</DialogTitle>
-              <DialogDescription>しばらくお待ちください。</DialogDescription>
-            </DialogHeader>
-            <div className="flex justify-center py-4">
-              <Loader2 className="text-muted-foreground size-5 animate-spin" aria-hidden />
-            </div>
+          </>
+        ) : view === "loading" ? (
+          <>
+            <Header title={copy.title} body={copy.body} />
+            <p role="status" className="text-muted-foreground flex items-center gap-2 text-sm">
+              <Loader2 className="size-4 animate-spin" aria-hidden />
+              金庫の情報を読み込んでいます…
+            </p>
             <DialogFooter>
-              <Button variant="ghost" onClick={() => close(false)}>
+              <Button variant="ghost" onClick={cancel}>
                 {t.action.cancel}
               </Button>
             </DialogFooter>
-          </Fragment>
-        ) : creating ? (
-          <Fragment key="create">
-            <DialogHeader>
-              <DialogTitle>{t.vault.setupTitle}</DialogTitle>
-              <DialogDescription>
-                ロックしたメモは、このパスワードから作った鍵で端末の中だけで暗号化されます。
-                サーバーには暗号文しか届きません。
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="vault-password">{t.vault.password}</Label>
-                <Input
-                  id="vault-password"
-                  type="password"
-                  value={password}
-                  autoComplete="new-password"
-                  onChange={(event) => setPassword(event.target.value)}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="vault-confirm">{t.vault.passwordAgain}</Label>
-                <Input
-                  id="vault-confirm"
-                  type="password"
-                  value={confirm}
-                  autoComplete="new-password"
-                  onChange={(event) => setConfirm(event.target.value)}
-                />
-              </div>
-              {error ? <p className="text-destructive text-sm">{error}</p> : null}
-              {!online ? (
-                <p className="text-muted-foreground text-sm">
-                  金庫の作成にはインターネット接続が必要です。
-                </p>
-              ) : null}
-            </div>
+          </>
+        ) : view === "confirm" ? (
+          <>
+            <Header title={copy.title} body={copy.body} />
+            {blockedOffline ? <OfflineNote text={copy.offline} /> : null}
             <DialogFooter>
-              <Button variant="ghost" onClick={() => close(false)} disabled={busy}>
+              <Button variant="ghost" onClick={cancel}>
                 {t.action.cancel}
               </Button>
-              <Button onClick={runSetup} disabled={busy || !online}>
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                設定する
+              <Button
+                onClick={ok}
+                disabled={blockedOffline}
+                variant={purpose.kind.startsWith("unlock") ? "destructive" : "default"}
+                data-autofocus
+              >
+                {copy.verb}
               </Button>
             </DialogFooter>
-          </Fragment>
-        ) : (
-          <Fragment key="unlock">
+          </>
+        ) : view === "recovered" ? (
+          <>
             <DialogHeader>
-              <DialogTitle>{t.vault.unlock}</DialogTitle>
+              <DialogTitle>新しいパスワードを設定しますか？</DialogTitle>
               <DialogDescription>
-                ロックしたメモを開くために、金庫を解除します。
+                リカバリーキーで開きました。新しいパスワードを決めておくと、次からはパスワードで開けます。
               </DialogDescription>
             </DialogHeader>
-
-            <div className="space-y-3">
-              {biometricReady && status && status.passkeys.length > 0 ? (
-                <Button
-                  variant="outline"
-                  className="w-full gap-2"
-                  onClick={runBiometric}
-                  disabled={busy}
-                >
-                  <Fingerprint className="size-4" aria-hidden />
-                  {t.vault.biometric}
-                </Button>
-              ) : null}
-
-              {useRecovery ? (
-                <div className="space-y-1.5">
-                  <Label htmlFor="vault-recovery">{t.vault.recoveryKey}</Label>
-                  <Input
-                    id="vault-recovery"
-                    value={recoveryInput}
-                    onChange={(event) => setRecoveryInput(event.target.value)}
-                    onKeyDown={(event) =>
-                      event.key === "Enter" &&
-                      !event.nativeEvent.isComposing &&
-                      void runUnlock()
-                    }
-                    placeholder={`XXXX-XXXX-XXXX-…（${RECOVERY_KEY_LENGTH} 文字）`}
-                    aria-describedby="vault-recovery-hint"
-                    autoCapitalize="characters"
-                    autoComplete="off"
-                    autoCorrect="off"
-                    spellCheck={false}
-                    className="font-mono"
-                  />
-                  <p id="vault-recovery-hint" className="text-muted-foreground text-xs">
-                    大文字・小文字、ハイフンや空白はどちらでもかまいません。（
-                    {recoveryKeyCharacters(recoveryInput)} / {RECOVERY_KEY_LENGTH} 文字）
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-1.5">
-                  <Label htmlFor="vault-unlock-password">{t.vault.password}</Label>
-                  <Input
-                    id="vault-unlock-password"
-                    type="password"
-                    value={password}
-                    autoComplete="current-password"
-                    autoFocus
-                    onChange={(event) => setPassword(event.target.value)}
-                    onKeyDown={(event) => event.key === "Enter" && void runUnlock()}
-                  />
-                </div>
-              )}
-
-              {error ? <p className="text-destructive text-sm">{error}</p> : null}
-
-              <button
-                type="button"
-                className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs"
-                onClick={() => {
-                  setUseRecovery((v) => !v);
-                  setError(null);
+            {newPassword.open ? (
+              <form
+                className="space-y-3"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  void saveNewPassword();
                 }}
               >
-                <KeyRound className="size-3.5" aria-hidden />
-                {useRecovery ? "パスワードで解除する" : "リカバリーキーで解除する"}
-              </button>
+                <Field id="recovered-password" label="新しいパスワード">
+                  <PasswordInput
+                    id="recovered-password"
+                    value={newPassword.value}
+                    autoComplete="new-password"
+                    enterKeyHint="next"
+                    onChange={(event) => setNewPassword((s) => ({ ...s, value: event.target.value }))}
+                    data-autofocus
+                  />
+                </Field>
+                <Field id="recovered-again" label="新しいパスワード（確認）">
+                  <PasswordInput
+                    id="recovered-again"
+                    value={newPassword.again}
+                    autoComplete="new-password"
+                    enterKeyHint="go"
+                    onChange={(event) => setNewPassword((s) => ({ ...s, again: event.target.value }))}
+                  />
+                </Field>
+                <ErrorLine error={error} />
+                <DialogFooter>
+                  <Button type="button" variant="ghost" onClick={ok} disabled={pending !== null}>
+                    あとで
+                  </Button>
+                  <Button type="submit" disabled={pending !== null || !online}>
+                    <Spinner on={pending === "work"} />
+                    設定する
+                  </Button>
+                </DialogFooter>
+              </form>
+            ) : (
+              <DialogFooter>
+                <Button variant="ghost" onClick={ok}>
+                  あとで
+                </Button>
+                <Button onClick={() => setNewPassword((s) => ({ ...s, open: true }))} data-autofocus>
+                  新しいパスワードを設定
+                </Button>
+              </DialogFooter>
+            )}
+          </>
+        ) : view === "create" || view === "creating" ? (
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              submitCreate();
+            }}
+          >
+            <Header title="金庫を作成" body={purposeCopy({ kind: "setup" }).body} />
+            <div className="space-y-3">
+              <Field id="vault-password" label="金庫のパスワード">
+                <PasswordInput
+                  id="vault-password"
+                  value={password}
+                  autoComplete="new-password"
+                  enterKeyHint="next"
+                  onChange={(event) => setPassword(event.target.value)}
+                  aria-invalid={error ? true : undefined}
+                  data-autofocus
+                />
+              </Field>
+              <Field id="vault-confirm" label="確認のためもう一度入力">
+                <PasswordInput
+                  id="vault-confirm"
+                  value={confirm}
+                  autoComplete="new-password"
+                  enterKeyHint="go"
+                  onChange={(event) => setConfirm(event.target.value)}
+                  aria-invalid={error ? true : undefined}
+                />
+              </Field>
+              <ErrorLine error={error} />
+              {!online ? <OfflineNote text="金庫の作成にはインターネット接続が必要です。" /> : null}
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="ghost" onClick={cancel} disabled={locked}>
+                {t.action.cancel}
+              </Button>
+              <Button type="submit" disabled={locked || !online}>
+                <Spinner on={view === "creating"} />
+                {view === "creating" ? "金庫を作成しています…" : "作成する"}
+              </Button>
+            </DialogFooter>
+          </form>
+        ) : (
+          // passkey, password or recovery: opening the vault, for the purpose.
+          <form
+            className="grid gap-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (view === "password") void submitPassword();
+              else if (view === "recovery") void submitRecovery();
+              else runPasskey();
+            }}
+          >
+            <Header
+              title={copy.title}
+              body={view === "recovery" ? "保管したリカバリーキーを入力してください。" : copy.body}
+            />
+            {notice ? (
+              <p role="status" className="rounded-md border px-3 py-2 text-sm">
+                {notice === "createdElsewhere"
+                  ? "ほかの端末で金庫が作成されました。その金庫のパスワードで開いてください。"
+                  : "このアカウントにはすでに金庫があります。金庫のパスワードで開いてください。"}
+              </p>
+            ) : null}
+
+            {view === "passkey" ? (
+              <Button
+                type="button"
+                className="w-full gap-2"
+                onClick={runPasskey}
+                disabled={pending !== null || blockedOffline}
+                data-autofocus
+              >
+                {pending === "passkey" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <Fingerprint className="size-4" aria-hidden />
+                )}
+                {pending === "passkey"
+                  ? withMethod(method, "で確認しています…")
+                  : retryPasskey
+                    ? withMethod(`もう一度 ${method}`, "で続ける")
+                    : passkeyAction(purpose, method)}
+              </Button>
+            ) : view === "password" ? (
+              <Field id="vault-unlock-password" label="金庫のパスワード">
+                <PasswordInput
+                  id="vault-unlock-password"
+                  value={password}
+                  autoComplete="current-password"
+                  enterKeyHint="go"
+                  onChange={(event) => setPassword(event.target.value)}
+                  aria-invalid={error ? true : undefined}
+                  aria-describedby={error ? "vault-error" : undefined}
+                  data-autofocus
+                />
+              </Field>
+            ) : (
+              <Field id="vault-recovery" label={t.vault.recoveryKey}>
+                <Input
+                  id="vault-recovery"
+                  value={recoveryInput}
+                  onChange={(event) => setRecoveryInput(event.target.value)}
+                  placeholder={`XXXX-XXXX-XXXX-…（${RECOVERY_KEY_LENGTH} 文字）`}
+                  aria-describedby="vault-recovery-hint"
+                  aria-invalid={error ? true : undefined}
+                  autoCapitalize="characters"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  enterKeyHint="go"
+                  className="font-mono"
+                  data-autofocus
+                />
+                <p id="vault-recovery-hint" className="text-muted-foreground text-xs">
+                  大文字・小文字、ハイフンや空白はどちらでもかまいません。（
+                  {recoveryKeyCharacters(recoveryInput)} / {RECOVERY_KEY_LENGTH} 文字）
+                </p>
+              </Field>
+            )}
+
+            <ErrorLine error={error} />
+            {blockedOffline ? <OfflineNote text={copy.offline} /> : null}
+
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
+              {view !== "password" ? (
+                <LinkButton onClick={() => dispatch({ type: "usePassword" })}>
+                  パスワードを使う
+                </LinkButton>
+              ) : passkeyReady ? (
+                <LinkButton onClick={() => dispatch({ type: "usePasskey" })}>
+                  {withMethod(method, "を使う")}
+                </LinkButton>
+              ) : null}
+              {view !== "recovery" && record?.recWrap ? (
+                <LinkButton
+                  onClick={() => {
+                    setError(null);
+                    dispatch({ type: "useRecovery" });
+                  }}
+                >
+                  <KeyRound className="size-3.5" aria-hidden />
+                  パスワードを忘れた場合
+                </LinkButton>
+              ) : null}
             </div>
 
             <DialogFooter>
-              <Button variant="ghost" onClick={() => close(false)} disabled={busy}>
+              <Button type="button" variant="ghost" onClick={cancel} disabled={pending === "work"}>
                 {t.action.cancel}
               </Button>
-              <Button onClick={runUnlock} disabled={busy}>
-                {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-                {t.vault.unlock}
-              </Button>
+              {view !== "passkey" ? (
+                <Button type="submit" disabled={pending !== null || blockedOffline}>
+                  <Spinner on={pending === "work"} />
+                  {pending === "work" ? "確認しています…" : copy.verb}
+                </Button>
+              ) : null}
             </DialogFooter>
-          </Fragment>
+          </form>
         )}
       </DialogContent>
     </Dialog>
   );
+}
+
+class StalePasskeyError extends Error {}
+
+function Header({ title, body }: { title: string; body: string | string[] }) {
+  return (
+    <DialogHeader>
+      <DialogTitle>{title}</DialogTitle>
+      {typeof body === "string" ? (
+        <DialogDescription>{body}</DialogDescription>
+      ) : (
+        <DialogDescription asChild>
+          <ul className="list-disc space-y-1 pl-5">
+            {body.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        </DialogDescription>
+      )}
+    </DialogHeader>
+  );
+}
+
+function Field({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      {children}
+    </div>
+  );
+}
+
+function ErrorLine({ error }: { error: string | null }) {
+  if (!error) return null;
+  return (
+    <p id="vault-error" role="alert" className="text-destructive text-sm">
+      {error}
+    </p>
+  );
+}
+
+function OfflineNote({ text }: { text: string | null }) {
+  if (!text) return null;
+  return <p className="text-muted-foreground text-sm">{text}</p>;
+}
+
+function LinkButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
+  return (
+    <button
+      type="button"
+      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs underline-offset-4 hover:underline"
+      onClick={onClick}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Spinner({ on }: { on: boolean }) {
+  return on ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null;
 }

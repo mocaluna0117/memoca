@@ -44,7 +44,7 @@ export function PasskeyManager() {
   if (!status) {
     return (
       <p className="text-muted-foreground text-sm">
-        先にロックを設定すると、生体認証を登録できます。
+        先に金庫を作成すると、パスキーを登録できます。
       </p>
     );
   }
@@ -79,7 +79,7 @@ export function PasskeyManager() {
       // Created here, so it is this device's: unlock offers it first.
       await rememberLocalPasskey(created.credentialId);
       setPassword("");
-      toast.success("生体認証を登録しました");
+      toast.success("パスキーを登録しました");
     } catch (cause) {
       setError(
         cause instanceof PrfUnsupportedError
@@ -121,7 +121,7 @@ export function PasskeyManager() {
       {available ? (
         <div className="space-y-2">
           <Label htmlFor="passkey-password">
-            登録するには金庫パスワードを入力してください
+            登録するには金庫のパスワードを入力してください
           </Label>
           <div className="flex gap-2">
             <Input
@@ -140,7 +140,7 @@ export function PasskeyManager() {
         </div>
       ) : (
         <p className="text-muted-foreground text-sm">
-          この端末では生体認証が使えません。パスワードで解除してください。
+          この端末ではパスキー（Face ID など）を使えません。金庫はパスワードで開けます。
         </p>
       )}
     </div>

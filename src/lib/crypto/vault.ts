@@ -239,7 +239,7 @@ class VaultSession {
 
 export class VaultLockedError extends Error {
   constructor() {
-    super("金庫がロックされています。");
+    super("金庫が閉じています。");
     this.name = "VaultLockedError";
   }
 }

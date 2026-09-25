@@ -40,7 +40,7 @@ import { formatBytes } from "@/lib/bytes";
 import { DEFAULT_ARGON } from "@/lib/crypto/primitives";
 import { rewrapWithPassword, vault } from "@/lib/crypto/vault";
 import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
-import { useVaultUi } from "@/lib/store/vault-ui";
+import { requestVault } from "@/lib/store/vault-gate";
 import { useVaultRecord } from "@/lib/vault/record";
 import { resetLocalData } from "@/lib/db";
 import { t } from "@/lib/i18n/ja";
@@ -77,8 +77,6 @@ export default function SettingsPage() {
   const updateSettings = useMutation(api.users.updateSettings);
   const rewrap = useMutation(api.vault.rewrap);
   const deleteAccount = useMutation(api.users.deleteAccount);
-  const openSetup = useVaultUi((s) => s.openSetup);
-  const requestUnlock = useVaultUi((s) => s.requestUnlock);
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [nextPassword, setNextPassword] = useState("");
@@ -171,36 +169,43 @@ export default function SettingsPage() {
 
         <Section
           title={t.vault.title}
-          description="ロックしたメモは、この端末の中だけで暗号化・復号されます。サーバーには暗号文しか保存されません。"
+          description="ロックしたメモの本文・タイトル・添付ファイルは、金庫の鍵で暗号化され、あなたの端末の中でだけ読めます。Memoca のサーバーでも読めません。"
         >
           {vaultAvailability === "unknown" ? (
             // Not known yet, or offline. Offering to create a vault here would
             // let an account that already has one start a second.
             <p className="text-muted-foreground text-sm">金庫の情報を読み込んでいます…</p>
           ) : vaultAvailability === "none" || !vaultStatus ? (
-            <Button onClick={openSetup} className="gap-2">
+            <Button onClick={() => void requestVault({ kind: "setup" })} className="gap-2">
               <ShieldCheck className="size-4" aria-hidden />
               {t.vault.setupTitle}
             </Button>
           ) : (
             <div className="space-y-6">
               <div className="flex items-center gap-3">
-                <span className="text-sm">
-                  状態：{unlocked ? "解除中" : t.vault.locked}
-                </span>
+                <span className="text-sm">{unlocked ? t.vault.isOpen : t.vault.isClosed}</span>
                 {unlocked ? (
                   <Button variant="outline" size="sm" onClick={() => void vault.close()}>
-                    {t.vault.lockNow}
+                    {t.vault.closeNow}
                   </Button>
                 ) : (
-                  <Button variant="outline" size="sm" onClick={() => void requestUnlock()}>
-                    {t.vault.unlock}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(event) =>
+                      void requestVault(
+                        { kind: "open", from: "general" },
+                        { gesture: true, returnFocus: event.currentTarget },
+                      )
+                    }
+                  >
+                    {t.vault.open}
                   </Button>
                 )}
               </div>
 
               <div className="space-y-2">
-                <Label>自動ロック</Label>
+                <Label>自動で閉じるまでの時間</Label>
                 <Select
                   value={String(me?.settings.autoLockMinutes ?? 5)}
                   onValueChange={(value) => {
@@ -221,7 +226,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>生体認証（Face ID / Touch ID）</Label>
+                <Label>パスキー（Face ID・Touch ID など）</Label>
                 <PasskeyManager />
               </div>
 
@@ -231,7 +236,7 @@ export default function SettingsPage() {
               </div>
 
               <div className="space-y-2">
-                <Label>パスワードの変更</Label>
+                <Label>金庫のパスワードの変更</Label>
                 <div className="flex flex-col gap-2 sm:flex-row">
                   <Input
                     type="password"

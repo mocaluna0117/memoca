@@ -19,6 +19,7 @@ import {
   FolderPlus,
   Inbox,
   Lock,
+  LockOpen,
   MoreHorizontal,
   Pencil,
   Trash2,
@@ -35,6 +36,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useFolderTree } from "@/lib/hooks/data";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
+import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
 import { between } from "@/lib/sortkey";
 import { canMoveFolder, findNode, flattenTree, siblingsOf } from "@/lib/tree";
 import { db } from "@/lib/db";
@@ -57,7 +59,7 @@ const FOLDER_KEYS_HINT =
 type Props = {
   selectedFolderId: string | null;
   onSelect: (folderId: string | null) => void;
-  onRequestLock?: (folder: FolderNode) => void;
+  onRequestLock?: (folder: FolderNode, returnFocus?: HTMLElement | null) => void;
   /** Selects a new folder without dismissing the panel it was created in. */
   onCreated?: (folderId: string) => void;
   /** Set when this tree lives inside the mobile drawer. */
@@ -95,14 +97,7 @@ export function FolderTree({
     row.focus();
   }, [tree, editing]);
 
-  // A closing menu puts focus back on its trigger. When the chosen item opens
-  // a dialog, that pulls focus out of the dialog's field, so typing goes
-  // nowhere and Enter cannot save. Those items set this to skip the return.
-  const openingDialog = useRef(false);
-  const openDialog = (open: () => void) => {
-    openingDialog.current = true;
-    open();
-  };
+  const { openDialog, onCloseAutoFocus } = useMenuDialog();
 
   // Dragging a row inside a scrolling drawer fights the scroll on a phone, and
   // the move dialog covers the same need there, so this is a pointer feature.
@@ -271,7 +266,7 @@ export function FolderTree({
           const selected = selectedFolderId === node.folderId;
           const hasChildren = node.children.length > 0;
           const isInbox = node.system === "inbox";
-          const label = node.locked ? (node.name ?? "ロック中のフォルダ") : node.name;
+          const label = node.locked ? (node.name ?? "ロックされたフォルダ") : node.name;
 
           return (
             <FolderRowDropZones
@@ -375,11 +370,7 @@ export function FolderTree({
                     align="end"
                     className="w-44"
                     portalContainer={menuContainer}
-                    onCloseAutoFocus={(event) => {
-                      if (!openingDialog.current) return;
-                      openingDialog.current = false;
-                      event.preventDefault();
-                    }}
+                    onCloseAutoFocus={onCloseAutoFocus}
                   >
                     <DropdownMenuItem
                       onSelect={async () => {
@@ -404,10 +395,27 @@ export function FolderTree({
                         別のフォルダへ移動
                       </DropdownMenuItem>
                     ) : null}
-                    {onRequestLock ? (
-                      <DropdownMenuItem onSelect={() => openDialog(() => onRequestLock(node))}>
-                        <Lock className="size-4" aria-hidden />
-                        {node.locked ? "ロックを解除" : "ロックする"}
+                    {/* Inbox is where quick notes land, so it is never locked:
+                    every new note would have to wait for the vault. */}
+                    {onRequestLock && !isInbox ? (
+                      <DropdownMenuItem
+                        onSelect={() =>
+                          openDialog(() =>
+                            onRequestLock(
+                              node,
+                              list.current?.querySelector<HTMLElement>(
+                                `[data-folder-row="${node.folderId}"]`,
+                              ),
+                            ),
+                          )
+                        }
+                      >
+                        {node.locked ? (
+                          <LockOpen className="size-4" aria-hidden />
+                        ) : (
+                          <Lock className="size-4" aria-hidden />
+                        )}
+                        {node.locked ? "ロックを外す…" : "ロックする…"}
                       </DropdownMenuItem>
                     ) : null}
                     {!isInbox ? (

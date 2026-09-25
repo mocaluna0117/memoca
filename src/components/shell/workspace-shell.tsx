@@ -16,7 +16,7 @@ import { useVaultRecord } from "@/lib/vault/record";
 import { vault } from "@/lib/crypto/vault";
 import { revokeResolvedUrls } from "@/lib/media/attachments";
 import { flushAll } from "@/lib/sync/docs";
-import { useVaultUi } from "@/lib/store/vault-ui";
+import { requestVault } from "@/lib/store/vault-gate";
 import type { FolderNode } from "@/lib/types";
 import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
 
@@ -27,7 +27,6 @@ import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   const client = useConvex();
   const router = useRouter();
-  const requestUnlock = useVaultUi((s) => s.requestUnlock);
   const [, setUnlocked] = useState(vault.isUnlocked);
 
   useEffect(
@@ -105,32 +104,54 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   }, [client]);
 
   const onRequestFolderLock = useCallback(
-    async (folder: FolderNode) => {
-      // Closing the prompt means "not now". The prompt itself offers to create
-      // a vault when the server says there is none, so nothing opens here.
-      const hasVault = vault.isUnlocked || (await requestUnlock());
-      if (!hasVault) return;
-      const target = !folder.locked;
-      const toastId = toast.loading(
-        target ? "フォルダをロックしています…" : "ロックを解除しています…",
+    async (folder: FolderNode, returnFocus?: HTMLElement | null) => {
+      const locking = !folder.locked;
+      const name = folder.name ?? "ロックされたフォルダ";
+      // The prompt states what is about to happen and asks for a yes, with
+      // the vault open or not. Closing it means "not now"; it never leads to
+      // creating a vault unless the server says there is none.
+      const answer = await requestVault(
+        locking
+          ? { kind: "lockFolder", folderId: folder.folderId, name }
+          : { kind: "unlockFolder", folderId: folder.folderId, name },
+        { returnFocus },
       );
-      const outcome = await setFolderLocked(client, folder.folderId, target, (p) => {
-        if (p.total > 1) {
-          toast.loading(`${p.done} / ${p.total} 件を処理中…`, { id: toastId });
+      if (!answer.ok) return;
+
+      const doing = locking
+        ? `フォルダ「${name}」をロックしています…`
+        : `フォルダ「${name}」のロックを外しています…`;
+      const toastId = toast.loading(doing);
+      try {
+        const outcome = await setFolderLocked(client, folder.folderId, locking, (p) => {
+          if (p.total > 1) toast.loading(`${doing}（${p.done} / ${p.total}）`, { id: toastId });
+        });
+        if (outcome.status === "ok") {
+          toast.success(
+            locking ? `フォルダ「${name}」をロックしました` : `フォルダ「${name}」のロックを外しました`,
+            { id: toastId },
+          );
+        } else {
+          toast.error(
+            outcome.status === "skipped" && outcome.reason === "behind"
+              ? "同期が終わってからもう一度お試しください。"
+              : locking
+                ? "ロックできませんでした。もう一度お試しください。"
+                : "ロックを外せませんでした。もう一度お試しください。",
+            { id: toastId },
+          );
         }
-      });
-      if (outcome.status === "ok") {
-        toast.success(target ? "ロックしました" : "ロックを解除しました", { id: toastId });
-      } else {
+      } catch {
+        // A failure part way must not leave the "in progress" message spinning.
         toast.error(
-          outcome.status === "skipped" && outcome.reason === "behind"
-            ? "同期が終わってからもう一度お試しください。"
-            : "処理できませんでした。",
+          locking
+            ? "ロックできませんでした。インターネット接続を確認して、もう一度お試しください。"
+            : "ロックを外せませんでした。インターネット接続を確認して、もう一度お試しください。",
           { id: toastId },
         );
       }
     },
-    [client, requestUnlock],
+    [client],
   );
 
   return (

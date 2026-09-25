@@ -14,7 +14,9 @@ import { randomBytes } from "./primitives";
  */
 
 export class PrfUnsupportedError extends Error {
-  constructor(message = "この端末では生体認証によるロック解除に対応していません。") {
+  constructor(
+    message = "この端末またはブラウザは、パスキーで金庫を開く機能に対応していません。パスワードを使ってください。",
+  ) {
     super(message);
     this.name = "PrfUnsupportedError";
   }
@@ -151,7 +153,7 @@ export async function startPasskey(
   if (!output) {
     if (candidates.length > 1) throw new PasskeyNeedsRetryError(entry.credentialId);
     throw new PrfUnsupportedError(
-      "この端末では生体認証からロック解除用の鍵を取り出せませんでした。パスワードで解除してください。",
+      "この端末のパスキーでは金庫を開けませんでした。パスワードを使ってください。",
     );
   }
   return { entry, output };
@@ -213,12 +215,12 @@ export async function registerPasskey(opts: {
     },
   })) as PublicKeyCredential | null;
 
-  if (!created) throw new PrfUnsupportedError("パスキーの作成が取り消されました。");
+  if (!created) throw new PrfUnsupportedError("登録をキャンセルしました。");
 
   const extensions = created.getClientExtensionResults() as PrfExtensionResults;
   if (extensions.prf?.enabled === false) {
     throw new PrfUnsupportedError(
-      "この端末のパスキーは、ロック解除に必要な機能（PRF）に対応していません。",
+      "この端末のパスキーは、金庫を開く機能に対応していません。金庫はパスワードで開けます。",
     );
   }
 
@@ -255,11 +257,11 @@ export async function evaluatePrf(
     },
   })) as PublicKeyCredential | null;
 
-  if (!assertion) throw new PrfUnsupportedError("ロック解除が取り消されました。");
+  if (!assertion) throw new PrfUnsupportedError("確認をキャンセルしました。");
   const output = prfResult(assertion);
   if (!output) {
     throw new PrfUnsupportedError(
-      "この端末では生体認証からロック解除用の鍵を取り出せませんでした。パスワードで解除してください。",
+      "この端末のパスキーでは金庫を開けませんでした。パスワードを使ってください。",
     );
   }
   return output;

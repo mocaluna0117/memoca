@@ -1,6 +1,12 @@
 import { expect, test } from "@playwright/test";
 import { openApp, signUp } from "./helpers";
-import { confirmRecoveryKey, createVaultInSettings, VAULT_PASSWORD } from "./vault-helpers";
+import {
+  VAULT_PASSWORD,
+  confirmRecoveryKey,
+  createVaultInSettings,
+  enterVaultPassword,
+  vaultPrompt,
+} from "./vault-helpers";
 
 const NEW_PASSWORD = "a-new-vault-password";
 
@@ -15,8 +21,8 @@ test.describe("recovery key", () => {
 
     // Make a new key, proving identity with the password.
     await page.getByRole("button", { name: "リカバリーキーを作り直す" }).click();
-    const dialog = page.getByRole("dialog");
-    await dialog.getByLabel("金庫パスワード").fill(VAULT_PASSWORD);
+    const dialog = vaultPrompt(page);
+    await dialog.getByLabel("金庫のパスワード").fill(VAULT_PASSWORD);
     await dialog.getByRole("button", { name: "続ける" }).click();
     await expect(page.getByRole("heading", { name: "リカバリーキーを保管してください" })).toBeVisible({
       timeout: 30_000,
@@ -49,12 +55,10 @@ test.describe("recovery key", () => {
 
     // A reload closes the vault; only the new password opens it now.
     await page.goto("/app/settings");
-    await page.getByRole("button", { name: "ロックを解除" }).click();
-    await dialog.getByLabel("金庫パスワード").fill(VAULT_PASSWORD);
-    await dialog.getByRole("button", { name: "ロックを解除" }).click();
+    await page.getByRole("button", { name: "金庫を開く", exact: true }).click();
+    await enterVaultPassword(page, "開く", VAULT_PASSWORD);
     await expect(dialog.getByText("パスワードが違います。")).toBeVisible({ timeout: 30_000 });
-    await dialog.getByLabel("金庫パスワード").fill(NEW_PASSWORD);
-    await dialog.getByRole("button", { name: "ロックを解除" }).click();
-    await expect(page.getByText("状態：解除中")).toBeVisible({ timeout: 30_000 });
+    await enterVaultPassword(page, "開く", NEW_PASSWORD);
+    await expect(page.getByText("金庫：開いています")).toBeVisible({ timeout: 30_000 });
   });
 });

@@ -9,7 +9,7 @@ import {
   waitForSynced,
 } from "./helpers";
 import { readTable } from "./local-db";
-import { createVaultInSettings, VAULT_PASSWORD } from "./vault-helpers";
+import { createVaultInSettings, enterVaultPassword } from "./vault-helpers";
 
 /**
  * Against a real build only: the offline reload needs the service worker.
@@ -28,11 +28,9 @@ test.describe("locked notes offline", () => {
     await createNote(page, "秘密のメモ", "オフラインでも読める本文");
     await waitForSynced(page);
     await page.getByRole("button", { name: "メモの操作" }).click();
-    await page.getByRole("menuitem", { name: "ロックする" }).click();
-    const prompt = page.getByRole("dialog");
-    await prompt.getByLabel("金庫パスワード").fill(VAULT_PASSWORD);
-    await prompt.getByRole("button", { name: "ロックを解除" }).click();
-    await expect(page.getByText("ロックしました")).toBeVisible({ timeout: 30_000 });
+    await page.getByRole("menuitem", { name: "ロックする", exact: true }).click();
+    await enterVaultPassword(page, "ロックする");
+    await expect(page.getByText("メモをロックしました")).toBeVisible({ timeout: 30_000 });
     await waitForSynced(page);
 
     await offlineReady(page);
@@ -46,13 +44,12 @@ test.describe("locked notes offline", () => {
     await context.setOffline(true);
     await page.reload();
     await showList(page);
-    await page.getByText("ロック中のメモ").filter({ visible: true }).first().click();
-    await page.getByRole("button", { name: "ロックを解除" }).filter({ visible: true }).first().click();
+    await page.getByText("ロックされたメモ").filter({ visible: true }).first().click();
+    await page.getByRole("button", { name: "金庫を開く", exact: true }).filter({ visible: true }).first().click();
 
     // Before, this waited forever for the server; now it asks for the password.
     await expect(page.getByText("金庫を開けません")).toHaveCount(0);
-    await prompt.getByLabel("金庫パスワード").fill(VAULT_PASSWORD);
-    await prompt.getByRole("button", { name: "ロックを解除" }).click();
+    await enterVaultPassword(page, "開く");
     await expect(editor(page)).toContainText("オフラインでも読める本文", { timeout: 20_000 });
 
     await context.setOffline(false);

@@ -63,7 +63,7 @@ function NoteRow({
     <span className="text-muted-foreground flex items-center gap-2 text-xs">
       <span className="shrink-0">{relativeDate(note.updatedAt)}</span>
       <span className="truncate">
-        {note.locked ? t.empty.lockedHint : (note.preview ?? "")}
+        {note.locked ? (unlocked ? "ロック中" : t.empty.lockedHint) : (note.preview ?? "")}
       </span>
     </span>
   );

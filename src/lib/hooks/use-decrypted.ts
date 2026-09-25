@@ -15,8 +15,8 @@ export function useVaultUnlocked(): boolean {
   );
 }
 
-const LOCKED_LABEL = "🔒 ロック中のメモ";
-const LOCKED_FOLDER_LABEL = "🔒 ロック中のフォルダ";
+const LOCKED_LABEL = "ロックされたメモ";
+const LOCKED_FOLDER_LABEL = "ロックされたフォルダ";
 
 /**
  * A note's title, decrypted only while the vault is open.

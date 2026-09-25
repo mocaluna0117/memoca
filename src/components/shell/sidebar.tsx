@@ -29,7 +29,7 @@ type Props = {
   onSelectFolder: (folderId: string | null) => void;
   /** Selects a freshly created folder without dismissing the panel. */
   onCreatedFolder?: (folderId: string) => void;
-  onRequestLock?: (folder: FolderNode) => void;
+  onRequestLock?: (folder: FolderNode, returnFocus?: HTMLElement | null) => void;
   onNavigate?: () => void;
   /** Shows a close control in the header; set only inside the mobile drawer. */
   onClose?: () => void;

@@ -18,7 +18,10 @@ import { useWorkspace } from "@/lib/hooks/workspace";
 import type { FolderNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type ShellContextValue = { openDrawer: () => void; requestLock: (f: FolderNode) => void };
+type ShellContextValue = {
+  openDrawer: () => void;
+  requestLock: (f: FolderNode, returnFocus?: HTMLElement | null) => void;
+};
 const ShellContext = createContext<ShellContextValue>({
   openDrawer: () => {},
   requestLock: () => {},
@@ -31,7 +34,7 @@ export function AppShell({
   onRequestFolderLock,
 }: {
   children: ReactNode;
-  onRequestFolderLock?: (folder: FolderNode) => void;
+  onRequestFolderLock?: (folder: FolderNode, returnFocus?: HTMLElement | null) => void;
 }) {
   const { selection, openFolder } = useWorkspace();
   const [drawer, setDrawer] = useState(false);
@@ -40,7 +43,7 @@ export function AppShell({
   const value = useMemo<ShellContextValue>(
     () => ({
       openDrawer: () => setDrawer(true),
-      requestLock: (folder) => onRequestFolderLock?.(folder),
+      requestLock: (folder, returnFocus) => onRequestFolderLock?.(folder, returnFocus),
     }),
     [onRequestFolderLock],
   );

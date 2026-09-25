@@ -7,7 +7,7 @@ export const ja = {
     name: "Memoca",
     tagline: "書いて、しまって、どこでも開く。",
     description:
-      "フォルダで整理でき、画像や動画も貼れて、鍵をかけたメモは端末の中だけで復号されるメモ帳です。",
+      "フォルダで整理でき、画像や動画も貼れて、ロックしたメモは端末の中だけで読めるメモ帳です。",
   },
   nav: {
     home: "ホーム",
@@ -33,8 +33,11 @@ export const ja = {
     emptyTrash: "ゴミ箱を空にする",
     pin: "ピン留め",
     unpin: "ピン留めを外す",
+    // Two different acts, and never the same words: 「ロックを外す」 takes the
+    // lock off an item for good, while opening the vault only lets this tab
+    // read locked items for a while (金庫を開く).
     lock: "ロックする",
-    unlock: "ロックを解除",
+    unlock: "ロックを外す…",
     cancel: "キャンセル",
     save: "保存",
     close: "閉じる",
@@ -57,20 +60,20 @@ export const ja = {
     noNotesHint: "右下のボタンから最初のメモを作りましょう。",
     noResults: "見つかりませんでした",
     trashEmpty: "ゴミ箱は空です",
-    lockedNote: "ロック中のメモ",
-    lockedHint: "解除すると内容を表示できます。",
+    lockedNote: "ロックされたメモ",
+    lockedHint: "金庫を開くと読めます。",
   },
   vault: {
-    title: "ロック",
-    setupTitle: "ロックを設定",
-    password: "金庫パスワード",
-    passwordAgain: "もう一度入力",
-    unlock: "ロックを解除",
-    lockNow: "いますぐロック",
-    biometric: "Face ID / Touch ID で解除",
+    title: "金庫とロック",
+    setupTitle: "金庫を作成",
+    password: "金庫のパスワード",
+    passwordAgain: "確認のためもう一度入力",
+    open: "金庫を開く",
+    closeNow: "いますぐ閉じる",
     recoveryKey: "リカバリーキー",
     wrongPassword: "パスワードが違います。",
-    locked: "ロックされています",
+    isOpen: "金庫：開いています",
+    isClosed: "金庫：閉じています",
   },
   quota: {
     used: (used: string, total: string) => `${used} / ${total} 使用中`,
