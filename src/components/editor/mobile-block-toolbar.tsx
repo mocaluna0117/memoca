@@ -5,6 +5,7 @@ import {
   ChevronDown,
   ChevronUp,
   Code,
+  Crop,
   Heading1,
   Heading2,
   Indent,
@@ -16,8 +17,16 @@ import {
   Trash2,
   Type,
 } from "lucide-react";
+import { useCropTarget, useOpenCrop } from "@/components/editor/image-crop";
 import { useKeyboardInset } from "@/lib/hooks/use-keyboard-inset";
 import { cn } from "@/lib/utils";
+
+/**
+ * Blocks that hold a file rather than text. Turning one into a heading or a
+ * list would drop the file, so they get only the actions that keep it.
+ */
+const FILE_BLOCKS = new Set(["image", "video", "audio", "file"]);
+const FILE_ACTIONS = new Set(["crop", "up", "down", "delete"]);
 
 type BlockType =
   | "paragraph"
@@ -40,8 +49,11 @@ export function MobileBlockToolbar() {
   const editor = useBlockNoteEditor();
   const selected = useSelectedBlocks(editor);
   const inset = useKeyboardInset();
+  const openCrop = useOpenCrop();
 
   const block = selected.at(0);
+  // Trimming acts on one image, so only when it is the only block selected.
+  const cropTarget = useCropTarget(selected.length === 1 ? block : undefined, editor.isEditable);
   if (!block || inset === 0) return null;
 
   const currentType = block.type as BlockType;
@@ -64,6 +76,9 @@ export function MobileBlockToolbar() {
     disabled?: boolean;
     run: () => void;
   }[] = [
+    ...(cropTarget && openCrop
+      ? [{ key: "crop", label: "トリミング", icon: Crop, run: () => openCrop(cropTarget) }]
+      : []),
     {
       key: "h1",
       label: "大見出し",
@@ -168,6 +183,9 @@ export function MobileBlockToolbar() {
       },
     },
   ];
+  const shown = FILE_BLOCKS.has(block.type)
+    ? actions.filter((action) => FILE_ACTIONS.has(action.key))
+    : actions;
 
   // Hidden while the folder drawer is on screen: the page moves aside with
   // it, and a moved page, not the screen, is what anything fixed inside it is
@@ -180,7 +198,7 @@ export function MobileBlockToolbar() {
       aria-label="ブロックの操作"
     >
       <div className="flex gap-1 overflow-x-auto px-2 py-1.5">
-        {actions.map(({ key, label, icon: Icon, active, disabled, run }) => (
+        {shown.map(({ key, label, icon: Icon, active, disabled, run }) => (
           <button
             key={key}
             type="button"

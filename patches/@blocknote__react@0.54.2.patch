@@ -1,0 +1,30 @@
+diff --git a/dist/blocknote-react.js b/dist/blocknote-react.js
+index 8e2ad6909f6d9a2e76de8a7630f0696e87d62e84..3287e8c353965a4ac95f2e14c06a2c27ba09b987 100644
+--- a/dist/blocknote-react.js
++++ b/dist/blocknote-react.js
+@@ -3773,6 +3773,9 @@ var Ii = (t) => {
+ 	}
+ }), Gi = (e) => {
+ 	let [t, n] = j(void 0), [r, i] = j(e.block.props.previewWidth), [a, o] = j(!1), s = A(null);
++	D(() => {
++		i(e.block.props.previewWidth);
++	}, [e.block.props.previewWidth]);
+ 	D(() => {
+ 		let a = (n) => {
+ 			let r, a = "touches" in n ? n.touches[0].clientX : n.clientX;
+diff --git a/src/blocks/File/helpers/render/ResizableFileBlockWrapper.tsx b/src/blocks/File/helpers/render/ResizableFileBlockWrapper.tsx
+index 210bd6f6983df04ebebb79f9ecf29f184df0d2fa..f5dc5f1e3335fb2a5edb41146e1e30713ff7003f 100644
+--- a/src/blocks/File/helpers/render/ResizableFileBlockWrapper.tsx
++++ b/src/blocks/File/helpers/render/ResizableFileBlockWrapper.tsx
+@@ -38,6 +38,11 @@ export const ResizableFileBlockWrapper = (
+   const [width, setWidth] = useState<number | undefined>(
+     props.block.props.previewWidth,
+   );
++  // Follow the prop when it changes from elsewhere (undo, another device,
++  // or code calling updateBlock), not only on the first render.
++  useEffect(() => {
++    setWidth(props.block.props.previewWidth);
++  }, [props.block.props.previewWidth]);
+   const [hovered, setHovered] = useState<boolean>(false);
+ 
+   const ref = useRef<HTMLDivElement>(null);

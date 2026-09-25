@@ -38,7 +38,7 @@ Notion のようなブロックエディタを持つメモアプリ「Memoca」�
 |---|---|---|
 | フレームワーク | Next.js 16.3（App Router, Turbopack）, React 19.2, TypeScript strict | `create-next-app@latest` の既定 |
 | UI | Tailwind CSS v4 + shadcn/ui（`-b radix` で初期化）, lucide-react | shadcn の既定は Base UI になったが、BlockNote の `@blocknote/shadcn` が Radix 前提なので Radix を明示 |
-| エディタ | BlockNote 0.54（core / react / shadcn）+ Yjs 13.6 | `withCollaboration`（`@blocknote/core/yjs`）。`@blocknote/xl-*` は GPL のため使わない。Yjs 14 RC は使わない |
+| エディタ | BlockNote 0.54（core / react / shadcn）+ Yjs 13.6 | `withCollaboration`（`@blocknote/core/yjs`）。`@blocknote/xl-*` は GPL のため使わない。Yjs 14 RC は使わない。`@blocknote/react` 0.54.2 は `patches/` で1か所直している（画像の幅が、元に戻す操作やトリミングで変わっても画面に反映されない）。更新するときは直っているか確かめて外す |
 | バックエンド | Convex 1.45, `@convex-dev/better-auth`, `@convex-dev/rate-limiter` | Vercel Marketplace のネイティブ連携あり |
 | 認証 | better-auth 1.7 + Google OAuth | `app/api/auth/[...all]/route.ts` が Convex へプロキシ |
 | ローカル DB | Dexie 4.4 | Yjs 永続化も Dexie に自作（y-indexeddb は非メンテ） |

@@ -139,3 +139,10 @@
     overscroll-behavior: none;
   }
 }
+
+/* BlockNote's floating toolbar scrolls sideways when it is longer than the
+   screen is wide, as an image's is on a small phone, instead of making the
+   whole page wider. */
+.bn-formatting-toolbar {
+  max-width: calc(100vw - 0.5rem);
+}

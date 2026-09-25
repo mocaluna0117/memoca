@@ -9,7 +9,7 @@ import { open, seal } from "@/lib/crypto/primitives";
 import { vault } from "@/lib/crypto/vault";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/sync/outbox";
-import { categoryOf, prepareImage } from "./compress";
+import { type PreparedImage, categoryOf, prepareImage } from "./compress";
 
 /** Block content stores this, not a signed URL, so links survive re-encryption. */
 export const REF_PREFIX = "memoca://att/";
@@ -21,11 +21,66 @@ export const idFromRef = (ref: string) =>
 const BLOB_CACHE_BYTES = 200 * 1024 * 1024;
 const objectUrls = new Map<string, string>();
 
+/** How long to wait for a file from the server before calling it unreachable. */
+const DOWNLOAD_TIMEOUT_MS = 20_000;
+
 export class QuotaError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "QuotaError";
   }
+}
+
+/** A file this device cannot get at: `offline` when it needs a network there is not. */
+export class AttachmentUnavailableError extends Error {
+  constructor(readonly reason: "offline" | "missing") {
+    super(reason);
+    this.name = "AttachmentUnavailableError";
+  }
+}
+
+/** The account figures the server checks a reservation against, as `users.me` reports them. */
+type Allowance = {
+  quotaBytes: number;
+  usedBytes: number;
+  reservedBytes: number;
+  limits?: { maxImageBytes: number };
+};
+
+/**
+ * Whether the server will accept an image of this size.
+ *
+ * Asked before staging, because a refusal later, in {@link flushUploads},
+ * happens in the background with nobody to tell, and leaves the block
+ * pointing at a file that is gone. `queued` is what this device is still to
+ * send (see {@link queuedBytes}): the server's figures do not know about it,
+ * and offline they never catch up.
+ */
+export function fitsAllowance(me: Allowance, bytes: number, queued = 0): boolean {
+  if (me.limits && bytes > me.limits.maxImageBytes) return false;
+  return me.usedBytes + me.reservedBytes + queued + bytes <= me.quotaBytes;
+}
+
+/**
+ * The size of every file waiting in this device's upload queue. A file whose
+ * reservation has already been made is counted by the server too; counting it
+ * twice for the moment only makes {@link fitsAllowance} stricter.
+ */
+export async function queuedBytes(): Promise<number> {
+  const waiting = await db().pendingUploads.toArray();
+  return waiting.reduce((sum, row) => sum + row.blob.size, 0);
+}
+
+/**
+ * Whether a file is kept encrypted: it is marked locked, or it belongs to a
+ * locked note that has yet to encrypt it. A copy of it may only go where it
+ * will be encrypted as well.
+ */
+export async function isLockedFile(attachmentId: string): Promise<boolean> {
+  const database = db();
+  const row = await database.attachments.get(attachmentId);
+  if (!row) return false;
+  return row.locked || (await database.notes.get(row.noteId))?.locked === true;
 }
 
 /**
@@ -34,26 +89,34 @@ export class QuotaError extends Error {
  * The blob is written to the device first and the editor gets a reference it
  * can render immediately, so dropping a photo works with no connection at all.
  * {@link flushUploads} sends whatever is waiting once there is a network.
+ *
+ * `prepared` is an image that has already been encoded, such as a crop, so it
+ * is not compressed a second time.
  */
 export async function stageUpload(opts: {
   noteId: string;
   file: File;
-  locked: boolean;
+  locked?: boolean;
+  prepared?: PreparedImage;
 }): Promise<string> {
   const attachmentId = uuidv7();
-  const category = categoryOf(opts.file.type);
+  const category = categoryOf(opts.prepared?.mime ?? opts.file.type);
 
   const prepared =
-    category === "image"
+    opts.prepared ??
+    (category === "image"
       ? await prepareImage(opts.file)
       : {
           blob: opts.file,
           mime: opts.file.type || "application/octet-stream",
           width: 0,
           height: 0,
-        };
+        });
 
   const database = db();
+  // Read now, not when the editor was set up: the note may have been locked
+  // since, and a locked note's file is marked as one from the start.
+  const locked = opts.locked === true || (await database.notes.get(opts.noteId))?.locked === true;
   await database.pendingUploads.put({
     attachmentId,
     noteId: opts.noteId,
@@ -63,7 +126,7 @@ export async function stageUpload(opts: {
     width: prepared.width || null,
     height: prepared.height || null,
     category,
-    locked: opts.locked,
+    locked,
     createdAt: Date.now(),
   });
 
@@ -75,7 +138,7 @@ export async function stageUpload(opts: {
     bytes: prepared.blob.size,
     mime: prepared.mime,
     name: opts.file.name,
-    locked: opts.locked,
+    locked,
     width: prepared.width || null,
     height: prepared.height || null,
     deletedAt: null,
@@ -84,6 +147,20 @@ export async function stageUpload(opts: {
 
   objectUrls.set(attachmentId, URL.createObjectURL(prepared.blob));
   return refFor(attachmentId);
+}
+
+/**
+ * Takes back a file staged a moment ago that turned out not to be needed,
+ * before anything refers to it.
+ */
+export async function discardStaged(attachmentId: string): Promise<void> {
+  const database = db();
+  await database.pendingUploads.delete(attachmentId);
+  const row = await database.attachments.get(attachmentId);
+  if (row?.status === "reserved") await database.attachments.delete(attachmentId);
+  const url = objectUrls.get(attachmentId);
+  if (url) URL.revokeObjectURL(url);
+  objectUrls.delete(attachmentId);
 }
 
 /**
@@ -275,6 +352,56 @@ export async function resolveAttachment(
   const url = URL.createObjectURL(new Blob([toArrayBuffer(plain)], { type: mime }));
   objectUrls.set(attachmentId, url);
   return url;
+}
+
+/**
+ * The bytes of an attachment, for work such as trimming an image.
+ *
+ * Looks on the device first: a file still waiting to upload, then the cache
+ * of plain files. A locked file's plaintext is never in that cache, so it
+ * comes from this tab's decrypted copy, or is downloaded and decrypted again.
+ * Anything that needs the server and cannot reach it in time is reported as
+ * `offline`, rather than left waiting for a connection that may not come.
+ */
+export async function loadAttachmentBlob(
+  client: ConvexReactClient,
+  attachmentId: string,
+): Promise<Blob> {
+  const database = db();
+  const waiting = await database.pendingUploads.get(attachmentId);
+  if (waiting) return waiting.blob;
+
+  const row = await database.attachments.get(attachmentId);
+  if (!row?.locked) {
+    const local = await database.blobs.get(attachmentId);
+    if (local) return local.blob;
+  }
+
+  if (!objectUrls.has(attachmentId) && !navigator.onLine) {
+    throw new AttachmentUnavailableError("offline");
+  }
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new AttachmentUnavailableError("offline")),
+      DOWNLOAD_TIMEOUT_MS,
+    );
+  });
+  const download = async () => {
+    const url = await resolveAttachment(client, attachmentId);
+    if (!url) throw new AttachmentUnavailableError("missing");
+    const response = await fetch(url).catch(() => {
+      throw new AttachmentUnavailableError(navigator.onLine ? "missing" : "offline");
+    });
+    if (!response.ok) throw new AttachmentUnavailableError("missing");
+    return response.blob();
+  };
+  try {
+    return await Promise.race([download(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**

@@ -1,0 +1,12 @@
+/*
+ * On a touch screen react-image-crop keeps only the four corners, drawn 24px
+ * square. Each takes a touch 10px further out than it is drawn, so a thumb
+ * that lands a little off still gets the corner rather than moving the box.
+ */
+@media (pointer: coarse) {
+  .crop :global(.ReactCrop__drag-handle)::after {
+    content: "";
+    position: absolute;
+    inset: -10px;
+  }
+}

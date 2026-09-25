@@ -5,7 +5,7 @@ import "@blocknote/shadcn/style.css";
 
 import { ja as blocknoteJa } from "@blocknote/core/locales";
 import { withCollaboration } from "@blocknote/core/yjs";
-import { useCreateBlockNote } from "@blocknote/react";
+import { FormattingToolbarController, useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { useConvex } from "convex/react";
 import { useTheme } from "next-themes";
@@ -13,6 +13,11 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import type * as Y from "yjs";
 import { useSync } from "@/components/providers/sync-provider";
+import {
+  ImageCrop,
+  MemocaFormattingToolbar,
+  ToolbarOnImageTap,
+} from "@/components/editor/image-crop";
 import { MobileBlockToolbar } from "@/components/editor/mobile-block-toolbar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { vault } from "@/lib/crypto/vault";
@@ -143,14 +148,20 @@ function EditorSurface({
   const editor = useCreateBlockNote(options, [doc]);
 
   return (
-    <BlockNoteView
-      editor={editor}
-      editable={!readOnly}
-      theme={resolvedTheme === "dark" ? "dark" : "light"}
-      className="memoca-editor min-h-[50vh] py-4"
-      data-locked={locked ? "true" : undefined}
-    >
-      <MobileBlockToolbar />
-    </BlockNoteView>
+    <ImageCrop editor={editor} noteId={noteId} editable={!readOnly}>
+      <BlockNoteView
+        editor={editor}
+        editable={!readOnly}
+        theme={resolvedTheme === "dark" ? "dark" : "light"}
+        className="memoca-editor min-h-[50vh] py-4"
+        data-locked={locked ? "true" : undefined}
+        formattingToolbar={false}
+      >
+        {/* BlockNote's own toolbar, with トリミング added for images. */}
+        <FormattingToolbarController formattingToolbar={MemocaFormattingToolbar} />
+        <ToolbarOnImageTap />
+        <MobileBlockToolbar />
+      </BlockNoteView>
+    </ImageCrop>
   );
 }
