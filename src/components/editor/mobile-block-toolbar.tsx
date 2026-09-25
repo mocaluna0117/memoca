@@ -169,9 +169,12 @@ export function MobileBlockToolbar() {
     },
   ];
 
+  // Hidden while the folder drawer is on screen: the page moves aside with
+  // it, and a moved page, not the screen, is what anything fixed inside it is
+  // placed against, so the bar would leave the keyboard.
   return (
     <div
-      className="bg-background/95 supports-[backdrop-filter]:bg-background/80 fixed inset-x-0 z-40 border-t backdrop-blur md:hidden"
+      className="bg-background/95 supports-[backdrop-filter]:bg-background/80 fixed inset-x-0 z-40 border-t backdrop-blur in-data-[drawer]:hidden md:hidden"
       style={{ bottom: inset }}
       role="toolbar"
       aria-label="ブロックの操作"

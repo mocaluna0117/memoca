@@ -74,8 +74,11 @@ export function InlineRename({
       enterKeyHint="done"
       autoComplete="off"
       spellCheck={false}
+      // 16px on a phone, as in the app's other fields: iOS zooms in on a
+      // smaller one and stays zoomed after it closes, which also stops the
+      // folder drawer's swipe.
       className={cn(
-        "bg-background ring-ring min-w-0 flex-1 rounded-sm px-1 text-sm outline-none ring-1",
+        "bg-background ring-ring min-w-0 flex-1 rounded-sm px-1 text-base outline-none ring-1 md:text-sm",
         className,
       )}
     />

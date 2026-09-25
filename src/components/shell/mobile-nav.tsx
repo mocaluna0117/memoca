@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FileText, Search, Settings, Zap } from "lucide-react";
+import type { Ref } from "react";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
 
@@ -14,10 +15,11 @@ const items = [
 ];
 
 /** Bottom bar for phones. Padded for the home indicator on iOS. */
-export function MobileNav() {
+export function MobileNav({ ref }: { ref?: Ref<HTMLElement> }) {
   const pathname = usePathname();
   return (
     <nav
+      ref={ref}
       className="bg-background/95 supports-[backdrop-filter]:bg-background/80 fixed inset-x-0 bottom-0 z-40 border-t backdrop-blur md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
     >
