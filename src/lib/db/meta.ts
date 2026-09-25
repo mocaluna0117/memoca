@@ -12,6 +12,8 @@ export const META = {
   profile: "profile",
   /** Whether the person has opted into reading search and its 17 MB dictionary. */
   yomi: "yomiEnabled",
+  /** The vault record (wrapped keys only), so the vault opens offline. */
+  vaultRecord: "vaultRecord",
 } as const;
 
 /**

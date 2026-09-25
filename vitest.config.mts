@@ -27,6 +27,10 @@ export default defineConfig({
           name: "convex",
           environment: "edge-runtime",
           include: ["convex/**/*.test.ts"],
+          // convex-test loads function modules on first use, and the first
+          // call into one that pulls in Better Auth can take several seconds
+          // on a busy machine. The default 5 s turned that into failures.
+          testTimeout: 20_000,
           server: { deps: { inline: ["convex-test"] } },
         },
       },

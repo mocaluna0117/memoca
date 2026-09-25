@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { Fingerprint, KeyRound, Loader2, ShieldCheck } from "lucide-react";
 import { Fragment, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -35,14 +35,20 @@ import {
   unlockWithRecoveryKey,
   vault,
 } from "@/lib/crypto/vault";
+import { useOnline } from "@/lib/hooks/use-online";
 import { useVaultUi } from "@/lib/store/vault-ui";
+import { useVaultRecord } from "@/lib/vault/record";
 import { t } from "@/lib/i18n/ja";
 
 const MIN_PASSWORD = 8;
 
 export function VaultDialog() {
   const { open, close } = useVaultUi();
-  const status = useQuery(api.vault.status, open ? {} : "skip");
+  // The device's copy of the vault record, so opening never waits on the
+  // network and works offline.
+  const availability = useVaultRecord((s) => s.availability);
+  const status = useVaultRecord((s) => s.record);
+  const online = useOnline();
   const setup = useMutation(api.vault.setup);
 
   const [password, setPassword] = useState("");
@@ -77,11 +83,14 @@ export function VaultDialog() {
     void platformAuthenticatorAvailable().then(setBiometricReady);
   }, []);
 
-  // Only the server's answer decides between creating and opening. `undefined`
-  // means that answer has not arrived yet, which must never read as "no vault":
-  // offering to create one then is how an existing vault could be replaced.
-  const loading = status === undefined;
-  const creating = status === null;
+  // Only the server's answer decides between creating and opening. "unknown"
+  // means neither the device nor the server has answered yet, which must never
+  // read as "no vault": offering to create one then is how an existing vault
+  // could be replaced.
+  const unknown = availability === "unknown";
+  const loading = unknown && online;
+  const unreachable = unknown && !online;
+  const creating = availability === "none";
   // While a key is being derived or saved, or the one-time recovery key is on
   // screen, closing would lose work that cannot be redone.
   const holdOpen = busy || freshKey !== null;
@@ -225,6 +234,20 @@ export function VaultDialog() {
               <Button onClick={() => close(true)}>保管しました</Button>
             </DialogFooter>
           </Fragment>
+        ) : unreachable ? (
+          <Fragment key="offline">
+            <DialogHeader>
+              <DialogTitle>金庫を開けません</DialogTitle>
+              <DialogDescription>
+                この端末にはまだ金庫の情報がありません。インターネットに接続してから、もう一度お試しください。
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="ghost" onClick={() => close(false)}>
+                {t.action.close}
+              </Button>
+            </DialogFooter>
+          </Fragment>
         ) : loading ? (
           <Fragment key="loading">
             <DialogHeader>
@@ -271,12 +294,17 @@ export function VaultDialog() {
                 />
               </div>
               {error ? <p className="text-destructive text-sm">{error}</p> : null}
+              {!online ? (
+                <p className="text-muted-foreground text-sm">
+                  金庫の作成にはインターネット接続が必要です。
+                </p>
+              ) : null}
             </div>
             <DialogFooter>
               <Button variant="ghost" onClick={() => close(false)} disabled={busy}>
                 {t.action.cancel}
               </Button>
-              <Button onClick={runSetup} disabled={busy}>
+              <Button onClick={runSetup} disabled={busy || !online}>
                 {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
                 設定する
               </Button>

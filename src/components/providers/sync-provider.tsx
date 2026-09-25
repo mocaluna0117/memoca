@@ -130,6 +130,8 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       next.stop();
       engineRef.current = null;
       void flushAll();
+      // Another account's vault must not stay open for whoever signs in next.
+      vault.lock();
     };
   }, [client, userKey]);
 

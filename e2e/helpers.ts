@@ -158,3 +158,28 @@ export async function createNote(page: Page, title: string, body?: string): Prom
   // Give the debounced title write and the editor flush time to land locally.
   await page.waitForTimeout(DEBOUNCE_MS);
 }
+
+/**
+ * These only mean anything against a real build: the service worker is what
+ * lets a navigation or a reload succeed with no network, and `next dev` does
+ * not ship one.
+ *
+ * Waits for what a reload with no network actually needs: an active worker
+ * with the /app shell in its cache. A fresh browser that opens /app straight
+ * after signing up can finish loading it before the worker has installed, and
+ * clients.claim() does not reliably take over a page that was still loading,
+ * so that page never becomes controlled and the shell is never cached. For a
+ * person the next load, such as the one after signing in, goes through the
+ * worker. One reload here does the same.
+ */
+export async function offlineReady(page: Page): Promise<void> {
+  await page.evaluate(() => navigator.serviceWorker.ready);
+  const shellCached = () => page.evaluate(async () => Boolean(await caches.match("/app")));
+  if (!(await shellCached())) {
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "すべてのメモ" }).first(),
+    ).toBeVisible({ timeout: 20_000 });
+  }
+  await expect.poll(shellCached, { timeout: 30_000 }).toBe(true);
+}

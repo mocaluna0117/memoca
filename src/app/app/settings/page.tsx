@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { Loader2, LogOut, ShieldCheck, Smartphone } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -39,6 +39,7 @@ import { DEFAULT_ARGON } from "@/lib/crypto/primitives";
 import { rewrapWithPassword, vault } from "@/lib/crypto/vault";
 import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { useVaultUi } from "@/lib/store/vault-ui";
+import { useVaultRecord } from "@/lib/vault/record";
 import { resetLocalData } from "@/lib/db";
 import { t } from "@/lib/i18n/ja";
 
@@ -69,7 +70,8 @@ export default function SettingsPage() {
   const { me } = useSync();
   const { theme, setTheme } = useTheme();
   const unlocked = useVaultUnlocked();
-  const vaultStatus = useQuery(api.vault.status);
+  const vaultAvailability = useVaultRecord((s) => s.availability);
+  const vaultStatus = useVaultRecord((s) => s.record);
   const updateSettings = useMutation(api.users.updateSettings);
   const rewrap = useMutation(api.vault.rewrap);
   const deleteAccount = useMutation(api.users.deleteAccount);
@@ -168,11 +170,11 @@ export default function SettingsPage() {
           title={t.vault.title}
           description="ロックしたメモは、この端末の中だけで暗号化・復号されます。サーバーには暗号文しか保存されません。"
         >
-          {vaultStatus === undefined ? (
+          {vaultAvailability === "unknown" ? (
             // Not known yet, or offline. Offering to create a vault here would
             // let an account that already has one start a second.
             <p className="text-muted-foreground text-sm">金庫の情報を読み込んでいます…</p>
-          ) : vaultStatus === null ? (
+          ) : vaultAvailability === "none" || !vaultStatus ? (
             <Button onClick={openSetup} className="gap-2">
               <ShieldCheck className="size-4" aria-hidden />
               {t.vault.setupTitle}

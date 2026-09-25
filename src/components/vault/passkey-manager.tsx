@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "convex/react";
+import { useMutation } from "convex/react";
 import { Fingerprint, Loader2, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -16,6 +16,7 @@ import {
   registerPasskey,
 } from "@/lib/crypto/passkey";
 import { extractVaultRaw, wrapForPasskey } from "@/lib/crypto/vault";
+import { useVaultRecord } from "@/lib/vault/record";
 
 /**
  * Registers Face ID / Touch ID as a way into the vault.
@@ -26,7 +27,7 @@ import { extractVaultRaw, wrapForPasskey } from "@/lib/crypto/vault";
  */
 export function PasskeyManager() {
   const { me } = useSync();
-  const status = useQuery(api.vault.status);
+  const status = useVaultRecord((s) => s.record);
   const addPasskey = useMutation(api.vault.addPasskey);
   const removePasskey = useMutation(api.vault.removePasskey);
 

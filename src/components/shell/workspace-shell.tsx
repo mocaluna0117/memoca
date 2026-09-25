@@ -7,6 +7,7 @@ import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
 import { PwaPrompts } from "@/components/shell/pwa-prompts";
 import { VaultDialog } from "@/components/vault/vault-dialog";
+import { VaultRecordSync } from "@/components/vault/vault-record-sync";
 import { vault } from "@/lib/crypto/vault";
 import { revokeResolvedUrls } from "@/lib/media/attachments";
 import { flushAll } from "@/lib/sync/docs";
@@ -104,6 +105,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       <AppShell onRequestFolderLock={onRequestFolderLock}>{children}</AppShell>
       <CommandPalette />
       <PwaPrompts />
+      <VaultRecordSync />
       <VaultDialog />
     </>
   );
