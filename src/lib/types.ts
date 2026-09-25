@@ -45,6 +45,11 @@ export type Note = {
   locked: boolean;
   keyEpoch: number;
   wrappedKey?: Sealed;
+  /**
+   * Why it is locked: by hand ("note") or as part of a locked folder
+   * ("folder"). Missing on notes locked before this was recorded.
+   */
+  lockOrigin?: "note" | "folder";
   deletedAt: number | null;
   purged: boolean;
   lastUpdateSeq: number;

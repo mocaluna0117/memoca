@@ -21,7 +21,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { createFolder } from "@/lib/sync/mutations";
-import type { FolderNode } from "@/lib/types";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +29,6 @@ type Props = {
   onSelectFolder: (folderId: string | null) => void;
   /** Selects a freshly created folder without dismissing the panel. */
   onCreatedFolder?: (folderId: string) => void;
-  onRequestLock?: (folder: FolderNode, returnFocus?: HTMLElement | null) => void;
   onNavigate?: () => void;
   /** Shows a close control in the header; set only inside the mobile drawer. */
   onClose?: () => void;
@@ -42,7 +40,6 @@ export function Sidebar({
   selectedFolderId,
   onSelectFolder,
   onCreatedFolder,
-  onRequestLock,
   onNavigate,
   onClose,
   menuContainer,
@@ -137,7 +134,6 @@ export function Sidebar({
             onSelectFolder(id);
             onNavigate?.();
           }}
-          onRequestLock={onRequestLock}
           onCreated={onCreatedFolder}
           menuContainer={menuContainer}
         />

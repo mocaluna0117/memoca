@@ -2,7 +2,7 @@
 
 import { useConvex } from "convex/react";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useCallback, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
@@ -20,9 +20,8 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { watchVaultActivity } from "@/lib/vault/activity";
 import { sealedNameFolders, unsealFolderNames } from "@/lib/vault/reconcile";
-import { requestVault } from "@/lib/store/vault-gate";
-import type { FolderNode } from "@/lib/types";
-import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
+import { lockUncovered, resumeUnlockJob } from "@/lib/vault/cascade";
+import { useSync } from "@/components/providers/sync-provider";
 
 /**
  * Owns the interactions that need both the vault and the server: locking a
@@ -30,6 +29,7 @@ import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
  */
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   const client = useConvex();
+  const { engine } = useSync();
   const router = useRouter();
   const [, setUnlocked] = useState(vault.isUnlocked);
 
@@ -116,89 +116,37 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     });
   }, [unlockedNow, sealedNames]);
 
-  // A folder can be marked locked while some of its notes are still plaintext,
-  // for example if the tab closed mid-cascade. Finish the job as soon as the
-  // vault is open again.
+  // A folder can be marked locked while some of its notes are still plaintext:
+  // a lock interrupted part way, or notes written on a device that did not
+  // know yet. And a folder unlock this device left unfinished is picked up
+  // again. Both run whenever the vault opens and when the network returns.
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
       if (!vault.isUnlocked) return;
-      const release = vault.hold();
-      try {
-        const repaired = await resumeCascades(client);
-        if (!cancelled && repaired > 0) {
-          toast.success(`ロックが途中だったメモ ${repaired} 件をロックしました`);
-        }
-      } finally {
-        release();
+      const resumed = await resumeUnlockJob(client, engine());
+      if (!cancelled && resumed && resumed.total > 0 && resumed.pending.length === 0) {
+        toast.success("フォルダのロックを外す処理を再開しました");
+      }
+      const repaired = await lockUncovered(client, engine());
+      if (!cancelled && repaired > 0) {
+        toast.success(`ロックが途中だったメモ ${repaired} 件をロックしました`);
       }
     };
     const unsubscribe = vault.subscribe((unlocked) => unlocked && void run());
+    const onOnline = () => void run();
+    window.addEventListener("online", onOnline);
     void run();
     return () => {
       cancelled = true;
       unsubscribe();
+      window.removeEventListener("online", onOnline);
     };
-  }, [client]);
-
-  const onRequestFolderLock = useCallback(
-    async (folder: FolderNode, returnFocus?: HTMLElement | null) => {
-      const locking = !folder.locked;
-      const name = folder.name ?? "ロックされたフォルダ";
-      // The prompt states what is about to happen and asks for a yes, with
-      // the vault open or not. Closing it means "not now"; it never leads to
-      // creating a vault unless the server says there is none.
-      const answer = await requestVault(
-        locking
-          ? { kind: "lockFolder", folderId: folder.folderId, name }
-          : { kind: "unlockFolder", folderId: folder.folderId, name },
-        { returnFocus },
-      );
-      if (!answer.ok) return;
-
-      const doing = locking
-        ? `フォルダ「${name}」をロックしています…`
-        : `フォルダ「${name}」のロックを外しています…`;
-      const toastId = toast.loading(doing);
-      // Closing the vault half way would leave the folder half locked.
-      const release = vault.hold();
-      try {
-        const outcome = await setFolderLocked(client, folder.folderId, locking, (p) => {
-          if (p.total > 1) toast.loading(`${doing}（${p.done} / ${p.total}）`, { id: toastId });
-        });
-        if (outcome.status === "ok") {
-          toast.success(
-            locking ? `フォルダ「${name}」をロックしました` : `フォルダ「${name}」のロックを外しました`,
-            { id: toastId },
-          );
-        } else {
-          toast.error(
-            outcome.status === "skipped" && outcome.reason === "behind"
-              ? "同期が終わってからもう一度お試しください。"
-              : locking
-                ? "ロックできませんでした。もう一度お試しください。"
-                : "ロックを外せませんでした。もう一度お試しください。",
-            { id: toastId },
-          );
-        }
-      } catch {
-        // A failure part way must not leave the "in progress" message spinning.
-        toast.error(
-          locking
-            ? "ロックできませんでした。インターネット接続を確認して、もう一度お試しください。"
-            : "ロックを外せませんでした。インターネット接続を確認して、もう一度お試しください。",
-          { id: toastId },
-        );
-      } finally {
-        release();
-      }
-    },
-    [client],
-  );
+  }, [client, engine]);
 
   return (
     <>
-      <AppShell onRequestFolderLock={onRequestFolderLock}>{children}</AppShell>
+      <AppShell>{children}</AppShell>
       <CommandPalette />
       <PwaPrompts />
       <VaultRecordSync />

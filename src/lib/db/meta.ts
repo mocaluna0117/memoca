@@ -20,6 +20,8 @@ export const META = {
   recoveryNudgeAt: "recoveryNudgeAt",
   /** What the last check found that this vault's key cannot open. */
   vaultHealth: "vaultHealth",
+  /** A folder unlock this device has not finished, to resume on next open. */
+  unlockJob: "unlockJob",
 } as const;
 
 /**

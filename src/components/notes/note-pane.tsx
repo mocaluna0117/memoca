@@ -1,6 +1,5 @@
 "use client";
 
-import { useConvex } from "convex/react";
 import {
   ArrowLeft,
   FolderInput,
@@ -12,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -32,9 +31,11 @@ import { vault } from "@/lib/crypto/vault";
 import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
 import { requestVault } from "@/lib/store/vault-gate";
 import { useOpenVaultLabel } from "@/lib/vault/use-vault-labels";
+import { useFolders } from "@/lib/hooks/data";
+import { coveringFolderOf, lockCoverage } from "@/lib/vault/model";
+import { useLockActions } from "@/components/vault/use-lock-actions";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { moveNote, renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
-import { lockNote, unlockNote } from "@/lib/vault/actions";
 import { t } from "@/lib/i18n/ja";
 
 /** Long enough to coalesce typing, short enough not to feel unsaved. */
@@ -81,11 +82,13 @@ export function NotePane({
   noteId: string;
   onBack: () => void;
 }) {
-  const client = useConvex();
   const note = useNote(noteId);
   const title = useNoteTitle(note);
   const unlocked = useVaultUnlocked();
   const openLabel = useOpenVaultLabel();
+  const { toggleNoteLock } = useLockActions();
+  const folders = useFolders();
+  const coverage = useMemo(() => lockCoverage(folders), [folders]);
   const menu = useMenuDialog();
   const menuTrigger = useRef<HTMLButtonElement>(null);
 
@@ -171,42 +174,19 @@ export function NotePane({
     );
   }
 
+  const coverId = coveringFolderOf(note, coverage);
+  const coverName = coverId ? (folders.find((f) => f.folderId === coverId)?.name ?? "ロックされたフォルダ") : null;
+
   const toggleLock = async () => {
-    const removing = note.locked;
-    // Asked straight from the tap, with nothing awaited first, so the prompt
-    // can start Face ID / Touch ID inside it. Closing it means "not now".
-    const answer = await requestVault(
-      removing
-        ? { kind: "unlockNote", title: unlocked ? title || null : null }
-        : { kind: "lockNote", title: title || null },
-      { gesture: true, returnFocus: menuTrigger.current },
-    );
-    if (!answer.ok) return;
     setBusy(true);
-    const release = vault.hold();
     try {
-      const outcome = removing ? await unlockNote(client, noteId) : await lockNote(client, noteId);
-      if (outcome.status === "ok") {
-        toast.success(removing ? "メモのロックを外しました" : "メモをロックしました");
-      } else if (outcome.status === "skipped" && outcome.reason === "behind") {
-        toast.error("同期が終わってからもう一度お試しください。");
-      } else if (outcome.status === "skipped" && outcome.reason === "unsent") {
-        toast.error("未送信の変更があります。同期後にもう一度お試しください。");
-      } else {
-        toast.error(
-          removing
-            ? "ロックを外せませんでした。もう一度お試しください。"
-            : "ロックできませんでした。もう一度お試しください。",
-        );
-      }
-    } catch {
-      toast.error(
-        removing
-          ? "ロックを外せませんでした。インターネット接続を確認して、もう一度お試しください。"
-          : "ロックできませんでした。インターネット接続を確認して、もう一度お試しください。",
+      await toggleNoteLock(
+        note,
+        // The title is only known while it is readable.
+        note.locked && !unlocked ? null : title || null,
+        menuTrigger.current,
       );
     } finally {
-      release();
       setBusy(false);
     }
   };
@@ -266,17 +246,31 @@ export function NotePane({
               <FolderInput className="size-4" aria-hidden />
               {t.action.move}
             </DropdownMenuItem>
-            <DropdownMenuItem
-              disabled={busy}
-              onSelect={() => menu.openDialog(() => void toggleLock())}
-            >
-              {note.locked ? (
-                <LockOpen className="size-4" aria-hidden />
-              ) : (
-                <Lock className="size-4" aria-hidden />
-              )}
-              {note.locked ? t.action.unlock : t.action.lock}
-            </DropdownMenuItem>
+            {coverName ? (
+              // Its folder's lock covers it: taking that off, or moving the
+              // note out, is what unlocks it.
+              <DropdownMenuItem disabled className="flex-col items-start gap-0.5">
+                <span className="flex items-center gap-1.5">
+                  <Lock className="size-4" aria-hidden />
+                  フォルダ「{coverName}」でロック中
+                </span>
+                <span className="text-muted-foreground pl-5.5 text-xs">
+                  外すには、メモをフォルダの外へ移動します
+                </span>
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem
+                disabled={busy}
+                onSelect={() => menu.openDialog(() => void toggleLock())}
+              >
+                {note.locked ? (
+                  <LockOpen className="size-4" aria-hidden />
+                ) : (
+                  <Lock className="size-4" aria-hidden />
+                )}
+                {note.locked ? t.action.unlock : t.action.lock}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"

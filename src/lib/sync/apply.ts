@@ -94,6 +94,7 @@ function mergeNote(local: Note, remote: RemoteNote): Note {
     next.locked = remote.locked;
     next.keyEpoch = remote.keyEpoch;
     next.wrappedKey = remote.wrappedKey;
+    next.lockOrigin = remote.lockOrigin;
     next.ts = { ...next.ts, lock: remote.ts.lock };
     if (remote.locked) {
       next.title = remote.title;

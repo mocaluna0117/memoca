@@ -45,9 +45,12 @@ const quoted = (title: string | null) => (title ? `「${title}」` : "このメ�
 
 export function purposeCopy(
   purpose: VaultPurpose,
-  opts: { method: string; noteCount?: number | null } = { method: "パスキー" },
+  opts: { method: string; noteCount?: number | null; keepCount?: number | null } = {
+    method: "パスキー",
+  },
 ): PurposeCopy {
   const count = opts.noteCount ?? null;
+  const keep = opts.keepCount ?? 0;
   switch (purpose.kind) {
     case "open":
       return purpose.from === "note"
@@ -109,6 +112,9 @@ export function purposeCopy(
               ? "このフォルダのロックされたメモを通常のメモに戻します。"
               : `このフォルダのロックされたメモ ${count} 件を通常のメモに戻します。`,
           "本文・タイトル・添付ファイルは、暗号化されない状態でサーバーに保存されます。",
+          ...(keep > 0
+            ? [`個別にロックしたメモと、ほかのロックで守られているメモ ${keep} 件は、ロックしたままにします。`]
+            : []),
         ],
         verb: "ロックを外す",
         offline: "ロックを外すにはインターネット接続が必要です。",

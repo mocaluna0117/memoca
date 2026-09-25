@@ -12,12 +12,28 @@ import { deviceId } from "@/lib/db/meta";
 import { stamp } from "@/lib/sync/clock";
 import { reloadDoc, withDetachedDoc } from "@/lib/sync/docs";
 import { extractText, firstLine } from "@/lib/sync/ydoc";
-import { subtreeIds } from "@/lib/tree";
 
 export type LockOutcome =
   | { status: "ok" }
   | { status: "skipped"; reason: string }
   | { status: "failed"; reason: string };
+
+/**
+ * The largest snapshot sent inside the mutation itself, matching the server's
+ * SNAPSHOT_INLINE_LIMIT (Convex documents stop at 1 MiB). Anything larger is
+ * uploaded to storage first, so a long note can be locked too.
+ */
+const SNAPSHOT_INLINE_LIMIT = 900_000;
+
+async function snapshotArg(
+  client: ConvexReactClient,
+  bytes: Uint8Array,
+  iv?: Uint8Array,
+): Promise<{ payload?: ArrayBuffer; storageId?: string; size: number; iv?: ArrayBuffer }> {
+  const base = { size: bytes.byteLength, ...(iv ? { iv: toArrayBuffer(iv) } : {}) };
+  if (bytes.byteLength <= SNAPSHOT_INLINE_LIMIT) return { ...base, payload: toArrayBuffer(bytes) };
+  return { ...base, storageId: await uploadBytes(client, bytes, "application/octet-stream") };
+}
 
 async function uploadBytes(
   client: ConvexReactClient,
@@ -45,7 +61,9 @@ async function uploadBytes(
 export async function lockNote(
   client: ConvexReactClient,
   noteId: string,
+  opts: { origin?: "note" | "folder" } = {},
 ): Promise<LockOutcome> {
+  const origin = opts.origin ?? "note";
   const database = db();
   const note = await database.notes.get(noteId);
   if (!note) return { status: "skipped", reason: "unknownNote" };
@@ -65,6 +83,7 @@ export async function lockNote(
 
   const epoch = note.keyEpoch + 1;
   const { key, wrapped } = await vault.createNoteKey(noteId, epoch);
+  const ts = stamp(await deviceId());
 
   const merged = await withDetachedDoc(noteId, (doc) => Y.encodeStateAsUpdate(doc));
   const snapshot = await seal(key, merged, ctx.yjsSnapshot(noteId, epoch));
@@ -115,13 +134,10 @@ export async function lockNote(
     coversThroughSeq: note.lastUpdateSeq,
     wrappedKey: wrapped,
     titleSealed: { ct: toArrayBuffer(titleSealed.ct), iv: toArrayBuffer(titleSealed.iv) },
-    snapshot: {
-      payload: toArrayBuffer(snapshot.ct),
-      size: snapshot.ct.byteLength,
-      iv: toArrayBuffer(snapshot.iv),
-    },
+    snapshot: (await snapshotArg(client, snapshot.ct, snapshot.iv)) as never,
     attachments: swaps as never,
-    ts: stamp(await deviceId()),
+    ts,
+    origin,
   });
   if (result.status !== "ok") return { status: "failed", reason: result.reason ?? "" };
 
@@ -133,11 +149,17 @@ export async function lockNote(
     throughSeq: note.lastUpdateSeq,
   });
   await database.updates.where("noteId").equals(noteId).delete();
+  // The local row changes the same way the server's did, at once: the list
+  // must not keep showing the plaintext title until the next pull.
   await database.notes.update(noteId, {
     locked: true,
     keyEpoch: epoch,
     wrappedKey: wrapped,
+    lockOrigin: origin,
+    title: null,
+    titleSealed: { ct: toArrayBuffer(titleSealed.ct), iv: toArrayBuffer(titleSealed.iv) },
     preview: null,
+    ts: { ...note.ts, lock: ts, title: ts },
   });
   await database.bodies.put({
     noteId,
@@ -167,9 +189,18 @@ export async function unlockNote(
   if (!body || body.throughSeq !== note.lastUpdateSeq) {
     return { status: "skipped", reason: "behind" };
   }
+  // Edits still on their way would be written under the old key epoch and
+  // refused once the lock is off, so they go first.
+  const unpushed = await database.updates
+    .where("noteId")
+    .equals(noteId)
+    .filter((u) => u.pushed === 0)
+    .count();
+  if (unpushed > 0) return { status: "skipped", reason: "unsent" };
 
   const key = await vault.noteKey(noteId, note.keyEpoch, note.wrappedKey);
   const epoch = note.keyEpoch + 1;
+  const unlockTs = stamp(await deviceId());
   const merged = await withDetachedDoc(noteId, (doc) => Y.encodeStateAsUpdate(doc));
 
   let title = "";
@@ -231,9 +262,9 @@ export async function unlockNote(
     coversThroughSeq: note.lastUpdateSeq,
     title,
     preview: firstLine(text, 160),
-    snapshot: { payload: toArrayBuffer(merged), size: merged.byteLength },
+    snapshot: (await snapshotArg(client, merged)) as never,
     attachments: swaps as never,
-    ts: stamp(await deviceId()),
+    ts: unlockTs,
   });
   if (result.status !== "ok") return { status: "failed", reason: result.reason ?? "" };
 
@@ -248,9 +279,11 @@ export async function unlockNote(
     locked: false,
     keyEpoch: epoch,
     wrappedKey: undefined,
+    lockOrigin: undefined,
     title,
     titleSealed: undefined,
     preview: firstLine(text, 160),
+    ts: { ...note.ts, lock: unlockTs, title: unlockTs },
   });
   await database.bodies.put({
     noteId,
@@ -261,106 +294,4 @@ export async function unlockNote(
   });
   await reloadDoc(noteId);
   return { status: "ok" };
-}
-
-export type CascadeProgress = { done: number; total: number };
-
-/**
- * Locks a folder and everything under it.
- *
- * The flag is set first and the notes follow one by one, because only this
- * device holds the key. If the run is interrupted the folder is already marked
- * locked, and {@link resumeCascades} finishes the job on next launch rather
- * than leaving plaintext inside a folder the user believes is protected.
- */
-export async function setFolderLocked(
-  client: ConvexReactClient,
-  folderId: string,
-  locked: boolean,
-  onProgress?: (progress: CascadeProgress) => void,
-): Promise<LockOutcome> {
-  const database = db();
-  const folder = await database.folders.get(folderId);
-  if (!folder) return { status: "skipped", reason: "unknownFolder" };
-  if (!vault.isUnlocked) return { status: "skipped", reason: "vaultLocked" };
-
-  const device = await deviceId();
-  const ts = stamp(device);
-
-  // The name is never sealed any more. A name an earlier version sealed is
-  // opened and sent back in plaintext when the lock comes off.
-  const legacyName =
-    folder.name === null && folder.nameSealed
-      ? await vault.openFolderName(folderId, folder.nameSealed).catch(() => null)
-      : null;
-  const result = await client.mutation(api.vault.setFolderLock, {
-    folderId,
-    locked,
-    ...(!locked && legacyName !== null ? { name: legacyName } : {}),
-    ts,
-  });
-  if (result.status !== "ok") return { status: "failed", reason: result.reason ?? "" };
-
-  await database.folders.update(folderId, {
-    locked,
-    ...(!locked && legacyName !== null
-      ? { name: legacyName, nameSealed: undefined, ts: { ...folder.ts, lock: ts, name: ts } }
-      : { ts: { ...folder.ts, lock: ts } }),
-  });
-
-  const folders = await database.folders.toArray();
-  const ids = new Set(subtreeIds(folders, folderId));
-  const notes = (await database.notes.toArray()).filter(
-    (note) =>
-      note.folderId !== null &&
-      ids.has(note.folderId) &&
-      !note.purged &&
-      note.locked !== locked,
-  );
-
-  let done = 0;
-  for (const note of notes) {
-    const outcome = locked
-      ? await lockNote(client, note.noteId)
-      : await unlockNote(client, note.noteId);
-    done += 1;
-    onProgress?.({ done, total: notes.length });
-    if (outcome.status === "failed") return outcome;
-  }
-  return { status: "ok" };
-}
-
-/**
- * Finishes any cascade that was cut short, for example by closing the tab
- * halfway through locking a large folder, or by a note created offline inside
- * a folder that was already locked.
- */
-export async function resumeCascades(client: ConvexReactClient): Promise<number> {
-  if (!vault.isUnlocked) return 0;
-  const database = db();
-  const folders = await database.folders.toArray();
-  const lockedRoots = folders.filter((f) => f.locked && !f.purged);
-  if (lockedRoots.length === 0) return 0;
-
-  const covered = new Set<string>();
-  for (const root of lockedRoots) {
-    for (const id of subtreeIds(folders, root.folderId)) covered.add(id);
-  }
-
-  const notes = await database.notes.toArray();
-  const pending = notes.filter(
-    (note) =>
-      !note.locked &&
-      !note.purged &&
-      note.deletedAt === null &&
-      note.folderId !== null &&
-      covered.has(note.folderId),
-  );
-
-  let repaired = 0;
-  for (const note of pending) {
-    const outcome = await lockNote(client, note.noteId);
-    if (outcome.status === "ok") repaired += 1;
-  }
-  return repaired;
 }

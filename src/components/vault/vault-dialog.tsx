@@ -50,7 +50,7 @@ import { useKeyboardInset } from "@/lib/hooks/use-keyboard-inset";
 import { useOnline } from "@/lib/hooks/use-online";
 import { t } from "@/lib/i18n/ja";
 import { type AutoPasskey, type VaultRequest, useVaultGate } from "@/lib/store/vault-gate";
-import { subtreeIds } from "@/lib/tree";
+import { planFolderLock, planFolderUnlock } from "@/lib/vault/model";
 import { cn } from "@/lib/utils";
 import {
   type GateContext,
@@ -89,30 +89,34 @@ export function VaultDialog() {
   return request ? <VaultPrompt key={request.id} request={request} /> : null;
 }
 
-/** How many notes a folder lock would change, for the confirmation text. */
-function useFolderNoteCount(purpose: VaultPurpose): number | null {
+/**
+ * How many notes a folder lock would change, and for an unlock how many it
+ * leaves locked, for the confirmation text. The same plans the lock itself
+ * follows, so the numbers are what will happen.
+ */
+function useFolderNoteCounts(purpose: VaultPurpose): { count: number | null; keep: number } {
   const folderId =
     purpose.kind === "lockFolder" || purpose.kind === "unlockFolder" ? purpose.folderId : null;
   const locking = purpose.kind === "lockFolder";
   return (
     useLiveQuery(
       async () => {
-        if (!folderId) return null;
-        const inside = new Set(subtreeIds(await db().folders.toArray(), folderId));
-        return db()
-          .notes.filter(
-            (note) =>
-              note.folderId !== null &&
-              inside.has(note.folderId) &&
-              !note.purged &&
-              note.deletedAt === null &&
-              note.locked !== locking,
-          )
-          .count();
+        if (!folderId) return { count: null, keep: 0 };
+        const [folders, notes] = await Promise.all([db().folders.toArray(), db().notes.toArray()]);
+        // Only what the person can see: trashed notes change too, silently.
+        const visible = new Set(notes.filter((n) => n.deletedAt === null).map((n) => n.noteId));
+        if (locking) {
+          return { count: planFolderLock(folderId, folders, notes).filter((id) => visible.has(id)).length, keep: 0 };
+        }
+        const plan = planFolderUnlock(folderId, folders, notes);
+        return {
+          count: plan.unlock.filter((id) => visible.has(id)).length,
+          keep: plan.keep.filter((id) => visible.has(id)).length,
+        };
       },
       [folderId, locking],
-      null,
-    ) ?? null
+      { count: null, keep: 0 },
+    ) ?? { count: null, keep: 0 }
   );
 }
 
@@ -131,8 +135,8 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
   const passkeyReady = platform && (record?.passkeys.length ?? 0) > 0;
   const ctx: GateContext = { availability, online, unlocked, passkeyReady };
   const [method] = useState(() => unlockMethodName());
-  const noteCount = useFolderNoteCount(purpose);
-  const copy = purposeCopy(purpose, { method, noteCount });
+  const counts = useFolderNoteCounts(purpose);
+  const copy = purposeCopy(purpose, { method, noteCount: counts.count, keepCount: counts.keep });
   const blockedOffline = needsServer(purpose) && !online;
 
   const [gate, dispatch] = useReducer(gateReducer, undefined, () => {

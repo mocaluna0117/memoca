@@ -19,12 +19,13 @@ import {
   FolderPlus,
   Inbox,
   Lock,
+  Loader2,
   LockOpen,
   MoreHorizontal,
   Pencil,
   Trash2,
 } from "lucide-react";
-import { type KeyboardEvent, useEffect, useId, useRef, useState } from "react";
+import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -37,6 +38,9 @@ import {
 import { useFolderTree } from "@/lib/hooks/data";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
 import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
+import { useLockProgress } from "@/lib/store/lock-progress";
+import { type FolderLockKind, folderLockKind, lockCoverage } from "@/lib/vault/model";
+import { useLockActions } from "@/components/vault/use-lock-actions";
 import { between } from "@/lib/sortkey";
 import { canMoveFolder, findNode, flattenTree, siblingsOf } from "@/lib/tree";
 import { db } from "@/lib/db";
@@ -59,7 +63,6 @@ const FOLDER_KEYS_HINT =
 type Props = {
   selectedFolderId: string | null;
   onSelect: (folderId: string | null) => void;
-  onRequestLock?: (folder: FolderNode, returnFocus?: HTMLElement | null) => void;
   /** Selects a new folder without dismissing the panel it was created in. */
   onCreated?: (folderId: string) => void;
   /** Set when this tree lives inside the mobile drawer. */
@@ -69,11 +72,14 @@ type Props = {
 export function FolderTree({
   selectedFolderId,
   onSelect,
-  onRequestLock,
   onCreated = onSelect,
   menuContainer,
 }: Props) {
   const tree = useFolderTree();
+  const { toggleFolderLock } = useLockActions();
+  const busy = useLockProgress((s) => s.busy);
+  // Which lock covers each folder, its own or a parent's.
+  const coverage = useMemo(() => lockCoverage(allNodes(tree)), [tree]);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [renaming, setRenaming] = useState<FolderNode | null>(null);
   const [moving, setMoving] = useState<FolderNode | null>(null);
@@ -266,7 +272,12 @@ export function FolderTree({
           const selected = selectedFolderId === node.folderId;
           const hasChildren = node.children.length > 0;
           const isInbox = node.system === "inbox";
-          const label = node.locked ? (node.name ?? "ロックされたフォルダ") : node.name;
+          const label = node.name ?? (node.nameSealed ? "ロックされたフォルダ" : null);
+          const lockKind = isInbox ? "none" : folderLockKind(node.folderId, coverage);
+          const coverName =
+            lockKind === "inherited"
+              ? (findNode(tree, coverage.get(node.folderId)!)?.name ?? "ロックされたフォルダ")
+              : null;
 
           return (
             <FolderRowDropZones
@@ -314,7 +325,8 @@ export function FolderTree({
                   <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
                     <FolderGlyph
                       inbox={isInbox}
-                      locked={node.locked}
+                      lock={lockKind}
+                      busy={busy.has(node.folderId)}
                       open={hasChildren && expanded.has(node.folderId)}
                     />
                     <InlineRename
@@ -343,10 +355,16 @@ export function FolderTree({
                     were bare names and read no differently from notes. */}
                     <FolderGlyph
                       inbox={isInbox}
-                      locked={node.locked}
+                      lock={lockKind}
+                      busy={busy.has(node.folderId)}
                       open={hasChildren && expanded.has(node.folderId)}
                     />
                     <span className="truncate">{label ?? "無題のフォルダ"}</span>
+                    {lockKind !== "none" ? (
+                      <span className="sr-only">
+                        {lockKind === "own" ? "（ロック中）" : "（親フォルダでロック中）"}
+                      </span>
+                    ) : null}
                   </FolderDragButton>
                 )}
 
@@ -397,11 +415,22 @@ export function FolderTree({
                     ) : null}
                     {/* Inbox is where quick notes land, so it is never locked:
                     every new note would have to wait for the vault. */}
-                    {onRequestLock && !isInbox ? (
+                    {isInbox ? null : busy.has(node.folderId) ? (
+                      <DropdownMenuItem disabled>
+                        <Loader2 className="size-4 animate-spin" aria-hidden />
+                        処理中…
+                      </DropdownMenuItem>
+                    ) : lockKind === "inherited" ? (
+                      // Covered by a parent's lock: that is the one to take off.
+                      <DropdownMenuItem disabled>
+                        <Lock className="size-4" aria-hidden />
+                        親フォルダ「{coverName}」でロック中
+                      </DropdownMenuItem>
+                    ) : (
                       <DropdownMenuItem
                         onSelect={() =>
                           openDialog(() =>
-                            onRequestLock(
+                            void toggleFolderLock(
                               node,
                               list.current?.querySelector<HTMLElement>(
                                 `[data-folder-row="${node.folderId}"]`,
@@ -417,7 +446,7 @@ export function FolderTree({
                         )}
                         {node.locked ? "ロックを外す…" : "ロックする…"}
                       </DropdownMenuItem>
-                    ) : null}
+                    )}
                     {!isInbox ? (
                       <>
                         <DropdownMenuSeparator />
@@ -485,16 +514,36 @@ export function FolderTree({
   );
 }
 
-/** The icon at the start of a folder row: Inbox, locked, open or closed. */
+/**
+ * The icon at the start of a folder row: Inbox, locked (its own lock, or a
+ * small lock for one inherited from a parent), in progress, open or closed.
+ */
 function FolderGlyph({
   inbox,
-  locked,
+  lock,
+  busy = false,
   open,
 }: {
   inbox: boolean;
-  locked: boolean;
+  lock: FolderLockKind;
+  busy?: boolean;
   open: boolean;
 }) {
-  const Icon = inbox ? Inbox : locked ? FolderLock : open ? FolderOpen : FolderIcon;
-  return <Icon className="size-4 shrink-0 opacity-70" aria-hidden />;
+  if (busy) return <Loader2 className="size-4 shrink-0 animate-spin opacity-70" aria-hidden />;
+  if (inbox) return <Inbox className="size-4 shrink-0 opacity-70" aria-hidden />;
+  if (lock === "own") return <FolderLock className="size-4 shrink-0 opacity-70" aria-hidden />;
+  const Icon = open ? FolderOpen : FolderIcon;
+  return (
+    <span className="relative inline-flex shrink-0">
+      <Icon className="size-4 opacity-70" aria-hidden />
+      {lock === "inherited" ? (
+        <Lock className="bg-background absolute -right-1 -bottom-1 size-2.5 rounded-full" aria-hidden />
+      ) : null}
+    </span>
+  );
+}
+
+/** Every node of the tree, open or not. */
+function allNodes(nodes: FolderNode[]): FolderNode[] {
+  return nodes.flatMap((node) => [node, ...allNodes(node.children)]);
 }

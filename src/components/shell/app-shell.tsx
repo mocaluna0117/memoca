@@ -15,38 +15,19 @@ import { SyncBadge } from "@/components/shell/sync-badge";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { useWorkspace } from "@/lib/hooks/workspace";
-import type { FolderNode } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
-type ShellContextValue = {
-  openDrawer: () => void;
-  requestLock: (f: FolderNode, returnFocus?: HTMLElement | null) => void;
-};
-const ShellContext = createContext<ShellContextValue>({
-  openDrawer: () => {},
-  requestLock: () => {},
-});
+type ShellContextValue = { openDrawer: () => void };
+const ShellContext = createContext<ShellContextValue>({ openDrawer: () => {} });
 
 export const useShell = () => useContext(ShellContext);
 
-export function AppShell({
-  children,
-  onRequestFolderLock,
-}: {
-  children: ReactNode;
-  onRequestFolderLock?: (folder: FolderNode, returnFocus?: HTMLElement | null) => void;
-}) {
+export function AppShell({ children }: { children: ReactNode }) {
   const { selection, openFolder } = useWorkspace();
   const [drawer, setDrawer] = useState(false);
   const [drawerElement, setDrawerElement] = useState<HTMLDivElement | null>(null);
 
-  const value = useMemo<ShellContextValue>(
-    () => ({
-      openDrawer: () => setDrawer(true),
-      requestLock: (folder, returnFocus) => onRequestFolderLock?.(folder, returnFocus),
-    }),
-    [onRequestFolderLock],
-  );
+  const value = useMemo<ShellContextValue>(() => ({ openDrawer: () => setDrawer(true) }), []);
 
   const select = useCallback(
     (folderId: string | null) => {
@@ -75,7 +56,6 @@ export function AppShell({
             <Sidebar
               selectedFolderId={selection.folderId}
               onSelectFolder={select}
-              onRequestLock={onRequestFolderLock}
             />
           </div>
         </aside>
@@ -104,8 +84,7 @@ export function AppShell({
                 selectedFolderId={selection.folderId}
                 onSelectFolder={select}
                 onCreatedFolder={selectWithoutClosing}
-                onRequestLock={onRequestFolderLock}
-                onNavigate={() => setDrawer(false)}
+                  onNavigate={() => setDrawer(false)}
                 onClose={() => setDrawer(false)}
                 menuContainer={drawerElement}
               />

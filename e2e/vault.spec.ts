@@ -72,7 +72,9 @@ test.describe("vault prompt", () => {
     await expect(page.getByText(/をロックしました$/)).toBeVisible({ timeout: 30_000 });
     // Locked, and still called by its name: only the notes inside are encrypted.
     const panelAfter = await folderPanel(page);
-    await expect(panelAfter.getByRole("button", { name: "新しいフォルダ", exact: true })).toBeVisible();
+    await expect(
+      panelAfter.getByRole("button", { name: /^新しいフォルダ\s*（ロック中）$/ }),
+    ).toBeVisible();
 
     // Taking the lock off asks for a yes even with the vault open, and
     // closing that question changes nothing.
