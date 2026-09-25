@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -54,7 +55,11 @@ export function RenameDialog({
           onSubmit={(event) => {
             event.preventDefault();
             const trimmed = value.trim();
-            if (trimmed.length > 0) void onSubmit(trimmed);
+            if (trimmed.length === 0) return;
+            // A failure must say so, not leave the dialog sitting there.
+            void Promise.resolve(onSubmit(trimmed)).catch(() =>
+              toast.error("名前を変更できませんでした。もう一度お試しください。"),
+            );
           }}
           className="space-y-4"
         >

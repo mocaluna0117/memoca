@@ -287,26 +287,25 @@ export async function setFolderLocked(
   const device = await deviceId();
   const ts = stamp(device);
 
-  let name = folder.name;
-  if (!locked && folder.nameSealed) {
-    name = await vault.openFolderName(folderId, folder.nameSealed);
-  }
-
-  const sealed = locked ? await vault.sealFolderName(folderId, name ?? "") : undefined;
+  // The name is never sealed any more. A name an earlier version sealed is
+  // opened and sent back in plaintext when the lock comes off.
+  const legacyName =
+    folder.name === null && folder.nameSealed
+      ? await vault.openFolderName(folderId, folder.nameSealed).catch(() => null)
+      : null;
   const result = await client.mutation(api.vault.setFolderLock, {
     folderId,
     locked,
-    name: locked ? null : (name ?? ""),
-    ...(sealed ? { nameSealed: sealed } : {}),
+    ...(!locked && legacyName !== null ? { name: legacyName } : {}),
     ts,
   });
   if (result.status !== "ok") return { status: "failed", reason: result.reason ?? "" };
 
   await database.folders.update(folderId, {
     locked,
-    name: locked ? null : (name ?? ""),
-    nameSealed: sealed,
-    ts: { ...folder.ts, lock: ts, name: ts },
+    ...(!locked && legacyName !== null
+      ? { name: legacyName, nameSealed: undefined, ts: { ...folder.ts, lock: ts, name: ts } }
+      : { ts: { ...folder.ts, lock: ts } }),
   });
 
   const folders = await database.folders.toArray();

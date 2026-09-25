@@ -91,17 +91,12 @@ export async function renameFolder(folderId: string, name: string): Promise<void
   if (!folder) return;
   const { ts } = await now();
 
-  // A locked folder's name is stored as ciphertext, so the rename has to be
-  // sealed before it leaves the device.
-  let sealed: Folder["nameSealed"];
-  if (folder.locked) {
-    const { vault } = await import("@/lib/crypto/vault");
-    sealed = await vault.sealFolderName(folderId, name);
-  }
-
+  // Always in plaintext, locked folder or not: only the notes inside a locked
+  // folder are encrypted, and the plaintext name also replaces a name that an
+  // earlier version sealed.
   await database.folders.update(folderId, {
-    name: folder.locked ? null : name,
-    nameSealed: sealed,
+    name,
+    nameSealed: undefined,
     ts: { ...folder.ts, name: ts },
   });
   await enqueue({
@@ -110,12 +105,7 @@ export async function renameFolder(folderId: string, name: string): Promise<void
     payload: {
       kind: "folder",
       folderId,
-      name: {
-        value: folder.locked ? null : name,
-        ...(sealed ? { sealed } : {}),
-        icon: folder.icon,
-        ts,
-      },
+      name: { value: name, icon: folder.icon, ts },
     },
   });
 }

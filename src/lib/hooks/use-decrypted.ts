@@ -74,7 +74,9 @@ export function useFolderName(folder: Folder | null | undefined): string {
   const [decrypted, setDecrypted] = useState<{ key: string; value: string } | null>(null);
 
   const key = folder ? `${folder.folderId}:${folder.ts.name.t}` : "";
-  const needsDecrypt = Boolean(folder?.locked && unlocked && folder.nameSealed);
+  // Folder names are plaintext now; only a name an earlier version sealed
+  // needs opening, until it is moved back to plaintext.
+  const needsDecrypt = Boolean(folder && folder.name === null && unlocked && folder.nameSealed);
 
   useEffect(() => {
     if (!needsDecrypt || !folder) return;
@@ -94,8 +96,8 @@ export function useFolderName(folder: Folder | null | undefined): string {
 
   return useMemo(() => {
     if (!folder) return "";
-    if (!folder.locked) return folder.name ?? "";
+    if (folder.name !== null) return folder.name;
     if (needsDecrypt && decrypted?.key === key) return decrypted.value;
-    return LOCKED_FOLDER_LABEL;
+    return folder.nameSealed ? LOCKED_FOLDER_LABEL : "";
   }, [folder, needsDecrypt, decrypted, key]);
 }

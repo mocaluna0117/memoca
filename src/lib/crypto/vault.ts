@@ -298,15 +298,7 @@ class VaultSession {
 
   /* --------------------------------------------------------------- folders */
 
-  async sealFolderName(folderId: string, name: string): Promise<Sealed> {
-    const { ct, iv } = await seal(
-      this.require(),
-      new TextEncoder().encode(name),
-      ctx.folderName(folderId),
-    );
-    return { ct: toArrayBuffer(ct), iv: toArrayBuffer(iv) };
-  }
-
+  /** Opens a folder name sealed by an earlier version, to restore it. */
   async openFolderName(folderId: string, sealed: Sealed): Promise<string> {
     const plain = await open(
       this.require(),

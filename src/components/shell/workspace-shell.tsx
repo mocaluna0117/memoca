@@ -16,7 +16,10 @@ import { useVaultRecord } from "@/lib/vault/record";
 import { vault } from "@/lib/crypto/vault";
 import { revokeResolvedUrls } from "@/lib/media/attachments";
 import { flushAll } from "@/lib/sync/docs";
+import { useLiveQuery } from "dexie-react-hooks";
+import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { watchVaultActivity } from "@/lib/vault/activity";
+import { sealedNameFolders, unsealFolderNames } from "@/lib/vault/reconcile";
 import { requestVault } from "@/lib/store/vault-gate";
 import type { FolderNode } from "@/lib/types";
 import { resumeCascades, setFolderLocked } from "@/lib/vault/actions";
@@ -98,6 +101,20 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       window.removeEventListener("pagehide", onPageHide);
     };
   }, []);
+
+  // Folder names an earlier version sealed become plaintext again the moment
+  // the vault is open, and also when such a folder arrives from a device that
+  // still runs that version.
+  const sealedNames = useLiveQuery(async () => (await sealedNameFolders()).length, [], 0);
+  const unlockedNow = useVaultUnlocked();
+  useEffect(() => {
+    if (!unlockedNow || sealedNames === 0) return;
+    void unsealFolderNames().then((restored) => {
+      if (restored > 0) {
+        toast.success(`ロックしたフォルダの名前を、ロック中も表示されるようにしました（${restored} 件）`);
+      }
+    });
+  }, [unlockedNow, sealedNames]);
 
   // A folder can be marked locked while some of its notes are still plaintext,
   // for example if the tab closed mid-cascade. Finish the job as soon as the

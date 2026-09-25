@@ -170,7 +170,7 @@ export default function SettingsPage() {
 
         <Section
           title={t.vault.title}
-          description="ロックしたメモの本文・タイトル・添付ファイルは、金庫の鍵で暗号化され、あなたの端末の中でだけ読めます。Memoca のサーバーでも読めません。"
+          description="ロックしたメモの本文・タイトル・添付ファイルは、金庫の鍵で暗号化され、あなたの端末の中でだけ読めます。フォルダ名、メモの件数、更新日時は暗号化されません。"
         >
           {vaultAvailability === "unknown" ? (
             // Not known yet, or offline. Offering to create a vault here would

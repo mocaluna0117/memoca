@@ -32,7 +32,7 @@ export function useSearch(query: string): { hits: SearchHit[]; total: number } {
     if (!rows) return [];
     const trashed = trashedFolderIds(rows.folders);
     const folderName = new Map(
-      rows.folders.map((f) => [f.folderId, f.locked ? "" : (f.name ?? "")]),
+      rows.folders.map((f) => [f.folderId, f.name ?? ""]),
     );
     const text = new Map(rows.bodies.map((b) => [b.noteId, b.text]));
     const reading = new Map(rows.bodies.map((b) => [b.noteId, b.reading ?? null]));
