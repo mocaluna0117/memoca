@@ -324,7 +324,14 @@ export function NotePane({
         </DropdownMenu>
       </header>
 
-      <div ref={body} data-scroll="note" className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain">
+      <div
+        ref={body}
+        data-scroll="note"
+        // Contained only where the note is its own scroller: on a phone it
+        // never overflows and the page scrolls, so containing it here would
+        // stop a finger on the note from scrolling anything.
+        className="min-h-0 flex-1 overflow-y-auto md:overscroll-y-contain"
+      >
         {hidden ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
             <Lock className="text-muted-foreground size-8" aria-hidden />

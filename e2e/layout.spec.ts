@@ -32,7 +32,10 @@ test.describe("side by side, each pane scrolls on its own", () => {
     }
 
     const row = page.locator("[data-note-row]").filter({ hasText: "動かない行" });
-    const before = (await row.boundingBox())!;
+    // The list's own box, not a row: the edited note moves to the top of the
+    // list once its change lands, which is not scrolling.
+    const list = page.locator(LIST);
+    const before = (await list.boundingBox())!;
     const title = page.getByLabel("メモのタイトル");
     const box = (await title.boundingBox())!;
     await page.mouse.move(box.x + box.width / 2, box.y + 300);
@@ -46,7 +49,7 @@ test.describe("side by side, each pane scrolls on its own", () => {
     expect(state.windowY).toBe(0);
     expect(state.pageOverflow).toBeLessThanOrEqual(1);
     expect(state.top ?? 0).toBe(0);
-    expect((await row.boundingBox())!.y).toBe(before.y);
+    expect((await list.boundingBox())!.y).toBe(before.y);
     await expect(title).toBeInViewport();
     await expect(row).toBeInViewport();
 
@@ -84,6 +87,35 @@ test.describe("on a phone", () => {
     const nav = (await page.getByRole("navigation").filter({ visible: true }).last().boundingBox())!;
     const last = (await rows.last().boundingBox())!;
     expect(last.y + last.height).toBeLessThanOrEqual(nav.y);
+  });
+
+  test("a finger on a long note scrolls it", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "長いメモ");
+    await editor(page).click();
+    for (let i = 1; i <= 40; i += 1) {
+      await page.keyboard.type(`${i} 行目`);
+      await page.keyboard.press("Enter");
+    }
+    await page.evaluate(() => {
+      (document.activeElement as HTMLElement | null)?.blur();
+      window.scrollTo(0, 0);
+    });
+
+    // A real touch drag, through Chromium's input pipeline, on the note text.
+    const box = (await page.getByText("5 行目", { exact: true }).boundingBox())!;
+    const x = box.x + box.width / 2;
+    const cdp = await page.context().newCDPSession(page);
+    await cdp.send("Input.synthesizeScrollGesture", {
+      x,
+      y: box.y + 200,
+      yDistance: -400,
+      gestureSourceType: "touch",
+      speed: 800,
+    });
+    await cdp.detach();
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
   });
 
   test("a note opens at its top, and going back finds the list where it was", async ({ page }) => {
