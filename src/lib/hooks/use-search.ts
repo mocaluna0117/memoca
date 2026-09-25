@@ -1,21 +1,27 @@
 "use client";
 
 import { useLiveQuery } from "dexie-react-hooks";
-import { useDeferredValue, useMemo } from "react";
+import { useDeferredValue, useEffect, useMemo } from "react";
 import { db } from "@/lib/db";
 import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { buildIndex, search, type SearchHit } from "@/lib/search/engine";
-import { trashedFolderIds } from "@/lib/tree";
+import { searchScope } from "@/lib/search/rows";
+import { openTitles, useOpenedTitles } from "@/lib/vault/titles";
 
 /**
  * Builds the search index from what this device already holds.
  *
- * Locked notes contribute their title only, and only while the vault is open;
- * their body text is never written to disk in the clear, so there is nothing
- * to index when the vault is closed.
+ * Locked notes are searched by title only, and only while the vault is open;
+ * their titles are opened in memory for it and dropped when the vault closes.
  */
-export function useSearch(query: string): { hits: SearchHit[]; total: number } {
+export function useSearch(query: string): {
+  hits: SearchHit[];
+  total: number;
+  /** Locked notes, and whether the vault is open to search them by title. */
+  locked: { count: number; open: boolean };
+} {
   const unlocked = useVaultUnlocked();
+  const titles = useOpenedTitles();
   const deferred = useDeferredValue(query);
 
   const rows = useLiveQuery(async () => {
@@ -28,38 +34,25 @@ export function useSearch(query: string): { hits: SearchHit[]; total: number } {
     return { notes, folders, bodies };
   }, []);
 
-  const index = useMemo(() => {
-    if (!rows) return [];
-    const trashed = trashedFolderIds(rows.folders);
-    const folderName = new Map(
-      rows.folders.map((f) => [f.folderId, f.name ?? ""]),
-    );
-    const text = new Map(rows.bodies.map((b) => [b.noteId, b.text]));
-    const reading = new Map(rows.bodies.map((b) => [b.noteId, b.reading ?? null]));
-
-    return buildIndex(
-      rows.notes
-        .filter(
-          (note) =>
-            !note.purged &&
-            note.deletedAt === null &&
-            (note.folderId === null || !trashed.has(note.folderId)),
-        )
-        .map((note) => ({
-          noteId: note.noteId,
-          folderId: note.folderId,
-          title: note.locked ? "ロックされたメモ" : (note.title ?? ""),
-          body: note.locked && !unlocked ? null : (text.get(note.noteId) ?? null),
-          folderName: note.folderId ? (folderName.get(note.folderId) ?? "") : "",
-          locked: note.locked,
-          updatedAt: note.updatedAt,
-          reading: note.locked && !unlocked ? null : (reading.get(note.noteId) ?? null),
-        })),
-    );
+  useEffect(() => {
+    if (unlocked && rows) void openTitles(rows.notes);
   }, [rows, unlocked]);
 
+  const scope = useMemo(
+    () =>
+      rows
+        ? searchScope(rows.notes, rows.folders, rows.bodies, { open: unlocked, titles })
+        : { rows: [], locked: 0 },
+    [rows, unlocked, titles],
+  );
+  const index = useMemo(() => buildIndex(scope.rows), [scope]);
+
   return useMemo(
-    () => ({ hits: search(index, deferred), total: index.length }),
-    [index, deferred],
+    () => ({
+      hits: search(index, deferred),
+      total: index.length,
+      locked: { count: scope.locked, open: unlocked },
+    }),
+    [index, deferred, scope.locked, unlocked],
   );
 }

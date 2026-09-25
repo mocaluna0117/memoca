@@ -161,3 +161,40 @@ test.describe("folder locks", () => {
       .toBe(2);
   });
 });
+
+test.describe("searching locked notes", () => {
+  test("a locked note is found by its title only while the vault is open", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await createVaultInSettings(page);
+    await openApp(page);
+
+    await createNote(page, "旅行の計画", "パスポートの番号");
+    await waitForSynced(page);
+    await page.getByRole("button", { name: "メモの操作" }).filter({ visible: true }).click();
+    await page.getByRole("menuitem", { name: "ロックする", exact: true }).click();
+    await enterVaultPassword(page, "ロックする");
+    await expect(page.getByText("メモをロックしました")).toBeVisible({ timeout: 30_000 });
+
+    // A full navigation closes the vault: the note is left out, and why is said.
+    await page.goto("/app/search");
+    const field = page.getByLabel("検索");
+    await field.fill("旅行");
+    await expect(page.getByText("0 件見つかりました")).toBeVisible();
+    await expect(page.getByText("ロックされたメモは、金庫を開くとタイトルで検索できます。")).toBeVisible();
+    // Not even its placeholder title is searchable.
+    await field.fill("ロック");
+    await expect(page.getByText("0 件見つかりました")).toBeVisible();
+
+    await field.fill("旅行");
+    await page.getByRole("button", { name: "金庫を開く", exact: true }).click();
+    await enterVaultPassword(page, "開く");
+    await expect(page.getByText("1 件見つかりました")).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("button", { name: /旅行の計画/ })).toBeVisible();
+    await expect(page.getByText("ロックされたメモの本文は検索されません。")).toBeVisible();
+
+    // Its body is still not searched.
+    await field.fill("パスポート");
+    await expect(page.getByText("0 件見つかりました")).toBeVisible();
+  });
+});

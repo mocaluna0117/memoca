@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { useLockActions } from "@/components/vault/use-lock-actions";
 import { useSearch } from "@/lib/hooks/use-search";
+import { lockedSearchNote } from "@/lib/search/rows";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { createFolder } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
@@ -37,7 +38,8 @@ export function CommandPalette() {
   const { selection, navigate } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const { hits } = useSearch(query);
+  const { hits, locked } = useSearch(query);
+  const lockedNote = query.trim().length > 0 ? lockedSearchNote(locked) : null;
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -94,6 +96,12 @@ export function CommandPalette() {
                   </CommandItem>
                 ))}
               </CommandGroup>
+            ) : null}
+            {lockedNote ? (
+              <p className="text-muted-foreground flex items-center gap-1.5 px-3 pt-1 pb-2 text-xs">
+                <Lock className="size-3 shrink-0 opacity-60" aria-hidden />
+                {lockedNote}
+              </p>
             ) : null}
 
             <CommandSeparator />

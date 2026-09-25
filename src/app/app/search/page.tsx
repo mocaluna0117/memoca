@@ -9,7 +9,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { useSearch } from "@/lib/hooks/use-search";
 import { useYomi } from "@/lib/hooks/use-yomi";
+import { lockedSearchNote } from "@/lib/search/rows";
 import { isKanaQuery } from "@/lib/search/yomi";
+import { requestVault } from "@/lib/store/vault-gate";
 import type { SearchHit } from "@/lib/search/engine";
 import { t } from "@/lib/i18n/ja";
 
@@ -35,8 +37,9 @@ function Highlighted({ snippet }: { snippet: SearchHit["snippet"] }) {
 export default function SearchPage() {
   const router = useRouter();
   const [query, setQuery] = useState("");
-  const { hits, total } = useSearch(query);
+  const { hits, total, locked } = useSearch(query);
   const yomi = useYomi();
+  const lockedNote = lockedSearchNote(locked);
 
   // Offer reading search exactly where it would have helped: a kana-only query
   // that found nothing, which is what typing a kanji word's reading looks like.
@@ -67,6 +70,21 @@ export default function SearchPage() {
             ? `${total} 件のメモから探せます`
             : `${hits.length} 件見つかりました`}
         </p>
+        {lockedNote ? (
+          <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-xs">
+            <Lock className="size-3 shrink-0 opacity-60" aria-hidden />
+            <span>{lockedNote}</span>
+            {locked.open ? null : (
+              <button
+                type="button"
+                className="text-foreground underline underline-offset-2"
+                onClick={() => void requestVault({ kind: "open", from: "general" }, { gesture: true })}
+              >
+                金庫を開く
+              </button>
+            )}
+          </p>
+        ) : null}
 
         {suggestYomi ? (
           <div className="bg-card mt-3 flex items-start gap-3 rounded-lg border p-3">

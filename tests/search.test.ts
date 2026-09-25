@@ -23,9 +23,11 @@ const rows = [
     updatedAt: 2,
   },
   {
+    // A locked note as it is indexed while the vault is open: its real
+    // title, opened in memory, and no body.
     noteId: "n3",
     folderId: null,
-    title: "ロックされたメモ",
+    title: "旅行の計画",
     body: null,
     folderName: "秘密",
     locked: true,
@@ -83,8 +85,8 @@ describe("search", () => {
     expect(search(withBoth, "会議")[0]!.noteId).toBe("title-match");
   });
 
-  test("a locked note is searchable by title but not by body", () => {
-    expect(search(index, "ロック").map((h) => h.noteId)).toEqual(["n3"]);
+  test("a locked note is found by its title, never by its body", () => {
+    expect(search(index, "旅行").map((h) => h.noteId)).toEqual(["n3"]);
     expect(search(index, "なにか秘密の本文")).toEqual([]);
   });
 
