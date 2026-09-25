@@ -76,7 +76,7 @@ export function FolderTree({
   menuContainer,
 }: Props) {
   const tree = useFolderTree();
-  const { toggleFolderLock } = useLockActions();
+  const { toggleFolderLock, moveFolderTo } = useLockActions();
   const busy = useLockProgress((s) => s.busy);
   // Which lock covers each folder, its own or a parent's.
   const coverage = useMemo(() => lockCoverage(allNodes(tree)), [tree]);
@@ -136,7 +136,7 @@ export function FolderTree({
 
     const folders = await db().folders.toArray();
     if (target === "root") {
-      if (canMoveFolder(folders, sourceId, null)) await moveFolder(sourceId, null);
+      if (canMoveFolder(folders, sourceId, null)) await moveFolderTo(sourceId, null);
       return;
     }
 
@@ -148,7 +148,7 @@ export function FolderTree({
         toast.error("そのフォルダの中には移動できません。");
         return;
       }
-      await moveFolder(sourceId, targetId!);
+      await moveFolderTo(sourceId, targetId!);
       setExpanded((current) => new Set(current).add(targetId!));
       return;
     }
@@ -164,7 +164,7 @@ export function FolderTree({
     const siblings = siblingsOf(tree, targetId!).filter((f) => f.folderId !== sourceId);
     const index = siblings.findIndex((f) => f.folderId === targetId);
     const previous = index > 0 ? siblings[index - 1]!.sortKey : null;
-    await moveFolder(sourceId, parentId, between(previous, anchor.sortKey));
+    await moveFolderTo(sourceId, parentId, between(previous, anchor.sortKey));
   };
 
   const rows = flattenTree(tree, expanded);
@@ -485,9 +485,9 @@ export function FolderTree({
           excludeSubtreeOf={moving?.folderId}
           onOpenChange={(open) => !open && setMoving(null)}
           onPick={async (parentId) => {
-            if (moving) await moveFolder(moving.folderId, parentId);
+            const folder = moving;
             setMoving(null);
-            toast.success("移動しました");
+            if (folder) await moveFolderTo(folder.folderId, parentId);
           }}
         />
 

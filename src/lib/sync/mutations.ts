@@ -7,6 +7,7 @@ import { between } from "@/lib/sortkey";
 import type { Folder, Note, Stamp } from "@/lib/types";
 import { stamp } from "./clock";
 import { enqueue } from "./outbox";
+import { lockCoverage } from "@/lib/vault/model";
 
 /**
  * Every user action writes to the local database first and queues the server
@@ -207,6 +208,13 @@ export async function adoptFolderlessNotes(): Promise<number> {
 
 /* ---------------------------------------------------------------- notes */
 
+/**
+ * Creates a note. Inside a locked folder it is locked from the start: its
+ * key, title and every edit are encrypted before anything is stored or sent,
+ * so nothing of it ever reaches the server in plaintext. That needs the
+ * vault open; with it closed this throws VaultLockedError rather than
+ * creating a plaintext note in a locked folder.
+ */
 export async function createNote(opts: {
   folderId: string | null;
   title?: string;
@@ -220,6 +228,11 @@ export async function createNote(opts: {
   const sortKey = await siblingKeyAfterLast("notes", folderId);
   const kind = opts.kind ?? "note";
   const title = opts.title ?? "";
+
+  const coverage = lockCoverage(await db().folders.toArray());
+  if (folderId !== null && coverage.has(folderId)) {
+    return createLockedNote({ noteId, folderId, sortKey, kind, title, ts, device });
+  }
 
   const note: Note = {
     noteId,
@@ -262,6 +275,70 @@ export async function createNote(opts: {
       noteId,
       create: { noteKind: kind, folderId, sortKey },
       title: { value: title, preview: null, ts },
+      place: { folderId, sortKey, ts },
+    },
+  });
+  return noteId;
+}
+
+async function createLockedNote(args: {
+  noteId: string;
+  folderId: string;
+  sortKey: string;
+  kind: "note" | "quick";
+  title: string;
+  ts: Stamp;
+  device: string;
+}): Promise<string> {
+  const { noteId, folderId, sortKey, kind, title, ts, device } = args;
+  const { vault } = await import("@/lib/crypto/vault");
+  const { seal } = await import("@/lib/crypto/primitives");
+  const { ctx } = await import("@/lib/crypto/context");
+  const { toArrayBuffer } = await import("@/lib/bytes");
+  const epoch = 1;
+  // Throws while the vault is closed: never a plaintext note here.
+  const { key, wrapped } = await vault.createNoteKey(noteId, epoch);
+  const out = await seal(key, new TextEncoder().encode(title), ctx.noteTitle(noteId, epoch));
+  const titleSealed = { ct: toArrayBuffer(out.ct), iv: toArrayBuffer(out.iv) };
+
+  const note: Note = {
+    noteId,
+    folderId,
+    kind,
+    title: null,
+    titleSealed,
+    preview: null,
+    pinned: false,
+    sortKey,
+    locked: true,
+    keyEpoch: epoch,
+    wrappedKey: wrapped,
+    lockOrigin: "folder",
+    deletedAt: null,
+    purged: false,
+    lastUpdateSeq: 0,
+    snapshotSeq: 0,
+    ts: {
+      title: ts,
+      preview: zero(device),
+      place: ts,
+      pin: zero(device),
+      trash: zero(device),
+      lock: ts,
+    },
+    seq: 0,
+    updatedAt: Date.now(),
+  };
+  await db().notes.put(note);
+  await db().bodies.put({ noteId, throughSeq: 0, keyEpoch: epoch, text: null, updatedAt: Date.now() });
+  await enqueue({
+    kind: "note",
+    entityId: noteId,
+    payload: {
+      kind: "note",
+      noteId,
+      create: { noteKind: kind, folderId, sortKey, lock: { keyEpoch: epoch, wrappedKey: wrapped, ts } },
+      title: { value: null, sealed: titleSealed, preview: null, ts },
       place: { folderId, sortKey, ts },
     },
   });

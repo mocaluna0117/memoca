@@ -11,7 +11,11 @@ export type VaultPurpose =
   | { kind: "lockNote"; title: string | null }
   | { kind: "unlockNote"; title: string | null }
   | { kind: "lockFolder"; folderId: string; name: string }
-  | { kind: "unlockFolder"; folderId: string; name: string };
+  | { kind: "unlockFolder"; folderId: string; name: string }
+  /** A new note in a locked folder: it is encrypted from the start. */
+  | { kind: "createInLocked"; name: string }
+  /** Moving a note, or a folder with notes, into a locked folder locks them first. */
+  | { kind: "moveIntoLocked"; name: string; folder?: string | null; count?: number };
 
 export type PurposeCopy = {
   title: string;
@@ -32,13 +36,17 @@ export function needsConfirmation(purpose: VaultPurpose): boolean {
   return (
     purpose.kind === "unlockNote" ||
     purpose.kind === "lockFolder" ||
-    purpose.kind === "unlockFolder"
+    purpose.kind === "unlockFolder" ||
+    purpose.kind === "moveIntoLocked"
   );
 }
 
-/** Whether the purpose changes data on the server, so cannot happen offline. */
+/**
+ * Whether the purpose changes data on the server, so cannot happen offline.
+ * A note created locked is written locally and sent later, like any note.
+ */
 export function needsServer(purpose: VaultPurpose): boolean {
-  return purpose.kind !== "open";
+  return purpose.kind !== "open" && purpose.kind !== "createInLocked";
 }
 
 const quoted = (title: string | null) => (title ? `「${title}」` : "このメモ");
@@ -102,6 +110,9 @@ export function purposeCopy(
         verb: "ロックする",
         offline: "ロックするにはインターネット接続が必要です。",
       };
+    case "createInLocked":
+    case "moveIntoLocked":
+      return placementCopy(purpose);
     case "unlockFolder":
       return {
         title: `フォルダ「${purpose.name}」のロックを外しますか？`,
@@ -122,6 +133,28 @@ export function purposeCopy(
   }
 }
 
+/** Copy for the two purposes that come from creating or moving. */
+function placementCopy(
+  purpose: Extract<VaultPurpose, { kind: "createInLocked" | "moveIntoLocked" }>,
+): PurposeCopy {
+  if (purpose.kind === "createInLocked") {
+    return {
+      title: "ロックされたフォルダにメモを作成",
+      body: `「${purpose.name}」に作るメモは、最初からロックされます。続けるには本人確認をしてください。`,
+      verb: "作成する",
+      offline: null,
+    };
+  }
+  return {
+    title: "ロックされたフォルダへ移動しますか？",
+    body: purpose.folder
+      ? `「${purpose.name}」に移動すると、「${purpose.folder}」の中のメモ${purpose.count === undefined ? "" : ` ${purpose.count} 件`}もロックされます。インターネット接続が必要です。`
+      : `「${purpose.name}」に移動すると、このメモもロックされます。インターネット接続が必要です。`,
+    verb: "移動する",
+    offline: "移動してロックするにはインターネット接続が必要です。",
+  };
+}
+
 /**
  * The first line of the creation screen when it opened on the way to
  * something else, so creating a vault reads as a step, not a detour.
@@ -132,6 +165,9 @@ export function creationLead(purpose: VaultPurpose): string | null {
       return "メモをロックする前に、金庫を作成します。";
     case "lockFolder":
       return `フォルダ「${purpose.name}」をロックする前に、金庫を作成します。`;
+    case "createInLocked":
+    case "moveIntoLocked":
+      return `「${purpose.name}」はロックされたフォルダです。先に金庫を作成します。`;
     default:
       return null;
   }

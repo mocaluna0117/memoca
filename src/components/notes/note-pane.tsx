@@ -32,10 +32,13 @@ import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
 import { requestVault } from "@/lib/store/vault-gate";
 import { useOpenVaultLabel } from "@/lib/vault/use-vault-labels";
 import { useFolders } from "@/lib/hooks/data";
-import { coveringFolderOf, lockCoverage } from "@/lib/vault/model";
+import { coveringFolderOf, lockCoverage, needsLock } from "@/lib/vault/model";
+import { changeNote } from "@/lib/vault/cascade";
+import { useConvex } from "convex/react";
+import { useSync } from "@/components/providers/sync-provider";
 import { useLockActions } from "@/components/vault/use-lock-actions";
 import { FolderPicker } from "@/components/folders/folder-picker";
-import { moveNote, renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
+import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 
 /** Long enough to coalesce typing, short enough not to feel unsaved. */
@@ -86,7 +89,9 @@ export function NotePane({
   const title = useNoteTitle(note);
   const unlocked = useVaultUnlocked();
   const openLabel = useOpenVaultLabel();
-  const { toggleNoteLock } = useLockActions();
+  const { toggleNoteLock, moveNoteTo } = useLockActions();
+  const client = useConvex();
+  const { engine } = useSync();
   const folders = useFolders();
   const coverage = useMemo(() => lockCoverage(folders), [folders]);
   const menu = useMenuDialog();
@@ -177,6 +182,24 @@ export function NotePane({
   const coverId = coveringFolderOf(note, coverage);
   const coverName = coverId ? (folders.find((f) => f.folderId === coverId)?.name ?? "ロックされたフォルダ") : null;
 
+  /** Encrypts a note that sits unencrypted in a locked folder. */
+  const lockNow = async () => {
+    const answer = await requestVault({ kind: "lockNote", title: title || null }, { gesture: true });
+    if (!answer.ok) return;
+    setBusy(true);
+    const release = vault.hold();
+    try {
+      const reason = await changeNote(client, engine(), noteId, "lock", "folder");
+      if (reason === null) toast.success("メモをロックしました");
+      else toast.error("ロックできませんでした。もう一度お試しください。");
+    } catch {
+      toast.error("ロックできませんでした。インターネット接続を確認して、もう一度お試しください。");
+    } finally {
+      release();
+      setBusy(false);
+    }
+  };
+
   const toggleLock = async () => {
     setBusy(true);
     try {
@@ -192,6 +215,9 @@ export function NotePane({
   };
 
   const hidden = note.locked && !unlocked;
+  // In a locked folder but not yet encrypted: typing more would only add
+  // plaintext, so it is read-only until the lock goes on.
+  const pendingLock = needsLock(note, coverage);
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -214,7 +240,7 @@ export function NotePane({
           onChange={(event) =>
             setDraft({ noteId, value: event.target.value, dirty: true })
           }
-          disabled={hidden}
+          disabled={hidden || pendingLock}
           placeholder="タイトル"
           aria-label="メモのタイトル"
           className="h-9 flex-1 border-0 bg-transparent px-2 text-base font-medium shadow-none focus-visible:ring-0 dark:bg-transparent"
@@ -311,17 +337,27 @@ export function NotePane({
             </Button>
           </div>
         ) : (
-          <NoteEditor noteId={noteId} locked={note.locked} />
+          <>
+            {pendingLock ? (
+              <div role="status" className="bg-muted/60 flex flex-wrap items-center gap-3 border-b px-4 py-3 text-sm">
+                <Lock className="text-muted-foreground size-4 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  このメモはロックされたフォルダにありますが、まだ暗号化されていません。暗号化が終わるまで編集できません。
+                </span>
+                <Button size="sm" variant="outline" disabled={busy} onClick={() => void lockNow()}>
+                  いますぐロック
+                </Button>
+              </div>
+            ) : null}
+            <NoteEditor noteId={noteId} locked={note.locked} readOnly={pendingLock} />
+          </>
         )}
       </div>
 
       <FolderPicker
         open={moving}
         onOpenChange={setMoving}
-        onPick={async (folderId) => {
-          await moveNote(noteId, folderId);
-          toast.success("移動しました");
-        }}
+        onPick={(folderId) => moveNoteTo(note, folderId, menuTrigger.current)}
       />
     </div>
   );

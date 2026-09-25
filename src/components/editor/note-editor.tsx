@@ -33,17 +33,33 @@ import { t } from "@/lib/i18n/ja";
  * those changes into update rows and outbox entries. Nothing here talks to the
  * network, which is why typing works the same with or without one.
  */
-export function NoteEditor({ noteId, locked }: { noteId: string; locked: boolean }) {
+export function NoteEditor({
+  noteId,
+  locked,
+  readOnly = false,
+}: {
+  noteId: string;
+  locked: boolean;
+  readOnly?: boolean;
+}) {
   // The loaded document is tagged with the note it belongs to, so a slow load
   // for a note the user has already navigated away from cannot be shown.
   const [loaded, setLoaded] = useState<{ noteId: string; doc: Y.Doc } | null>(null);
+  const [failed, setFailed] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
-    void acquireDoc(noteId).then((doc) => {
-      if (cancelled) void releaseDoc(noteId);
-      else setLoaded({ noteId, doc });
-    });
+    void acquireDoc(noteId).then(
+      (doc) => {
+        if (cancelled) void releaseDoc(noteId);
+        else setLoaded({ noteId, doc });
+      },
+      // A locked note whose key this vault cannot open. Say so instead of
+      // showing a skeleton forever.
+      () => {
+        if (!cancelled) setFailed(noteId);
+      },
+    );
     return () => {
       cancelled = true;
       void releaseDoc(noteId);
@@ -53,6 +69,13 @@ export function NoteEditor({ noteId, locked }: { noteId: string; locked: boolean
   const doc = loaded?.noteId === noteId ? loaded.doc : null;
 
   if (locked && !vault.isUnlocked) return null;
+  if (failed === noteId) {
+    return (
+      <p role="alert" className="text-muted-foreground px-4 py-6 text-sm sm:px-10">
+        このメモを開けませんでした。金庫の鍵が合わない可能性があります。
+      </p>
+    );
+  }
   if (!doc) {
     return (
       <div className="space-y-3 px-4 py-6 sm:px-10">
@@ -62,17 +85,19 @@ export function NoteEditor({ noteId, locked }: { noteId: string; locked: boolean
       </div>
     );
   }
-  return <EditorSurface key={noteId} noteId={noteId} doc={doc} locked={locked} />;
+  return <EditorSurface key={noteId} noteId={noteId} doc={doc} locked={locked} readOnly={readOnly} />;
 }
 
 function EditorSurface({
   noteId,
   doc,
   locked,
+  readOnly,
 }: {
   noteId: string;
   doc: Y.Doc;
   locked: boolean;
+  readOnly: boolean;
 }) {
   const client = useConvex();
   const { me } = useSync();
@@ -120,6 +145,7 @@ function EditorSurface({
   return (
     <BlockNoteView
       editor={editor}
+      editable={!readOnly}
       theme={resolvedTheme === "dark" ? "dark" : "light"}
       className="memoca-editor min-h-[50vh] py-4"
       data-locked={locked ? "true" : undefined}

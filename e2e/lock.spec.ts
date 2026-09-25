@@ -109,4 +109,55 @@ test.describe("folder locks", () => {
     await expect(page.getByRole("menuitem", { name: "名前を変更" })).toBeVisible();
     await expect(page.getByRole("menuitem", { name: /ロック/ })).toHaveCount(0);
   });
+
+  test("a note written in, or moved into, a locked folder is encrypted from the start", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createVaultInSettings(page);
+    await openApp(page);
+    await addFolder(page, "仕事");
+    await addFolder(page, "家");
+    await folderMenu(page, "仕事");
+    await page.getByRole("menuitem", { name: "ロックする…" }).click();
+    await enterVaultPassword(page, "ロックする");
+    await expect(page.getByText("フォルダ「仕事」をロックしました")).toBeVisible({ timeout: 30_000 });
+
+    // A reload closes the vault. A new note in the locked folder asks for it,
+    // and is locked from its first write.
+    await openApp(page);
+    await openFolder(page, "仕事");
+    await page.getByRole("button", { name: "新しいメモ" }).first().click();
+    await expect(
+      vaultPrompt(page).getByRole("heading", { name: "ロックされたフォルダにメモを作成" }),
+    ).toBeVisible();
+    await enterVaultPassword(page, "作成する");
+    const title = page.getByLabel("メモのタイトル");
+    await expect(title).toBeEnabled({ timeout: 30_000 });
+    await title.fill("はじめから秘密");
+    await waitForSynced(page);
+    await expect
+      .poll(async () => {
+        const notes = await readTable<Row & { keyEpoch: number; title: string | null }>(page, "notes");
+        return notes.map((n) => ({ locked: n.locked, epoch: n.keyEpoch, title: n.title }));
+      })
+      .toEqual([{ locked: true, epoch: 1, title: null }]);
+
+    // A plaintext note moved in is locked first, then moved.
+    await openFolder(page, "家");
+    await createNote(page, "家のメモ", "移動する本文");
+    await waitForSynced(page);
+    await page.getByRole("button", { name: "メモの操作" }).filter({ visible: true }).click();
+    await page.getByRole("menuitem", { name: "移動" }).click();
+    await page.getByRole("option", { name: /仕事/ }).click();
+    await expect(
+      vaultPrompt(page).getByRole("heading", { name: "ロックされたフォルダへ移動しますか？" }),
+    ).toBeVisible();
+    await vaultPrompt(page).getByRole("button", { name: "移動する" }).click();
+    await expect(page.getByText("移動してロックしました")).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(async () => (await readTable<Row>(page, "notes")).filter((n) => n.locked).length)
+      .toBe(2);
+  });
 });

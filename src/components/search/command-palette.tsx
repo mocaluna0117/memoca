@@ -19,9 +19,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useLockActions } from "@/components/vault/use-lock-actions";
 import { useSearch } from "@/lib/hooks/use-search";
 import { useWorkspace } from "@/lib/hooks/workspace";
-import { createFolder, createNote } from "@/lib/sync/mutations";
+import { createFolder } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 
 /**
@@ -31,6 +32,7 @@ import { t } from "@/lib/i18n/ja";
  * works with no network.
  */
 export function CommandPalette() {
+  const { createNoteIn } = useLockActions();
   const router = useRouter();
   const { selection, navigate } = useWorkspace();
   const [open, setOpen] = useState(false);
@@ -100,9 +102,10 @@ export function CommandPalette() {
               <CommandItem
                 value="new-note"
                 onSelect={() =>
-                  run(async () =>
-                    navigate({ noteId: await createNote({ folderId: selection.folderId }) }),
-                  )
+                  run(async () => {
+                    const noteId = await createNoteIn(selection.folderId);
+                    if (noteId) navigate({ noteId });
+                  })
                 }
               >
                 <FilePlus2 className="size-4 opacity-70" aria-hidden />

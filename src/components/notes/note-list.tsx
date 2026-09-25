@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useFolder, useNotes } from "@/lib/hooks/data";
 import { useFolderName, useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
-import { createNote, renameNote } from "@/lib/sync/mutations";
+import { renameNote } from "@/lib/sync/mutations";
+import { useLockActions } from "@/components/vault/use-lock-actions";
 import type { Note } from "@/lib/types";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
@@ -142,6 +143,7 @@ export function NoteList({
   const notes = useNotes(folderId ? { kind: "folder", folderId } : { kind: "all" });
 
   const heading = folderId ? folderName || "フォルダ" : t.nav.allNotes;
+  const { createNoteIn } = useLockActions();
 
   // The note being renamed in place, as a file explorer does on Enter.
   const [editing, setEditing] = useState<string | null>(null);
@@ -184,7 +186,10 @@ export function NoteList({
           size="icon"
           variant="ghost"
           aria-label={t.action.newNote}
-          onClick={async () => onSelectNote(await createNote({ folderId }))}
+          onClick={async () => {
+            const id = await createNoteIn(folderId);
+            if (id) onSelectNote(id);
+          }}
         >
           <FilePlus2 className="size-4" aria-hidden />
         </Button>
@@ -198,7 +203,10 @@ export function NoteList({
             variant="outline"
             size="sm"
             className="mt-2"
-            onClick={async () => onSelectNote(await createNote({ folderId }))}
+            onClick={async () => {
+            const id = await createNoteIn(folderId);
+            if (id) onSelectNote(id);
+          }}
           >
             {t.action.newNote}
           </Button>

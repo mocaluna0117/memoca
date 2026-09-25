@@ -51,7 +51,9 @@ let nextId = 1;
 /** Starts the passkey sheet now, inside the tap, when everything allows it. */
 function autoStart(purpose: VaultPurpose): AutoPasskey | null {
   if (!AUTO_START_PASSKEY) return null;
-  if (purpose.kind !== "open" && purpose.kind !== "lockNote") return null;
+  if (purpose.kind !== "open" && purpose.kind !== "lockNote" && purpose.kind !== "createInLocked") {
+    return null;
+  }
   if (needsServer(purpose) && typeof navigator !== "undefined" && !navigator.onLine) return null;
   const record = useVaultRecord.getState().record;
   if (!record || record.passkeys.length === 0 || !platformPasskeyAvailable()) return null;
