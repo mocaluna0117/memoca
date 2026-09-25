@@ -99,6 +99,27 @@ test.describe("vault prompt", () => {
     }
   });
 
+  test("the recovery key shown at creation opens the vault, however it is typed", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    const key = await createVaultInSettings(page);
+    // All 52 characters, in groups of four.
+    expect(key.replace(/-/g, "")).toHaveLength(52);
+
+    // A reload closes the vault; open it again with the key alone.
+    await page.goto("/app/settings");
+    await page.getByRole("button", { name: PROMPT_UNLOCK }).click();
+    const prompt = page.getByRole("dialog");
+    await prompt.getByRole("button", { name: "リカバリーキーで解除する" }).click();
+    await prompt.getByLabel("リカバリーキー").fill(key.toLowerCase().replace(/-/g, " "));
+    await prompt.getByRole("button", { name: PROMPT_UNLOCK }).click();
+
+    await expect(prompt).toHaveCount(0);
+    await expect(page.getByText("状態：解除中")).toBeVisible();
+  });
+
   test("with no vault yet, one cancel closes the creation prompt", async ({ page }) => {
     await signUp(page);
     await openApp(page);

@@ -15,6 +15,7 @@ import {
   seal,
   wipe,
 } from "./primitives";
+import { formatRecoveryKey, parseRecoveryKey } from "./recovery-key";
 
 export type VaultRecord = {
   argon: ArgonParams;
@@ -227,6 +228,21 @@ export async function prepareVault(
   const recSalt = randomBytes(16);
   const kekRec = await hkdfKey(recoveryKey, recSalt, HKDF_INFO.recovery);
   const recWrap = await seal(kekRec, vaultRaw, ctx.vaultWrap("recovery"));
+
+  // Prove that the key as it will be shown opens this vault. A display bug
+  // once cut every recovery key short, and no test noticed because they all
+  // used the raw bytes rather than the text a person copies.
+  const shown = parseRecoveryKey(formatRecoveryKey(recoveryKey));
+  if (!shown.ok) throw new Error("The recovery key would not read back.");
+  const reopened = await open(
+    await hkdfKey(shown.key, recSalt, HKDF_INFO.recovery),
+    recWrap.ct,
+    recWrap.iv,
+    ctx.vaultWrap("recovery"),
+  );
+  const matches = reopened.every((byte, i) => byte === vaultRaw[i]);
+  wipe(reopened);
+  if (!matches) throw new Error("The recovery key does not open the new vault.");
 
   let key: CryptoKey | null = await importAesKey(vaultRaw);
   wipe(vaultRaw);

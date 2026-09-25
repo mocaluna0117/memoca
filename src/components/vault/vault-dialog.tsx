@@ -16,12 +16,17 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { fromBase32, toBase32 } from "@/lib/bytes";
 import {
   PrfUnsupportedError,
   evaluatePrf,
   platformAuthenticatorAvailable,
 } from "@/lib/crypto/passkey";
+import {
+  RECOVERY_KEY_LENGTH,
+  formatRecoveryKey,
+  parseRecoveryKey,
+  recoveryKeyCharacters,
+} from "@/lib/crypto/recovery-key";
 import {
   setUpVault,
   unlockWithPassword,
@@ -33,15 +38,6 @@ import { useVaultUi } from "@/lib/store/vault-ui";
 import { t } from "@/lib/i18n/ja";
 
 const MIN_PASSWORD = 8;
-
-/** Formats the recovery key in groups so it can be written down accurately. */
-function grouped(key: Uint8Array): string {
-  return (
-    toBase32(key)
-      .slice(0, 40)
-      .match(/.{1,5}/g) ?? []
-  ).join("-");
-}
 
 export function VaultDialog() {
   const { open, close } = useVaultUi();
@@ -112,7 +108,7 @@ export function VaultDialog() {
         setError("このアカウントにはすでに金庫があります。金庫のパスワードで開いてください。");
         return;
       }
-      setFreshKey(grouped(result.recoveryKey));
+      setFreshKey(formatRecoveryKey(result.recoveryKey));
       result.recoveryKey.fill(0);
     } catch {
       setError("設定できませんでした。時間をおいて試してください。");
@@ -129,13 +125,22 @@ export function VaultDialog() {
     setError(null);
     try {
       if (useRecovery) {
-        await unlockWithRecoveryKey(status, fromBase32(recoveryInput));
+        const parsed = parseRecoveryKey(recoveryInput);
+        if (!parsed.ok) {
+          setError(
+            parsed.reason === "legacy"
+              ? "このリカバリーキーは、以前の不具合で一部しか表示されていなかったため使えません。金庫のパスワードで開いてください。"
+              : `リカバリーキーは ${RECOVERY_KEY_LENGTH} 文字です（いま ${parsed.length} 文字）。`,
+          );
+          return;
+        }
+        await unlockWithRecoveryKey(status, parsed.key);
       } else {
         await unlockWithPassword(status, password);
       }
       close(true);
     } catch {
-      setError(useRecovery ? "リカバリーキーが正しくありません。" : t.vault.wrongPassword);
+      setError(useRecovery ? "このリカバリーキーでは開けません。" : t.vault.wrongPassword);
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -303,10 +308,23 @@ export function VaultDialog() {
                     id="vault-recovery"
                     value={recoveryInput}
                     onChange={(event) => setRecoveryInput(event.target.value)}
-                    placeholder="XXXXX-XXXXX-XXXXX-XXXXX"
+                    onKeyDown={(event) =>
+                      event.key === "Enter" &&
+                      !event.nativeEvent.isComposing &&
+                      void runUnlock()
+                    }
+                    placeholder={`XXXX-XXXX-XXXX-…（${RECOVERY_KEY_LENGTH} 文字）`}
+                    aria-describedby="vault-recovery-hint"
                     autoCapitalize="characters"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
                     className="font-mono"
                   />
+                  <p id="vault-recovery-hint" className="text-muted-foreground text-xs">
+                    大文字・小文字、ハイフンや空白はどちらでもかまいません。（
+                    {recoveryKeyCharacters(recoveryInput)} / {RECOVERY_KEY_LENGTH} 文字）
+                  </p>
                 </div>
               ) : (
                 <div className="space-y-1.5">
