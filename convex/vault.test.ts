@@ -224,3 +224,118 @@ describe("vault passkeys", () => {
     expect(new Uint8Array(read!.pwWrap.ct)).toEqual(new Uint8Array([1, 2]));
   });
 });
+
+describe("folder locks", () => {
+  const stamp = (t: number) => ({ t, d: "device-1" });
+
+  async function pushFolder(
+    as: ReturnType<ReturnType<typeof setup>["withIdentity"]>,
+    folderId: string,
+    name: string,
+    system: "inbox" | null = null,
+  ) {
+    await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [
+        {
+          kind: "folder",
+          opId: `op-${folderId}`,
+          folderId,
+          create: { parentId: null, sortKey: "b", system },
+          name: { value: name, icon: null, ts: stamp(1000) },
+          place: { parentId: null, sortKey: "b", ts: stamp(1000) },
+        },
+      ],
+    });
+  }
+
+  const folderRow = (t: ReturnType<typeof setup>, folderId: string) =>
+    t.run(async (ctx) =>
+      ctx.db
+        .query("folders")
+        .filter((q) => q.eq(q.field("folderId"), folderId))
+        .unique(),
+    );
+
+  test("locking keeps the folder's name, even when an older client sends a sealed one", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushFolder(as, "work", "仕事");
+
+    expect(
+      await as.mutation(api.vault.setFolderLock, {
+        folderId: "work",
+        locked: true,
+        name: null,
+        nameSealed: { ct: bytes(1), iv: bytes(2) },
+        ts: stamp(2000),
+      }),
+    ).toEqual({ status: "ok" });
+    const row = await folderRow(t, "work");
+    expect(row?.locked).toBe(true);
+    expect(row?.name).toBe("仕事");
+    expect(row?.nameSealed).toBeUndefined();
+  });
+
+  test("Inbox cannot be locked", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushFolder(as, "inbox", "Inbox", "inbox");
+    expect(
+      await as.mutation(api.vault.setFolderLock, { folderId: "inbox", locked: true, ts: stamp(2000) }),
+    ).toEqual({ status: "rejected", reason: "systemFolder" });
+    // Taking an old lock off it is still allowed.
+    expect(
+      await as.mutation(api.vault.setFolderLock, { folderId: "inbox", locked: false, ts: stamp(2001) }),
+    ).toEqual({ status: "ok" });
+  });
+
+  test("an older change arriving late loses", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushFolder(as, "work", "仕事");
+    await as.mutation(api.vault.setFolderLock, { folderId: "work", locked: true, ts: stamp(3000) });
+    await as.mutation(api.vault.setFolderLock, { folderId: "work", locked: false, ts: stamp(2000) });
+    expect((await folderRow(t, "work"))?.locked).toBe(true);
+  });
+
+  test("an older client unlocking a folder it sealed gives the folder its name back", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushFolder(as, "work", "仕事");
+    // What such a client left behind: a locked folder with only a sealed name.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("folders")
+        .filter((q) => q.eq(q.field("folderId"), "work"))
+        .unique();
+      await ctx.db.patch(row!._id, { locked: true, name: null, nameSealed: { ct: bytes(1), iv: bytes(2) } });
+    });
+    await as.mutation(api.vault.setFolderLock, {
+      folderId: "work",
+      locked: false,
+      name: "仕事",
+      ts: stamp(4000),
+    });
+    const row = await folderRow(t, "work");
+    expect(row?.name).toBe("仕事");
+    expect(row?.nameSealed).toBeUndefined();
+    expect(row?.locked).toBe(false);
+  });
+
+  test("another person's folder is unknown", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    await seedUser(t, AUTH_B);
+    await pushFolder(t.withIdentity({ subject: AUTH_A }), "work", "仕事");
+    expect(
+      await t
+        .withIdentity({ subject: AUTH_B })
+        .mutation(api.vault.setFolderLock, { folderId: "work", locked: true, ts: stamp(2000) }),
+    ).toEqual({ status: "rejected", reason: "unknownFolder" });
+  });
+});

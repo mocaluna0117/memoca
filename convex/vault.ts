@@ -2,6 +2,7 @@ import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
 import { MAX_PASSKEYS, PASSKEY_LABEL_MAX, SNAPSHOT_INLINE_LIMIT } from "./lib/constants";
+import { isNewer } from "./lib/hlc";
 import { sealedV, stampV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
 import { getUser, requireUser } from "./lib/user";
@@ -491,13 +492,18 @@ export const unlockNote = mutation({
 /**
  * Flips a folder's lock flag. The cascade over descendant notes runs on the
  * client, one {@link lockNote} per note, because only the client holds the key.
- * An interrupted cascade is detected and resumed on next launch.
+ *
+ * The folder's name is left alone: only the notes inside are encrypted, so
+ * locked folders stay recognisable in the tree. Clients from before that
+ * change still send a sealed name when locking; it is ignored. When one of
+ * them unlocks a folder whose name it sealed earlier, the plaintext name it
+ * sends is taken, so the folder gets its name back.
  */
 export const setFolderLock = mutation({
   args: {
     folderId: v.string(),
     locked: v.boolean(),
-    name: v.union(v.string(), v.null()),
+    name: v.optional(v.union(v.string(), v.null())),
     nameSealed: v.optional(sealedV),
     ts: stampV,
   },
@@ -510,16 +516,25 @@ export const setFolderLock = mutation({
       )
       .unique();
     if (!folder || folder.purged) return { status: "rejected" as const, reason: "unknownFolder" };
-    if (args.locked && !args.nameSealed) {
-      return { status: "rejected" as const, reason: "missingSealedName" };
+    // Quick notes and shared text land in Inbox; locking it would make every
+    // new note wait for the vault.
+    if (args.locked && folder.system === "inbox") {
+      return { status: "rejected" as const, reason: "systemFolder" };
     }
+    // Last writer wins, as for every other field group. An older change
+    // arriving late is not an error: it simply lost.
+    if (!isNewer(args.ts, folder.ts.lock)) return { status: "ok" as const };
 
+    const restoreName = !args.locked && folder.name === null && typeof args.name === "string";
     const seq = await openSeq(ctx, user._id);
-    await ctx.db.patch(folder._id, {
+    await ctx.db.patch("folders", folder._id, {
       locked: args.locked,
-      name: args.locked ? null : args.name,
-      nameSealed: args.locked ? args.nameSealed : undefined,
-      ts: { ...folder.ts, lock: args.ts, name: args.ts },
+      ...(restoreName ? { name: args.name, nameSealed: undefined } : {}),
+      ts: {
+        ...folder.ts,
+        lock: args.ts,
+        ...(restoreName ? { name: args.ts } : {}),
+      },
       seq: seq.next(),
     });
     await seq.commit();
