@@ -73,6 +73,11 @@ export const reserve = mutation({
     if (!note || note.purged) {
       return { status: "rejected" as const, reason: "unknownNote", uploadUrl: null };
     }
+    // A plaintext file for a locked note would sit readable on the server
+    // for as long as it is stored. The client encrypts and asks again.
+    if (note.locked && !args.locked) {
+      return { status: "rejected" as const, reason: "lockMismatch", uploadUrl: null };
+    }
 
     const seq = await openSeq(ctx, user._id);
     const expiresAt = now + RESERVATION_TTL_MS;

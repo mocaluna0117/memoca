@@ -1,7 +1,12 @@
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, mutation, query } from "./_generated/server";
-import { MAX_PASSKEYS, PASSKEY_LABEL_MAX, SNAPSHOT_INLINE_LIMIT } from "./lib/constants";
+import {
+  MAX_PASSKEYS,
+  PASSKEY_LABEL_MAX,
+  REPLACE_BODY_LIMIT,
+  SNAPSHOT_INLINE_LIMIT,
+} from "./lib/constants";
 import { isNewer } from "./lib/hlc";
 import { sealedV, stampV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
@@ -254,7 +259,7 @@ async function replaceBody(
   const updates = await ctx.db
     .query("noteUpdates")
     .withIndex("by_note_seq", (q) => q.eq("userId", userId).eq("noteId", noteId))
-    .take(2000);
+    .take(REPLACE_BODY_LIMIT);
   for (const row of updates) await ctx.db.delete(row._id);
 
   const previous = await ctx.db
@@ -278,6 +283,49 @@ async function replaceBody(
     seq: seq.next(),
     createdAt: Date.now(),
   });
+}
+
+/** Whether a lock or unlock could replace every update row in one go. */
+async function tooManyUpdates(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  noteId: string,
+): Promise<boolean> {
+  const rows = await ctx.db
+    .query("noteUpdates")
+    .withIndex("by_note_seq", (q) => q.eq("userId", userId).eq("noteId", noteId))
+    .take(REPLACE_BODY_LIMIT + 1);
+  return rows.length > REPLACE_BODY_LIMIT;
+}
+
+/**
+ * Why locking now would leave a plaintext file behind, if it would: an upload
+ * still under way, or a stored file the lock does not replace.
+ */
+async function plaintextAttachmentsLeft(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  noteId: string,
+  covered: Set<string>,
+  now: number,
+): Promise<"uploadPending" | "attachmentsNotCovered" | null> {
+  const rows = await ctx.db
+    .query("attachments")
+    .withIndex("by_user_note", (q) => q.eq("userId", userId).eq("noteId", noteId))
+    .take(500);
+  for (const row of rows) {
+    if (row.locked) continue;
+    if (row.status === "reserved" && (row.expiresAt ?? 0) > now) return "uploadPending";
+    if (
+      row.status === "committed" &&
+      row.deletedAt === null &&
+      row.storageId !== null &&
+      !covered.has(row.attachmentId)
+    ) {
+      return "attachmentsNotCovered";
+    }
+  }
+  return null;
 }
 
 const attachmentSwapV = v.array(
@@ -355,6 +403,8 @@ export const lockNote = mutation({
     snapshot: snapshotV,
     attachments: attachmentSwapV,
     ts: stampV,
+    /** Locked by hand, or as part of a folder. Older clients send nothing. */
+    origin: v.optional(v.union(v.literal("note"), v.literal("folder"))),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
@@ -374,6 +424,19 @@ export const lockNote = mutation({
     if (args.snapshot.payload && args.snapshot.payload.byteLength > SNAPSHOT_INLINE_LIMIT) {
       return { status: "rejected" as const, reason: "snapshotTooLargeInline" };
     }
+    // Checked before anything is written: a lock that would leave plaintext
+    // behind is refused whole, and the client fixes the cause and retries.
+    if (await tooManyUpdates(ctx, user._id, args.noteId)) {
+      return { status: "rejected" as const, reason: "compactFirst" };
+    }
+    const leftover = await plaintextAttachmentsLeft(
+      ctx,
+      user._id,
+      args.noteId,
+      new Set(args.attachments.map((a) => a.attachmentId)),
+      Date.now(),
+    );
+    if (leftover) return { status: "rejected" as const, reason: leftover };
 
     const seq = await openSeq(ctx, user._id);
     await replaceBody(
@@ -397,6 +460,7 @@ export const lockNote = mutation({
       locked: true,
       keyEpoch: args.keyEpoch,
       wrappedKey: args.wrappedKey,
+      lockOrigin: args.origin ?? "note",
       title: null,
       titleSealed: args.titleSealed,
       preview: null,
@@ -445,6 +509,9 @@ export const unlockNote = mutation({
       return { status: "rejected" as const, reason: "behind" };
     }
     if (args.snapshot.iv) return { status: "rejected" as const, reason: "unexpectedIv" };
+    if (await tooManyUpdates(ctx, user._id, args.noteId)) {
+      return { status: "rejected" as const, reason: "compactFirst" };
+    }
 
     const seq = await openSeq(ctx, user._id);
     await replaceBody(
@@ -468,6 +535,7 @@ export const unlockNote = mutation({
       locked: false,
       keyEpoch: args.keyEpoch,
       wrappedKey: undefined,
+      lockOrigin: undefined,
       title: args.title,
       titleSealed: undefined,
       preview: args.preview,
@@ -537,6 +605,44 @@ export const setFolderLock = mutation({
       },
       seq: seq.next(),
     });
+    await seq.commit();
+    return { status: "ok" as const };
+  },
+});
+
+/**
+ * Encrypts attachments of a note that is already locked. Earlier versions
+ * could leave plaintext files on a locked note; this replaces them.
+ */
+export const lockAttachments = mutation({
+  args: { noteId: v.string(), attachments: attachmentSwapV },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    const note = await ctx.db
+      .query("notes")
+      .withIndex("by_user_note", (q) => q.eq("userId", user._id).eq("noteId", args.noteId))
+      .unique();
+    if (!note || note.purged) return { status: "rejected" as const, reason: "unknownNote" };
+    if (!note.locked) return { status: "rejected" as const, reason: "notLocked" };
+    for (const swap of args.attachments) {
+      if (!swap.wrappedKey || !swap.contentIv || !swap.metaSealed) {
+        return { status: "rejected" as const, reason: "notEncrypted" };
+      }
+    }
+    // Only this note's own attachments.
+    const own = new Set(
+      (
+        await ctx.db
+          .query("attachments")
+          .withIndex("by_user_note", (q) => q.eq("userId", user._id).eq("noteId", args.noteId))
+          .take(500)
+      ).map((a) => a.attachmentId),
+    );
+    const swaps = args.attachments.filter((a) => own.has(a.attachmentId));
+
+    const seq = await openSeq(ctx, user._id);
+    const delta = await swapAttachments(ctx, user._id, seq, true, swaps);
+    await ctx.db.patch("users", user._id, { usedBytes: Math.max(0, user.usedBytes + delta) });
     await seq.commit();
     return { status: "ok" as const };
   },

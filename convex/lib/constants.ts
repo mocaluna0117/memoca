@@ -49,6 +49,12 @@ export const MAX_PASSKEYS = 10;
 /** Longest passkey label kept. Labels are generated, but arrive from clients. */
 export const PASSKEY_LABEL_MAX = 64;
 
+/**
+ * Update rows one lock or unlock replaces. More than this has to be compacted
+ * first, or rows past the limit would survive the swap in plaintext.
+ */
+export const REPLACE_BODY_LIMIT = 2000;
+
 /** An upload reservation this old is assumed abandoned. */
 export const RESERVATION_TTL_MS = 60 * 60 * 1000;
 /** Grace period before an attachment no block references is deleted. */

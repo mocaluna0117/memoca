@@ -49,6 +49,14 @@ export const noteOpV = v.object({
       noteKind: v.union(v.literal("note"), v.literal("quick")),
       folderId: v.union(v.string(), v.null()),
       sortKey: v.string(),
+      /**
+       * Created already locked, inside a locked folder, so nothing of it is
+       * ever stored in plaintext. Its title arrives sealed and every update
+       * encrypted under this key epoch.
+       */
+      lock: v.optional(
+        v.object({ keyEpoch: v.number(), wrappedKey: sealedV, ts: stampV }),
+      ),
     }),
   ),
   title: v.optional(

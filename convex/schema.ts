@@ -133,6 +133,12 @@ export default defineSchema({
     keyEpoch: v.number(),
     /** Per-note data key wrapped by the vault key. Present only when locked. */
     wrappedKey: v.optional(sealed),
+    /**
+     * Why it is locked: by hand ("note"), or because it is in a locked folder
+     * ("folder"). Taking a folder's lock off leaves the first kind locked.
+     * Missing on notes locked before this was recorded.
+     */
+    lockOrigin: v.optional(v.union(v.literal("note"), v.literal("folder"))),
     deletedAt: v.union(v.number(), v.null()),
     purged: v.boolean(),
     /** seq of the newest row in noteUpdates for this note (0 when none). */

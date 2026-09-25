@@ -168,6 +168,7 @@ export function publicNote(n: Doc<"notes">) {
     purged: n.purged,
     lastUpdateSeq: n.lastUpdateSeq,
     snapshotSeq: n.snapshotSeq,
+    lockOrigin: n.lockOrigin,
     ts: n.ts,
     seq: n.seq,
     updatedAt: n.updatedAt,
@@ -408,11 +409,59 @@ async function applyNoteOp(
   op: Extract<Op, { kind: "note" }>,
 ): Promise<OpResult> {
   if (
-    futureStamp(now, op.title?.ts, op.preview?.ts, op.place?.ts, op.pin?.ts, op.trash?.ts)
+    futureStamp(
+      now,
+      op.title?.ts,
+      op.preview?.ts,
+      op.place?.ts,
+      op.pin?.ts,
+      op.trash?.ts,
+      op.create?.lock?.ts,
+    )
   ) {
     return reject(op.opId, "clockSkew");
   }
   const existing = await getNote(ctx, session.user._id, op.noteId);
+
+  if (!existing && op.create?.lock) {
+    const { lock } = op.create;
+    if (!Number.isInteger(lock.keyEpoch) || lock.keyEpoch < 1) return reject(op.opId, "badEpoch");
+    if (op.title && !op.title.sealed) return reject(op.opId, "plaintextIntoLockedNote");
+    const base: Stamp = { t: 0, d: deviceId };
+    await ctx.db.insert("notes", {
+      userId: session.user._id,
+      noteId: op.noteId,
+      folderId: op.place?.folderId ?? op.create.folderId,
+      kind: op.create.noteKind,
+      title: null,
+      titleSealed: op.title?.sealed,
+      preview: null,
+      pinned: op.pin?.pinned ?? false,
+      sortKey: op.place?.sortKey ?? op.create.sortKey,
+      locked: true,
+      keyEpoch: lock.keyEpoch,
+      wrappedKey: lock.wrappedKey,
+      lockOrigin: "folder",
+      deletedAt: op.trash?.deletedAt ?? null,
+      purged: false,
+      lastUpdateSeq: 0,
+      snapshotSeq: 0,
+      sinceSnapshot: { count: 0, bytes: 0 },
+      bodyBytes: 0,
+      ts: {
+        title: op.title?.ts ?? base,
+        preview: op.preview?.ts ?? base,
+        place: op.place?.ts ?? base,
+        pin: op.pin?.ts ?? base,
+        trash: op.trash?.ts ?? base,
+        lock: lock.ts,
+      },
+      deviceId,
+      seq: seq.next(),
+      updatedAt: now,
+    });
+    return ok(op.opId);
+  }
 
   if (!existing) {
     if (!op.create) return reject(op.opId, "unknownNote");
