@@ -12,6 +12,7 @@ import { MobileHeader } from "@/components/shell/app-shell";
 import { YomiSetting } from "@/components/search/yomi-setting";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
+import { StorageBreakdown } from "@/components/settings/storage-breakdown";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -173,6 +174,13 @@ export default function SettingsPage() {
             画像は自動で縮小して保存されます。動画は 1 本あたり{" "}
             {formatBytes(me?.limits.maxVideoBytes ?? 0)} までです。
           </p>
+          {me ? (
+            <StorageBreakdown
+              account={me.userKey}
+              live={{ quotaBytes: me.quotaBytes, usedBytes: me.usedBytes, reservedBytes: me.reservedBytes }}
+              admin={me.role === "admin"}
+            />
+          ) : null}
           {me?.role === "admin" ? <ImageDiagnostics maxImageBytes={me.limits.maxImageBytes} /> : null}
         </Section>
 

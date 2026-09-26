@@ -711,7 +711,7 @@ describe("the account's storage", () => {
     expect(usage).toMatchObject({
       usedBytes: 1_000,
       bodies: { live: 40, trashed: 7 },
-      files: { image: 700, video: 300, other: 0 },
+      files: { image: 700, video: 300, other: 0, locked: 0 },
       trashedFiles: 90,
       unused: { bytes: 60, count: 1, nextDeleteAt: now - DAY + UNREFERENCED_GRACE_MS },
       uploading: 25,
@@ -724,6 +724,18 @@ describe("the account's storage", () => {
     expect(usage.largest[2]).toMatchObject({ locked: true, name: null, mime: null, kind: "image" });
     expect(usage.largest[3]).toMatchObject({ trashed: true });
     expect(usage.largest[4]).toMatchObject({ unused: true });
+  });
+
+  test("counts a locked file from before kinds were kept apart, not as some other kind of file", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "a");
+    await storeFile(t, userId, "a", "old-locked", 300, { locked: true, mime: null, name: null });
+    await storeFile(t, userId, "a", "new-locked", 200, { locked: true, mime: null, name: null, category: "video" });
+    const usage = await as.query(api.usage.breakdown, {});
+    expect(usage.files).toEqual({ image: 0, video: 200, other: 0, locked: 300 });
+    expect(usage.largest[0]).toMatchObject({ attachmentId: "old-locked", kind: "locked" });
   });
 
   test("counts a note in a folder put in the trash as in the trash, and a file another note shows as not", async () => {
@@ -767,6 +779,7 @@ describe("the account's storage", () => {
 
     const usage = await as.query(api.usage.breakdown, {});
     expect(usage.bodies).toEqual({ live: 10, trashed: 20 });
+    expect(usage.files.locked).toBe(0);
     // Emptying the trash frees the folder's file, not the one "live" shows.
     expect(usage.trashedFiles).toBe(100);
     expect(usage.files.image).toBe(200);

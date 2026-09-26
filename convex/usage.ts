@@ -8,13 +8,18 @@ const READ_LIMIT = 5000;
 /** How many of the largest files are listed. */
 const LARGEST = 20;
 
-type Kind = "image" | "video" | "other";
+type Kind = "image" | "video" | "other" | "locked";
 
-/** What kind of file a row is: as declared, else by its type, else unknown. */
+/**
+ * What kind of file a row is: as declared, else by its type. A locked file
+ * from before kinds were kept has neither, its type being encrypted: counted
+ * apart, not as something other than an image or a video.
+ */
 function kindOf(row: Doc<"attachments">): Kind {
   if (row.category) return row.category;
   if (row.mime?.startsWith("image/")) return "image";
   if (row.mime?.startsWith("video/")) return "video";
+  if (row.locked && row.mime === null) return "locked";
   return "other";
 }
 
@@ -80,7 +85,7 @@ export const breakdown = query({
       .query("attachments")
       .withIndex("by_user_seq", (q) => q.eq("userId", user._id))
       .take(READ_LIMIT);
-    const files = { image: 0, video: 0, other: 0 };
+    const files = { image: 0, video: 0, other: 0, locked: 0 };
     const unused = { bytes: 0, count: 0, nextDeleteAt: null as number | null };
     let trashedFiles = 0;
     let uploading = 0;

@@ -15,7 +15,8 @@ export function useVaultUnlocked(): boolean {
   );
 }
 
-const LOCKED_LABEL = "ロックされたメモ";
+/** What a locked note is called while its title cannot be read. */
+export const LOCKED_LABEL = "ロックされたメモ";
 const LOCKED_FOLDER_LABEL = "ロックされたフォルダ";
 
 /**
