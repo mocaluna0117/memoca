@@ -13,12 +13,37 @@ import { vault } from "@/lib/crypto/vault";
 import { requestVault } from "@/lib/store/vault-gate";
 import { useLockProgress } from "@/lib/store/lock-progress";
 import type { Folder, Note } from "@/lib/types";
-import { type CascadeResult, changeNote, lockFolder, resumeUnlockJob, unlockFolder } from "@/lib/vault/cascade";
+import {
+  type CascadeResult,
+  type LockReport,
+  changeNote,
+  lockFolder,
+  resumeUnlockJob,
+  unlockFolder,
+} from "@/lib/vault/cascade";
 
 const OFFLINE_LOCK = "オフラインのため、いまはロックできません。インターネットに接続してから、もう一度お試しください。";
 const OFFLINE_UNLOCK =
   "オフラインのため、いまはロックを外せません。インターネットに接続してから、もう一度お試しください。";
 const INTERRUPTED = "金庫が閉じたため中断しました。金庫を開くと続きから再開します。";
+
+/**
+ * Added to a lock's message when images copied in from other notes are still
+ * readable where they are: the lock went through, but not all of it is sealed.
+ */
+export function copiesLeftNotice(count: number, oneNote: boolean): string {
+  return `ただし、ほかのメモからコピーした画像 ${count} 件は、まだ${oneNote ? "このメモ用に" : ""}暗号化できていません。容量やネットワークが整いしだい、自動で暗号化します。`;
+}
+
+/** Says a lock is done, and what it could not seal yet. */
+function sayLocked(message: string, report: LockReport, oneNote: boolean, id?: string | number) {
+  const options = id === undefined ? {} : { id };
+  if (report.copiesLeft > 0) {
+    toast.warning(`${message}。${copiesLeftNotice(report.copiesLeft, oneNote)}`, options);
+  } else {
+    toast.success(message, options);
+  }
+}
 
 const moveFailure = (cause: unknown) =>
   cause instanceof Error && cause.message === "vaultClosed"
@@ -48,11 +73,11 @@ export function useLockActions() {
     const cover = (folderId: string | null) => (folderId !== null ? (coverage.get(folderId) ?? null) : null);
 
     /** Locks notes one by one; true only if every one of them is locked. */
-    const lockAll = async (noteIds: string[]) => {
+    const lockAll = async (noteIds: string[], report: LockReport) => {
       const release = vault.hold();
       try {
         for (const noteId of noteIds) {
-          if ((await changeNote(client, engine(), noteId, "lock", "folder")) !== null) return false;
+          if ((await changeNote(client, engine(), noteId, "lock", "folder", report)) !== null) return false;
         }
         return true;
       } finally {
@@ -71,11 +96,13 @@ export function useLockActions() {
           { id },
         );
       } else {
-        toast.success(
+        sayLocked(
           result.total > 0
             ? `フォルダ「${name}」をロックしました（メモ ${result.total} 件）`
             : `フォルダ「${name}」をロックしました`,
-          { id },
+          { copiesLeft: result.copiesLeft ?? 0 },
+          false,
+          id,
         );
       }
     };
@@ -150,8 +177,9 @@ export function useLockActions() {
         }
         const answer = await requestVault({ kind: "moveIntoLocked", name: nameOf(folderId) }, { returnFocus });
         if (!answer.ok) return;
+        const report: LockReport = { copiesLeft: 0 };
         try {
-          if (!(await lockAll([note.noteId]))) {
+          if (!(await lockAll([note.noteId], report))) {
             toast.error("ロックできなかったメモがあるため、移動しませんでした。もう一度お試しください。");
             return;
           }
@@ -160,7 +188,7 @@ export function useLockActions() {
           return;
         }
         await moveNote(note.noteId, folderId);
-        toast.success("移動してロックしました");
+        sayLocked("移動してロックしました", report, true);
       },
 
       /**
@@ -182,6 +210,7 @@ export function useLockActions() {
           return;
         }
         const plan = planFolderLock(folderId, await db().folders.toArray(), await db().notes.toArray());
+        const report: LockReport = { copiesLeft: 0 };
         if (plan.length > 0) {
           const answer = await requestVault({
             kind: "moveIntoLocked",
@@ -191,7 +220,7 @@ export function useLockActions() {
           });
           if (!answer.ok) return;
           try {
-            if (!(await lockAll(plan))) {
+            if (!(await lockAll(plan, report))) {
               toast.error("ロックできなかったメモがあるため、移動しませんでした。もう一度お試しください。");
               return;
             }
@@ -201,7 +230,7 @@ export function useLockActions() {
           }
         }
         await moveFolder(folderId, parentId, sortKey);
-        if (plan.length > 0) toast.success("移動してロックしました");
+        if (plan.length > 0) sayLocked("移動してロックしました", report, false);
       },
 
       toggleFolderLock: async (folder: Folder, returnFocus?: HTMLElement | null) => {
@@ -251,6 +280,7 @@ export function useLockActions() {
         );
         if (!answer.ok) return;
         const release = vault.hold();
+        const report: LockReport = { copiesLeft: 0 };
         try {
           const reason = await changeNote(
             client,
@@ -258,9 +288,12 @@ export function useLockActions() {
             note.noteId,
             removing ? "unlock" : "lock",
             "note",
+            report,
           );
           if (reason === null) {
-            toast.success(removing ? "メモのロックを外しました" : "メモをロックしました");
+            // Locked, but an image copied in from another note could not be
+            // given its own encrypted copy yet: say so, not just "done".
+            sayLocked(removing ? "メモのロックを外しました" : "メモをロックしました", report, true);
           } else if (reason === "behind" || reason === "unsent") {
             toast.error(
               removing

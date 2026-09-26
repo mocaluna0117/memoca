@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { db, getMeta, resetLocalData } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { type PullBatch, applyBatch } from "@/lib/sync/apply";
@@ -81,5 +81,36 @@ describe("a pull that removes things", () => {
     expect(await db().attachments.get("a1")).toBeUndefined();
     expect(await db().blobs.get("a1")).toBeUndefined();
     expect(await getMeta<number>(META.cursor, 0)).toBe(2);
+  });
+});
+
+describe("a file locked on another device", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("empties the service worker's copies, which may hold it in plaintext", async () => {
+    const remove = vi.fn(async () => true);
+    vi.stubGlobal("caches", { delete: remove });
+    await db().attachments.put(file("a1"));
+
+    await applyBatch(batch({ attachments: [{ ...file("a1"), locked: true, mime: null, seq: 2 }] as never }));
+    expect(remove).toHaveBeenCalledWith("memoca-media");
+  });
+
+  test("leaves them alone for anything else", async () => {
+    const remove = vi.fn(async () => true);
+    vi.stubGlobal("caches", { delete: remove });
+    await db().attachments.put(file("a1", { locked: true }));
+
+    // Already locked here, or new to this device, or plain.
+    await applyBatch(
+      batch({
+        attachments: [
+          { ...file("a1"), locked: true, seq: 2 },
+          { ...file("a2"), locked: true, seq: 3 },
+          { ...file("a3"), seq: 4 },
+        ] as never,
+      }),
+    );
+    expect(remove).not.toHaveBeenCalled();
   });
 });

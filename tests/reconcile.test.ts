@@ -131,7 +131,18 @@ describe("repairs", () => {
     const blob = (id: string) => ({ attachmentId: id, blob: new Blob(["x"]), bytes: 1, lastUsed: 0 });
     await db().blobs.bulkPut([blob("secret"), blob("open")]);
 
-    expect(await purgeLockedBlobs()).toBe(1);
+    const purge = vi.fn(async () => true);
+    vi.stubGlobal("caches", { delete: purge });
+    try {
+      expect(await purgeLockedBlobs()).toBe(1);
+      // The service worker's own copies go too.
+      expect(purge).toHaveBeenCalledWith("memoca-media");
+      purge.mockClear();
+      expect(await purgeLockedBlobs()).toBe(0);
+      expect(purge).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
     expect(await db().blobs.get("secret")).toBeUndefined();
     expect(await db().blobs.get("open")).toBeDefined();
   });
@@ -147,6 +158,8 @@ describe("repairs", () => {
         : new Response(new Uint8Array([1, 2, 3])),
     );
     vi.stubGlobal("fetch", fetchMock);
+    const purge = vi.fn(async () => true);
+    vi.stubGlobal("caches", { delete: purge });
     const server = fakeConvex({
       "attachments:urls": () => ({ left: "https://files.example/left" }),
       "notes:snapshotUploadUrl": () => "https://upload.example",
@@ -154,9 +167,13 @@ describe("repairs", () => {
     });
     try {
       expect(await lockPlaintextAttachments(server.client)).toBe(1);
+      expect(purge).toHaveBeenCalledWith("memoca-media");
     } finally {
       vi.unstubAllGlobals();
     }
+    // Read for sealing only: the browser is not to keep the plaintext.
+    const download = fetchMock.mock.calls.find(([, init]) => init?.method !== "POST")!;
+    expect(download[1]).toMatchObject({ cache: "no-store" });
     const swap = server.callsTo("vault:lockAttachments")[0]!.args as {
       noteId: string;
       attachments: { attachmentId: string; wrappedKey?: unknown; contentIv?: unknown }[];

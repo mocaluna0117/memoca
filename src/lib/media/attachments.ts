@@ -6,10 +6,11 @@ import { api } from "@convex/_generated/api";
 import { toArrayBuffer } from "@/lib/bytes";
 import { ctx } from "@/lib/crypto/context";
 import { open, seal } from "@/lib/crypto/primitives";
-import { vault } from "@/lib/crypto/vault";
+import { VaultLockedError, vault } from "@/lib/crypto/vault";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/sync/outbox";
 import { type PreparedImage, categoryOf, prepareImage } from "./compress";
+import { purgeMediaCache } from "./media-cache";
 
 import { refFor } from "./ref";
 
@@ -37,15 +38,17 @@ export class AttachmentUnavailableError extends Error {
 }
 
 /** The account figures the server checks a reservation against, as `users.me` reports them. */
-type Allowance = {
+export type Allowance = {
   quotaBytes: number;
   usedBytes: number;
   reservedBytes: number;
-  limits?: { maxImageBytes: number };
+  limits?: { maxImageBytes: number; maxVideoBytes?: number };
 };
 
 /**
- * Whether the server will accept an image of this size.
+ * Whether the server will accept a file of this size and kind: under the
+ * limit for one file (images have their own; videos and anything else share
+ * the other), and within what the account has left.
  *
  * Asked before staging, because a refusal later, in {@link flushUploads},
  * happens in the background with nobody to tell, and leaves the block
@@ -53,8 +56,14 @@ type Allowance = {
  * send (see {@link queuedBytes}): the server's figures do not know about it,
  * and offline they never catch up.
  */
-export function fitsAllowance(me: Allowance, bytes: number, queued = 0): boolean {
-  if (me.limits && bytes > me.limits.maxImageBytes) return false;
+export function fitsAllowance(
+  me: Allowance,
+  bytes: number,
+  queued = 0,
+  category: "image" | "video" | "other" = "image",
+): boolean {
+  const cap = category === "image" ? me.limits?.maxImageBytes : me.limits?.maxVideoBytes;
+  if (cap !== undefined && bytes > cap) return false;
   return me.usedBytes + me.reservedBytes + queued + bytes <= me.quotaBytes;
 }
 
@@ -95,6 +104,10 @@ export async function stageUpload(opts: {
   file: File;
   locked?: boolean;
   prepared?: PreparedImage;
+  /** Set when this is a note's own copy of another note's file. */
+  copyOf?: string;
+  /** Not to be sent until the note is locked: a copy made for its lock. */
+  heldForLock?: boolean;
 }): Promise<string> {
   const attachmentId = uuidv7();
   const category = categoryOf(opts.prepared?.mime ?? opts.file.type);
@@ -124,6 +137,8 @@ export async function stageUpload(opts: {
     height: prepared.height || null,
     category,
     locked,
+    ...(opts.copyOf ? { copyOf: opts.copyOf } : {}),
+    ...(opts.heldForLock ? { heldForLock: true } : {}),
     createdAt: Date.now(),
   });
 
@@ -144,6 +159,11 @@ export async function stageUpload(opts: {
 
   objectUrls.set(attachmentId, URL.createObjectURL(prepared.blob));
   return refFor(attachmentId);
+}
+
+/** A file waiting to go up that will be encrypted when it does. */
+async function isProtectedUpload(waiting: { locked: boolean; noteId: string }): Promise<boolean> {
+  return waiting.locked || (await db().notes.get(waiting.noteId))?.locked === true;
 }
 
 /**
@@ -180,6 +200,9 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
       // Read again now: the note may have been locked since the file was
       // added, and a locked note's file must go up encrypted.
       const note = await database.notes.get(item.noteId);
+      // A copy made for a lock waits for it: sent once the note is locked,
+      // taken back if the lock does not go through.
+      if (item.heldForLock && note?.locked !== true) continue;
       const locked = item.locked || note?.locked === true;
 
       if (locked) {
@@ -224,8 +247,21 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
         continue;
       }
       if (reservation.status === "rejected" || !reservation.uploadUrl) {
+        // A note's copy of another note's file: the note is to show the
+        // original again rather than a file that will never exist. Written
+        // down before the copy's rows go, for whatever still shows it later:
+        // an edit not saved yet, another tab, or a note that needs the vault.
+        const copies = item.copyOf ? await import("./relock-copies") : null;
+        if (copies) {
+          await copies.recordRefusedCopy(item.attachmentId, {
+            noteId: item.noteId,
+            originalId: item.copyOf!,
+            reason: reservation.reason ?? "rejected",
+          });
+        }
         await database.pendingUploads.delete(item.attachmentId);
         await database.attachments.delete(item.attachmentId);
+        if (copies) await copies.restoreOriginal(item.noteId, item.attachmentId, item.copyOf!).catch(() => {});
         throw new QuotaError(reservation.reason ?? "rejected");
       }
 
@@ -307,6 +343,9 @@ export async function resolveAttachment(
 
   const waiting = await database.pendingUploads.get(attachmentId);
   if (waiting) {
+    // Waiting to go up is the only time a locked file is here in plaintext;
+    // it is shown only while the vault is open, as it would be once sent.
+    if (!vault.isUnlocked && (await isProtectedUpload(waiting))) return null;
     const url = URL.createObjectURL(waiting.blob);
     objectUrls.set(attachmentId, url);
     return url;
@@ -366,7 +405,10 @@ export async function loadAttachmentBlob(
 ): Promise<Blob> {
   const database = db();
   const waiting = await database.pendingUploads.get(attachmentId);
-  if (waiting) return waiting.blob;
+  if (waiting) {
+    if (!vault.isUnlocked && (await isProtectedUpload(waiting))) throw new VaultLockedError();
+    return waiting.blob;
+  }
 
   const row = await database.attachments.get(attachmentId);
   if (!row?.locked) {
@@ -420,6 +462,8 @@ export async function purgeLockedBlobs(noteIds?: string[]): Promise<number> {
     if (url) URL.revokeObjectURL(url);
     objectUrls.delete(id);
   }
+  // The service worker kept its own copy of whatever it fetched in plaintext.
+  if (doomed.length > 0) await purgeMediaCache();
   return doomed.length;
 }
 

@@ -65,6 +65,17 @@ export type PendingUpload = {
   wrappedKey?: Sealed;
   contentIv?: ArrayBuffer;
   metaSealed?: Sealed;
+  /**
+   * The file this is a copy of, for a note given its own copy of a file
+   * another note uploaded (see relock-copies.ts). If the server refuses the
+   * copy, the note is pointed back at this one rather than at nothing.
+   */
+  copyOf?: string;
+  /**
+   * A copy made for a lock still under way: not sent until the note is
+   * locked, and taken back if the lock does not go through.
+   */
+  heldForLock?: boolean;
   createdAt: number;
 };
 

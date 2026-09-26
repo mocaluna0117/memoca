@@ -110,6 +110,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const sealedNames = useLiveQuery(async () => (await sealedNameFolders()).length, [], 0);
   const settled = status.state === "idle" && !status.catchingUp && status.pending === 0;
   const unreadableSeen = useRef(0);
+  // Said once per session: the repair pass runs often.
+  const copiesWarned = useRef(false);
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -125,6 +127,18 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       if (report.notesLocked > 0) toast.success(`ロックが途中だったメモ ${report.notesLocked} 件をロックしました`);
       if (report.attachmentsLocked > 0) {
         toast.success(`ロックしたメモの添付ファイル ${report.attachmentsLocked} 件を暗号化しました`);
+      }
+      if (report.copiesLocked > 0) {
+        toast.success(
+          `ほかのメモからロックしたメモにコピーされていた画像 ${report.copiesLocked} 件を、そのメモ用に暗号化しました`,
+        );
+      }
+      if (report.copiesTooLarge > 0 && !copiesWarned.current) {
+        copiesWarned.current = true;
+        toast.warning(
+          `ロックしたメモに、ほかのメモからコピーした画像が ${report.copiesTooLarge} 件あり、容量が足りないため暗号化できていません。不要なファイルを削除すると、自動で暗号化します。`,
+          { action: { label: "設定を開く", onClick: () => router.push("/app/settings") } },
+        );
       }
       if (report.unreadable > unreadableSeen.current) {
         toast.warning(`この金庫の鍵では開けないメモが ${report.unreadable} 件あります`, {

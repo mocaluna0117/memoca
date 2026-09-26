@@ -66,6 +66,11 @@ export class SyncEngine {
 
   constructor(private client: ConvexReactClient) {}
 
+  /** Where syncing stands right now. */
+  get current(): SyncStatus {
+    return this.status;
+  }
+
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener);
     // The first value arrives on a microtask rather than synchronously, so a
@@ -271,7 +276,9 @@ export class SyncEngine {
       const bytes = body.snapshot.payload
         ? new Uint8Array(body.snapshot.payload)
         : body.snapshot.url
-          ? new Uint8Array(await (await fetch(body.snapshot.url)).arrayBuffer())
+          ? // Not kept by the service worker or the browser: a note locked
+            // later would leave this copy of its text behind.
+            new Uint8Array(await (await fetch(body.snapshot.url, { cache: "no-store" })).arrayBuffer())
           : null;
       if (bytes) {
         await database.snapshots.put({

@@ -8,7 +8,7 @@ import { META, deviceId } from "@/lib/db/meta";
 import { stamp } from "@/lib/sync/clock";
 import { flushAll } from "@/lib/sync/docs";
 import type { SyncEngine } from "@/lib/sync/engine";
-import { lockNote, unlockNote } from "./actions";
+import { lockNote, unlockNote, uploadsUnderWay } from "./actions";
 import { lockCoverage, needsLock, planFolderLock, planFolderUnlock } from "./model";
 
 export type CascadeResult = {
@@ -22,7 +22,15 @@ export type CascadeResult = {
   failed?: string;
   /** Unlocking only: notes left locked on purpose. */
   kept?: number;
+  /**
+   * Locking only: files copied in from other notes that could not be given
+   * an encrypted copy yet, and are still readable where they are.
+   */
+  copiesLeft?: number;
 };
+
+/** Filled in by {@link changeNote} as it locks notes. */
+export type LockReport = { copiesLeft: number };
 
 type Progress = (done: number, total: number) => void;
 
@@ -53,21 +61,31 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * pushed, and this device caught up with every update the server has.
  * Returns whether it got there within the time allowed.
  */
-async function settle(engine: SyncEngine | null, noteId: string, timeoutMs = 10_000) {
+async function settle(
+  engine: SyncEngine | null,
+  noteId: string,
+  direction: "lock" | "unlock",
+  timeoutMs = 10_000,
+) {
   await flushAll();
   engine?.kick(0);
   const database = db();
   const deadline = Date.now() + timeoutMs;
   let fetched = false;
   while (Date.now() < deadline) {
-    const [note, body, unpushed, queued] = await Promise.all([
+    const [note, body, unpushed, queued, uploading] = await Promise.all([
       database.notes.get(noteId),
       database.bodies.get(noteId),
       database.updates.where("noteId").equals(noteId).filter((u) => u.pushed === 0).count(),
       database.outbox.filter((op) => op.entityId === noteId).count(),
+      // Its files on their way. A lock waits for the plain ones only: the
+      // server refuses to lock a note while one is only reserved, and
+      // encrypted ones, such as the copies a lock makes, do not hold it up.
+      // An unlock waits for all of them: it turns back only stored files.
+      uploadsUnderWay(noteId, direction === "lock"),
     ]);
     const behind = !note || !body || body.throughSeq < note.lastUpdateSeq;
-    if (!behind && unpushed === 0 && queued === 0) return true;
+    if (!behind && unpushed === 0 && queued === 0 && uploading === 0) return true;
     if (behind && !fetched && engine) {
       fetched = true;
       void engine.fetchBodies([noteId]).catch(() => undefined);
@@ -91,6 +109,7 @@ export async function changeNote(
   noteId: string,
   direction: "lock" | "unlock",
   origin: "note" | "folder",
+  report?: LockReport,
 ): Promise<string | null> {
   let reason = "unknown";
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -108,7 +127,10 @@ export async function changeNote(
       if (cause instanceof TypeError) throw new CascadeAbort("offline");
       throw cause;
     }
-    if (outcome.status === "ok") return null;
+    if (outcome.status === "ok") {
+      if (report) report.copiesLeft += outcome.copiesLeft ?? 0;
+      return null;
+    }
     reason = outcome.reason;
     if (reason === "alreadyLocked" || reason === "notLocked" || reason === "unknownNote") return null;
     if (reason === "vaultLocked") throw new CascadeAbort("vaultClosed");
@@ -117,7 +139,7 @@ export async function changeNote(
       continue;
     }
     if (TRANSIENT.has(reason)) {
-      await settle(engine, noteId);
+      await settle(engine, noteId, direction);
       continue;
     }
     return reason;
@@ -131,22 +153,23 @@ async function runNotes(
   noteIds: string[],
   direction: "lock" | "unlock",
   onProgress?: Progress,
-): Promise<Pick<CascadeResult, "done" | "pending" | "aborted">> {
+): Promise<Pick<CascadeResult, "done" | "pending" | "aborted" | "copiesLeft">> {
   const pending: CascadeResult["pending"] = [];
+  const report: LockReport = { copiesLeft: 0 };
   let done = 0;
   for (const [index, noteId] of noteIds.entries()) {
     try {
-      const reason = await changeNote(client, engine, noteId, direction, "folder");
+      const reason = await changeNote(client, engine, noteId, direction, "folder", report);
       if (reason) pending.push({ noteId, reason });
       else done += 1;
     } catch (cause) {
       if (!(cause instanceof CascadeAbort)) throw cause;
       for (const rest of noteIds.slice(index)) pending.push({ noteId: rest, reason: cause.reason });
-      return { done, pending, aborted: cause.reason };
+      return { done, pending, aborted: cause.reason, copiesLeft: report.copiesLeft };
     }
     onProgress?.(index + 1, noteIds.length);
   }
-  return { done, pending };
+  return { done, pending, copiesLeft: report.copiesLeft };
 }
 
 /**

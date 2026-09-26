@@ -3,6 +3,7 @@
 
 import { defaultCache } from "@serwist/turbopack/worker";
 import { type PrecacheEntry, Serwist, type SerwistGlobalConfig } from "serwist";
+import { MEDIA_CACHE } from "@/lib/media/media-cache";
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -72,7 +73,9 @@ const serwist = new Serwist({
       matcher: ({ url }) => /\.convex\.(cloud|site)$/.test(url.hostname),
       handler: {
         handle: async ({ request, event }) => {
-          const cache = await caches.open("memoca-media");
+          // Asked not to be kept, such as a note's body: straight through.
+          if (request.cache === "no-store") return fetch(request);
+          const cache = await caches.open(MEDIA_CACHE);
           const cached = await cache.match(request);
           if (cached) return cached;
           const response = await fetch(request);

@@ -195,6 +195,17 @@ describe("fitsAllowance", () => {
     expect(fitsAllowance(me, 200, 100)).toBe(true);
     expect(fitsAllowance(me, 200, 101)).toBe(false);
   });
+
+  test("holds a video, or any other file, to the other limit, as the server does", () => {
+    const roomy = { quotaBytes: 10_000, usedBytes: 0, reservedBytes: 0 };
+    const limits = { maxImageBytes: 500, maxVideoBytes: 2_000 };
+    expect(fitsAllowance({ ...roomy, limits }, 1_500, 0, "video")).toBe(true);
+    expect(fitsAllowance({ ...roomy, limits }, 2_001, 0, "video")).toBe(false);
+    expect(fitsAllowance({ ...roomy, limits }, 2_001, 0, "other")).toBe(false);
+    expect(fitsAllowance({ ...roomy, limits }, 501, 0, "image")).toBe(false);
+    // Not reported by an older server: left to the server to decide.
+    expect(fitsAllowance({ ...roomy, limits: { maxImageBytes: 500 } }, 5_000, 0, "video")).toBe(true);
+  });
 });
 
 describe("queuedBytes", () => {

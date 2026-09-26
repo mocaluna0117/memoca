@@ -24,6 +24,8 @@ export const META = {
   vaultHealth: "vaultHealth",
   /** A folder unlock this device has not finished, to resume on next open. */
   unlockJob: "unlockJob",
+  /** Copies of other notes' files the server refused, and what they copied. */
+  refusedCopies: "refusedCopies",
 } as const;
 
 /**

@@ -5,6 +5,7 @@ import type { api } from "@convex/_generated/api";
 import { db, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { ZERO_STAMP, isNewer } from "@/lib/hlc";
+import { purgeMediaCache } from "@/lib/media/media-cache";
 import type { Folder, Note } from "@/lib/types";
 
 /** `null` is the signed-out case, which never reaches {@link applyBatch}. */
@@ -123,6 +124,9 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
   const needBodies = new Set<string>();
   const reload = new Set<string>();
   const incoming: IncomingUpdate[] = [];
+  // A file locked elsewhere may have been fetched here while it was plain,
+  // and the service worker keeps what it fetched.
+  let filesLocked = false;
 
   // Every table written below has to be listed here. Touching one that is not
   // aborts the whole batch, and the same batch then fails on every retry, so
@@ -234,6 +238,8 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
           await database.blobs.delete(remote.attachmentId);
           continue;
         }
+        const before = await database.attachments.get(remote.attachmentId);
+        if (remote.locked && before && !before.locked) filesLocked = true;
         await database.attachments.put({ ...remote });
       }
 
@@ -241,6 +247,9 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
       await setMeta(META.lastSyncAt, Date.now());
     },
   );
+
+  // Not inside the transaction: it would end it.
+  if (filesLocked) await purgeMediaCache();
 
   return { needBodies: [...needBodies], reload: [...reload], incoming };
 }

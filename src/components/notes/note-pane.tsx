@@ -33,10 +33,10 @@ import { requestVault } from "@/lib/store/vault-gate";
 import { useOpenVaultLabel } from "@/lib/vault/use-vault-labels";
 import { useFolders } from "@/lib/hooks/data";
 import { coveringFolderOf, lockCoverage, needsLock } from "@/lib/vault/model";
-import { changeNote } from "@/lib/vault/cascade";
+import { type LockReport, changeNote } from "@/lib/vault/cascade";
 import { useConvex } from "convex/react";
 import { useSync } from "@/components/providers/sync-provider";
-import { useLockActions } from "@/components/vault/use-lock-actions";
+import { copiesLeftNotice, useLockActions } from "@/components/vault/use-lock-actions";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
@@ -194,10 +194,12 @@ export function NotePane({
     if (!answer.ok) return;
     setBusy(true);
     const release = vault.hold();
+    const report: LockReport = { copiesLeft: 0 };
     try {
-      const reason = await changeNote(client, engine(), noteId, "lock", "folder");
-      if (reason === null) toast.success("メモをロックしました");
-      else toast.error("ロックできませんでした。もう一度お試しください。");
+      const reason = await changeNote(client, engine(), noteId, "lock", "folder", report);
+      if (reason !== null) toast.error("ロックできませんでした。もう一度お試しください。");
+      else if (report.copiesLeft > 0) toast.warning(`メモをロックしました。${copiesLeftNotice(report.copiesLeft, true)}`);
+      else toast.success("メモをロックしました");
     } catch {
       toast.error("ロックできませんでした。インターネット接続を確認して、もう一度お試しください。");
     } finally {

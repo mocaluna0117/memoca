@@ -19,6 +19,7 @@ import {
   ToolbarOnImageTap,
 } from "@/components/editor/image-crop";
 import { MobileBlockToolbar } from "@/components/editor/mobile-block-toolbar";
+import { useRelockCopies } from "@/components/editor/use-relock-copies";
 import { Skeleton } from "@/components/ui/skeleton";
 import { vault } from "@/lib/crypto/vault";
 import {
@@ -146,6 +147,7 @@ function EditorSurface({
   );
 
   const editor = useCreateBlockNote(options, [doc]);
+  useRelockCopies({ client, noteId, editor, enabled: locked && !readOnly, allowance: me });
 
   return (
     <ImageCrop editor={editor} noteId={noteId} editable={!readOnly}>

@@ -10,11 +10,23 @@ import { vault } from "@/lib/crypto/vault";
 import { db } from "@/lib/db";
 import { deviceId } from "@/lib/db/meta";
 import { stamp } from "@/lib/sync/clock";
+import { discardStaged, purgeLockedBlobs } from "@/lib/media/attachments";
+import { purgeMediaCache } from "@/lib/media/media-cache";
+import {
+  copiesForLock,
+  releaseHeldCopies,
+  withRelockLock,
+  withSwaps,
+} from "@/lib/media/relock-copies";
 import { reloadDoc, withDetachedDoc } from "@/lib/sync/docs";
 import { extractText, firstLine } from "@/lib/sync/ydoc";
 
 export type LockOutcome =
-  | { status: "ok" }
+  /**
+   * `copiesLeft`, after a lock: files copied in from other notes that could
+   * not be given an encrypted copy yet and are still readable where they are.
+   */
+  | { status: "ok"; copiesLeft?: number }
   | { status: "skipped"; reason: string }
   | { status: "failed"; reason: string };
 
@@ -63,7 +75,21 @@ export async function lockNote(
   noteId: string,
   opts: { origin?: "note" | "folder" } = {},
 ): Promise<LockOutcome> {
-  const origin = opts.origin ?? "note";
+  // The only pass over the note meanwhile: the editor and the repair pass
+  // find it locked and pointing at its copies once this is done.
+  return withRelockLock(
+    noteId,
+    true,
+    () => lockOnce(client, noteId, opts.origin ?? "note"),
+    () => ({ status: "skipped", reason: "busy" }),
+  );
+}
+
+async function lockOnce(
+  client: ConvexReactClient,
+  noteId: string,
+  origin: "note" | "folder",
+): Promise<LockOutcome> {
   const database = db();
   const note = await database.notes.get(noteId);
   if (!note) return { status: "skipped", reason: "unknownNote" };
@@ -81,71 +107,92 @@ export async function lockNote(
     .count();
   if (unpushed > 0) return { status: "skipped", reason: "unsent" };
 
-  const epoch = note.keyEpoch + 1;
-  const { key, wrapped } = await vault.createNoteKey(noteId, epoch);
-  const ts = stamp(await deviceId());
+  // Sealing the note's own files would leave a file copied in from another
+  // note readable on the server, so the note gets an encrypted copy of each,
+  // and the version sealed below already points at them. Nothing about the
+  // copies reaches the server readable, and a lock that does not go through
+  // leaves the note as it was. A file that cannot be copied now does not hold
+  // the lock up: the editor and the repair pass keep trying, and the caller
+  // says how many are left.
+  const copies = await copiesForLock(client, noteId);
+  // The copies the sealed version points at, once the server has it.
+  let kept = new Set<string>();
+  try {
+    const epoch = note.keyEpoch + 1;
+    const { key, wrapped } = await vault.createNoteKey(noteId, epoch);
+    const ts = stamp(await deviceId());
 
-  const merged = await withDetachedDoc(noteId, (doc) => Y.encodeStateAsUpdate(doc));
-  const snapshot = await seal(key, merged, ctx.yjsSnapshot(noteId, epoch));
-  const titleSealed = await seal(
-    key,
-    new TextEncoder().encode(note.title ?? ""),
-    ctx.noteTitle(noteId, epoch),
-  );
+    const { state: merged, used } = await withDetachedDoc(noteId, (doc) => withSwaps(doc, copies.swaps));
+    const snapshot = await seal(key, merged, ctx.yjsSnapshot(noteId, epoch));
+    const titleSealed = await seal(
+      key,
+      new TextEncoder().encode(note.title ?? ""),
+      ctx.noteTitle(noteId, epoch),
+    );
 
-  // Attachments are re-encrypted and re-uploaded; the server deletes the
-  // plaintext files as part of the same transaction.
-  const attachments = await database.attachments.where("noteId").equals(noteId).toArray();
-  const swaps = await sealAttachments(
-    client,
-    attachments.filter((a) => a.status === "committed" && !a.locked),
-  );
+    // Attachments are re-encrypted and re-uploaded; the server deletes the
+    // plaintext files as part of the same transaction.
+    const attachments = await database.attachments.where("noteId").equals(noteId).toArray();
+    const swaps = await sealAttachments(
+      client,
+      attachments.filter((a) => a.status === "committed" && !a.locked),
+    );
 
-  const result = await client.mutation(api.vault.lockNote, {
-    noteId,
-    keyEpoch: epoch,
-    coversThroughSeq: note.lastUpdateSeq,
-    wrappedKey: wrapped,
-    titleSealed: { ct: toArrayBuffer(titleSealed.ct), iv: toArrayBuffer(titleSealed.iv) },
-    snapshot: (await snapshotArg(client, snapshot.ct, snapshot.iv)) as never,
-    attachments: swaps as never,
-    ts,
-    origin,
-  });
-  if (result.status !== "ok") return { status: "failed", reason: result.reason ?? "" };
+    const result = await client.mutation(api.vault.lockNote, {
+      noteId,
+      keyEpoch: epoch,
+      coversThroughSeq: note.lastUpdateSeq,
+      wrappedKey: wrapped,
+      titleSealed: { ct: toArrayBuffer(titleSealed.ct), iv: toArrayBuffer(titleSealed.iv) },
+      snapshot: (await snapshotArg(client, snapshot.ct, snapshot.iv)) as never,
+      attachments: swaps as never,
+      ts,
+      origin,
+    });
+    if (result.status !== "ok") return { status: "failed", reason: result.reason ?? "" };
+    kept = used;
+    // Sealed pointing at them: the copies may go up now.
+    await releaseHeldCopies(copies.staged.filter((id) => used.has(id)));
 
-  await database.snapshots.put({
-    noteId,
-    data: snapshot.ct,
-    iv: snapshot.iv,
-    keyEpoch: epoch,
-    throughSeq: note.lastUpdateSeq,
-  });
-  await database.updates.where("noteId").equals(noteId).delete();
-  // The local row changes the same way the server's did, at once: the list
-  // must not keep showing the plaintext title until the next pull.
-  await database.notes.update(noteId, {
-    locked: true,
-    keyEpoch: epoch,
-    wrappedKey: wrapped,
-    lockOrigin: origin,
-    title: null,
-    titleSealed: { ct: toArrayBuffer(titleSealed.ct), iv: toArrayBuffer(titleSealed.iv) },
-    preview: null,
-    ts: { ...note.ts, lock: ts, title: ts },
-  });
-  await database.bodies.put({
-    noteId,
-    throughSeq: note.lastUpdateSeq,
-    keyEpoch: epoch,
-    text: null,
-    updatedAt: Date.now(),
-  });
-  // Its files were cached here in plaintext while it was an ordinary note.
-  const { purgeLockedBlobs } = await import("@/lib/media/attachments");
-  await purgeLockedBlobs([noteId]);
-  await reloadDoc(noteId);
-  return { status: "ok" };
+    await database.snapshots.put({
+      noteId,
+      data: snapshot.ct,
+      iv: snapshot.iv,
+      keyEpoch: epoch,
+      throughSeq: note.lastUpdateSeq,
+    });
+    await database.updates.where("noteId").equals(noteId).delete();
+    // The local row changes the same way the server's did, at once: the list
+    // must not keep showing the plaintext title until the next pull.
+    await database.notes.update(noteId, {
+      locked: true,
+      keyEpoch: epoch,
+      wrappedKey: wrapped,
+      lockOrigin: origin,
+      title: null,
+      titleSealed: { ct: toArrayBuffer(titleSealed.ct), iv: toArrayBuffer(titleSealed.iv) },
+      preview: null,
+      ts: { ...note.ts, lock: ts, title: ts },
+    });
+    await database.bodies.put({
+      noteId,
+      throughSeq: note.lastUpdateSeq,
+      keyEpoch: epoch,
+      text: null,
+      updatedAt: Date.now(),
+    });
+    // Its files were cached here in plaintext while it was an ordinary note,
+    // on disk and by the service worker.
+    await purgeLockedBlobs([noteId]);
+    if (swaps.length > 0) await purgeMediaCache();
+    await reloadDoc(noteId);
+    return { status: "ok", copiesLeft: copies.left };
+  } finally {
+    // Not needed after all: the lock did not go through, or the block went.
+    for (const id of copies.staged) {
+      if (!kept.has(id)) await discardStaged(id).catch(() => {});
+    }
+  }
 }
 
 /** The exact inverse of {@link lockNote}. */
@@ -153,6 +200,17 @@ export async function unlockNote(
   client: ConvexReactClient,
   noteId: string,
 ): Promise<LockOutcome> {
+  // Not while the editor or the repair pass is pointing the note at copies
+  // only the vault can show.
+  return withRelockLock(
+    noteId,
+    true,
+    () => unlockOnce(client, noteId),
+    () => ({ status: "skipped", reason: "busy" }),
+  );
+}
+
+async function unlockOnce(client: ConvexReactClient, noteId: string): Promise<LockOutcome> {
   const database = db();
   const note = await database.notes.get(noteId);
   if (!note) return { status: "skipped", reason: "unknownNote" };
@@ -173,6 +231,10 @@ export async function unlockNote(
     .filter((u) => u.pushed === 0)
     .count();
   if (unpushed > 0) return { status: "skipped", reason: "unsent" };
+  // Files still on their way would go up encrypted under an ordinary note:
+  // only stored ones are turned back. So they go first, a copy the editor
+  // just made included.
+  if ((await uploadsUnderWay(noteId)) > 0) return { status: "skipped", reason: "uploadPending" };
 
   const key = await vault.noteKey(noteId, note.keyEpoch, note.wrappedKey);
   const epoch = note.keyEpoch + 1;
@@ -273,6 +335,36 @@ export async function unlockNote(
 }
 
 /**
+ * How many of a note's files this device is still sending, or still to
+ * confirm as sent. `plainOnly` counts only those going up in plaintext.
+ */
+export async function uploadsUnderWay(noteId: string, plainOnly = false): Promise<number> {
+  const database = db();
+  const files = new Set(
+    (
+      await database.attachments
+        .where("noteId")
+        .equals(noteId)
+        .filter((file) => !plainOnly || !file.locked)
+        .primaryKeys()
+    ).map(String),
+  );
+  const [uploading, committing] = await Promise.all([
+    database.pendingUploads
+      .where("noteId")
+      .equals(noteId)
+      .filter((row) => !plainOnly || !row.locked)
+      .count(),
+    database.outbox
+      .where("kind")
+      .equals("attachment.commit")
+      .filter((op) => files.has(op.entityId))
+      .count(),
+  ]);
+  return uploading + committing;
+}
+
+/**
  * Encrypts plaintext attachments under fresh keys and uploads the result,
  * returning the swaps for the server to put in place of the plain files.
  * Files whose storage is gone are left out; the server decides what that
@@ -289,7 +381,8 @@ export async function sealAttachments(
     });
     const url = urls[attachment.attachmentId];
     if (!url) continue;
-    const plain = new Uint8Array(await (await fetch(url)).arrayBuffer());
+    // Not kept by the browser: the plaintext is about to be deleted.
+    const plain = new Uint8Array(await (await fetch(url, { cache: "no-store" })).arrayBuffer());
 
     const attKey = await vault.createAttachmentKey(attachment.attachmentId);
     const encrypted = await seal(attKey.key, plain, ctx.attachmentBody(attachment.attachmentId));

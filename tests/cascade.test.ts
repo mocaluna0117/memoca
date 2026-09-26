@@ -16,6 +16,20 @@ beforeEach(async () => {
 
 afterEach(() => vault.lock());
 
+/** A file in the upload queue; jsdom's Blob does not survive fake-indexeddb, so a stand-in. */
+const waitingUpload = (attachmentId: string, noteId: string, locked: boolean) => ({
+  attachmentId,
+  noteId,
+  blob: { size: 10, type: "image/webp" } as unknown as Blob,
+  mime: "image/webp",
+  name: "a.webp",
+  width: null,
+  height: null,
+  category: "image" as const,
+  locked,
+  createdAt: 0,
+});
+
 /** A server that accepts everything, recording what it was asked. */
 function acceptingServer() {
   return fakeConvex({
@@ -80,6 +94,50 @@ describe("locking a folder", () => {
     expect(server.callsTo("vault:lockNote")).toHaveLength(2);
   });
 
+  test("waits for a note's plain files to finish uploading before asking again", async () => {
+    const seen: number[] = [];
+    const server = fakeConvex({
+      "vault:setFolderLock": () => ({ status: "ok" }),
+      "vault:lockNote": async () => {
+        seen.push(await db().pendingUploads.count());
+        if (seen.length > 1) return { status: "ok" };
+        // Uploaded a moment later.
+        setTimeout(() => void db().pendingUploads.clear(), 600);
+        return { status: "rejected", reason: "uploadPending" };
+      },
+      "attachments:urls": () => ({}),
+    });
+    const work = await createFolder({ parentId: null, name: "仕事" });
+    const noteId = await createNote({ folderId: work, title: "A" });
+    await db().outbox.clear();
+    await db().pendingUploads.put(waitingUpload("plain", noteId, false));
+
+    expect(await lockFolder(server.client, null, work)).toMatchObject({ done: 1, pending: [] });
+    expect(seen).toEqual([1, 0]);
+  });
+
+  test("an encrypted file on its way does not hold the next try up", async () => {
+    const seen: number[] = [];
+    const server = fakeConvex({
+      "vault:setFolderLock": () => ({ status: "ok" }),
+      "vault:lockNote": async () => {
+        seen.push(await db().pendingUploads.count());
+        return seen.length > 1 ? { status: "ok" } : { status: "rejected", reason: "behind" };
+      },
+      "attachments:urls": () => ({}),
+    });
+    const work = await createFolder({ parentId: null, name: "仕事" });
+    const noteId = await createNote({ folderId: work, title: "A" });
+    await db().outbox.clear();
+    // A copy a lock made, still to go up: the server does not wait for it.
+    await db().pendingUploads.put(waitingUpload("copy", noteId, true));
+
+    const started = Date.now();
+    expect(await lockFolder(server.client, null, work)).toMatchObject({ done: 1, pending: [] });
+    expect(seen).toEqual([1, 1]);
+    expect(Date.now() - started).toBeLessThan(5_000);
+  });
+
   test("stops cleanly when the vault closes part way", async () => {
     const server = acceptingServer();
     const work = await createFolder({ parentId: null, name: "仕事" });
@@ -97,6 +155,21 @@ describe("locking a folder", () => {
 });
 
 describe("taking a folder's lock off", () => {
+  test("waits for every file of a note on its way, encrypted ones too", async () => {
+    const server = acceptingServer();
+    const work = await createFolder({ parentId: null, name: "仕事" });
+    const noteId = await createNote({ folderId: work, title: "A" });
+    await db().outbox.clear();
+    await lockFolder(server.client, null, work);
+    await db().outbox.clear();
+    await db().pendingUploads.put(waitingUpload("copy", noteId, true));
+    setTimeout(() => void db().pendingUploads.clear(), 600);
+
+    expect(await unlockFolder(server.client, null, work)).toMatchObject({ done: 1, pending: [] });
+    expect(server.callsTo("vault:unlockNote")).toHaveLength(1);
+    expect(await db().pendingUploads.count()).toBe(0);
+  });
+
   test("keeps notes locked by hand, and unlocks only what the folder locked", async () => {
     const server = acceptingServer();
     const work = await createFolder({ parentId: null, name: "仕事" });
