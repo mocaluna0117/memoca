@@ -6,9 +6,11 @@ import {
   hideFolders,
   openApp,
   showList,
+  signIn,
   signUp,
   waitForSynced,
 } from "./helpers";
+import { readTable } from "./local-db";
 
 test.describe("notes", () => {
   test("a note survives a reload", async ({ page }) => {
@@ -140,6 +142,51 @@ test.describe("notes", () => {
     await page.goto("/app");
     await showList(page);
     await expect(page.getByText("消すメモ").filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 });
+  });
+
+  test("after a note is purged from the trash, changes from elsewhere still arrive", async ({
+    page,
+    context,
+  }) => {
+    test.slow();
+    const email = await signUp(page);
+    await openApp(page);
+    await createNote(page, "完全に消すメモ");
+    await waitForSynced(page);
+    await page.getByRole("button", { name: "メモの操作" }).filter({ visible: true }).click();
+    await page.getByRole("menuitem", { name: "削除" }).click();
+    await waitForSynced(page);
+
+    const panel = await folderPanel(page);
+    await panel.getByRole("link", { name: "ゴミ箱" }).click();
+    const row = page.getByRole("listitem").filter({ hasText: "完全に消すメモ" });
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await row.getByRole("button", { name: "完全に削除" }).click();
+    await expect(page.getByText("完全に削除しました")).toBeVisible();
+    // The purged note comes back from the server as a tombstone.
+    await expect
+      .poll(async () => (await readTable<{ title: string | null }>(page, "notes")).length, {
+        timeout: 20_000,
+      })
+      .toBe(0);
+
+    // Another device writes a note; this one must still hear about it.
+    const fresh = await context.browser()!.newContext({
+      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+      viewport: page.viewportSize(),
+    });
+    const other = await fresh.newPage();
+    await signIn(other, email);
+    await openApp(other);
+    await createNote(other, "あとから届くメモ");
+    await waitForSynced(other);
+    await fresh.close();
+
+    await page.goto("/app");
+    await showList(page);
+    await expect(
+      page.getByText("あとから届くメモ").filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 30_000 });
   });
 });
 

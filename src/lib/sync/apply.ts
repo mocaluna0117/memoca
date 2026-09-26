@@ -124,14 +124,19 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
   const reload = new Set<string>();
   const incoming: IncomingUpdate[] = [];
 
+  // Every table written below has to be listed here. Touching one that is not
+  // aborts the whole batch, and the same batch then fails on every retry, so
+  // nothing from the server would ever arrive again.
   await database.transaction(
     "rw",
     [
       database.folders,
       database.notes,
       database.updates,
+      database.snapshots,
       database.bodies,
       database.attachments,
+      database.blobs,
       database.meta,
     ],
     async () => {
