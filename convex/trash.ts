@@ -2,8 +2,9 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, internalMutation, mutation } from "./_generated/server";
-import { MAX_REFS_PER_NOTE, TOMBSTONE_MS } from "./lib/constants";
-import { dropNoteRefs, isInUse, settleUse } from "./lib/refs";
+import { MAX_REFS_PER_NOTE, TOMBSTONE_MS, UNREFERENCED_GRACE_MS } from "./lib/constants";
+import { fileTombstone } from "./lib/files";
+import { allNotesReported, dropNoteRefs, isInUse, settleUse } from "./lib/refs";
 import { type SeqWriter, openSeq } from "./lib/seq";
 import { requireUser } from "./lib/user";
 
@@ -22,6 +23,7 @@ async function purgeNote(
   ctx: MutationCtx,
   note: Doc<"notes">,
   seq: SeqWriter,
+  othersReported: () => Promise<boolean>,
 ): Promise<number> {
   let freed = 0;
 
@@ -53,14 +55,26 @@ async function purgeNote(
       q.eq("userId", note.userId).eq("noteId", note.noteId),
     )
     .take(500);
+  const now = Date.now();
   for (const row of attachments) {
-    const live = row.status === "committed" && row.deletedAt === null;
+    if (row.deletedAt !== null) continue;
+    const live = row.status === "committed";
     // Copied into another note that still shows it: it stays, for that note.
     if (live && (await isInUse(ctx, note.userId, row.attachmentId))) continue;
+    if (live && !(await othersReported())) {
+      // Another note may show it without having said so yet. Deleting it now
+      // would take it from that note on every device, so the sweep deletes
+      // it, and gives its bytes back, once every note has reported.
+      await ctx.db.patch(row._id, { unreferencedAt: now - UNREFERENCED_GRACE_MS });
+      continue;
+    }
     if (row.storageId) await ctx.storage.delete(row.storageId);
-    // A file the daily sweep already deleted gave its bytes back then.
     if (live) freed += row.bytes;
-    await ctx.db.delete(row._id);
+    // Kept as a tombstone, as the sweep keeps what it deletes: a device
+    // learns the file is gone and lets go of its copy, rather than keeping
+    // the row of a file that no longer exists. A reservation keeps its
+    // status, for the reaper to give its room back.
+    await ctx.db.patch(row._id, fileTombstone(now, seq.next()));
   }
   // Files of other notes that only this one still used are unused from now.
   await settleUse(ctx, note.userId, used, Date.now());
@@ -135,15 +149,26 @@ async function purgeTargets(
   let more = false;
 
   const pendingFolders: Doc<"folders">[] = [];
+  // Whether every note but the ones going now has reported the files it
+  // uses: asked at most once, and only if a file's fate turns on it.
+  const purging = new Set(noteIds);
+  let reported: Promise<boolean> | null = null;
+  const othersReported = () => (reported ??= allNotesReported(ctx, user._id, purging));
 
+  const subtrees = [];
   for (const folderId of folderIds) {
-    const { folders, notes } = await collectSubtree(ctx, user._id, folderId);
+    const subtree = await collectSubtree(ctx, user._id, folderId);
+    for (const note of subtree.notes) purging.add(note.noteId);
+    subtrees.push(subtree);
+  }
+
+  for (const { folders, notes } of subtrees) {
     for (const note of notes) {
       if (budget <= 0) {
         more = true;
         break;
       }
-      freed += await purgeNote(ctx, note, seq);
+      freed += await purgeNote(ctx, note, seq, othersReported);
       budget -= 1;
     }
     // Folders only disappear once nothing is left inside them, so a rescheduled
@@ -162,7 +187,7 @@ async function purgeTargets(
       .withIndex("by_user_note", (q) => q.eq("userId", user._id).eq("noteId", noteId))
       .unique();
     if (!note || note.purged) continue;
-    freed += await purgeNote(ctx, note, seq);
+    freed += await purgeNote(ctx, note, seq, othersReported);
     budget -= 1;
   }
 
@@ -316,6 +341,34 @@ export const dropOldTombstones = internalMutation({
         removed += 1;
       }
     }
+    // Files deleted as long ago, in batches of their own until none are left.
+    await ctx.scheduler.runAfter(0, internal.trash.dropOldFileTombstones, {});
     return { removed };
+  },
+});
+
+/** Tombstones of files taken per run; it runs again at once while there are more. */
+const FILE_TOMBSTONE_BATCH = 300;
+
+/**
+ * Drops the rows of files deleted more than {@link TOMBSTONE_MS} ago. Their
+ * bytes were given back when they were deleted.
+ */
+export const dropOldFileTombstones = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const cutoff = Date.now() - TOMBSTONE_MS;
+    const files = await ctx.db
+      .query("attachments")
+      .withIndex("by_deleted_at", (q) => q.gt("deletedAt", 0).lt("deletedAt", cutoff))
+      .take(FILE_TOMBSTONE_BATCH);
+    for (const row of files) {
+      if (row.storageId) await ctx.storage.delete(row.storageId);
+      await ctx.db.delete(row._id);
+    }
+    if (files.length === FILE_TOMBSTONE_BATCH) {
+      await ctx.scheduler.runAfter(0, internal.trash.dropOldFileTombstones, {});
+    }
+    return { removed: files.length };
   },
 });

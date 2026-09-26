@@ -14,6 +14,7 @@ import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as lib_constants from "../lib/constants.js";
+import type * as lib_files from "../lib/files.js";
 import type * as lib_hlc from "../lib/hlc.js";
 import type * as lib_ops from "../lib/ops.js";
 import type * as lib_refs from "../lib/refs.js";
@@ -22,6 +23,7 @@ import type * as lib_user from "../lib/user.js";
 import type * as notes from "../notes.js";
 import type * as sync from "../sync.js";
 import type * as trash from "../trash.js";
+import type * as usage from "../usage.js";
 import type * as users from "../users.js";
 import type * as vault from "../vault.js";
 
@@ -38,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   http: typeof http;
   "lib/constants": typeof lib_constants;
+  "lib/files": typeof lib_files;
   "lib/hlc": typeof lib_hlc;
   "lib/ops": typeof lib_ops;
   "lib/refs": typeof lib_refs;
@@ -46,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   notes: typeof notes;
   sync: typeof sync;
   trash: typeof trash;
+  usage: typeof usage;
   users: typeof users;
   vault: typeof vault;
 }>;

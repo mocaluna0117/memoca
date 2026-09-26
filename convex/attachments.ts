@@ -11,6 +11,7 @@ import {
 import { sealedV } from "./lib/ops";
 import { allNotesReported, isInUse, settleUse } from "./lib/refs";
 import { openSeq } from "./lib/seq";
+import { fileTombstone } from "./lib/files";
 import { getConfig, requireUser } from "./lib/user";
 
 /**
@@ -86,7 +87,9 @@ export const reserve = mutation({
     const expiresAt = now + RESERVATION_TTL_MS;
 
     if (existing) {
-      // A retried upload: refresh the window, keep the same reservation.
+      // A retried upload: refresh the window, keep the same reservation. One
+      // the reaper let go of holds nothing any more, so none is given back.
+      const held = existing.status === "reserved" ? existing.reservedBytes : 0;
       await ctx.db.patch(existing._id, {
         status: "reserved",
         reservedBytes: args.bytes,
@@ -94,7 +97,7 @@ export const reserve = mutation({
         seq: seq.next(),
       });
       await ctx.db.patch(user._id, {
-        reservedBytes: Math.max(0, user.reservedBytes - existing.reservedBytes + args.bytes),
+        reservedBytes: Math.max(0, user.reservedBytes - held + args.bytes),
       });
     } else {
       await ctx.db.insert("attachments", {
@@ -116,6 +119,7 @@ export const reserve = mutation({
         unreferencedAt: null,
         deletedAt: null,
         expiresAt,
+        category: args.category,
         seq: seq.next(),
         createdAt: now,
       });
@@ -298,12 +302,7 @@ export const sweepUnreferenced = internalMutation({
         writers.set(row.userId, seq);
       }
       if (row.storageId) await ctx.storage.delete(row.storageId);
-      await ctx.db.patch("attachments", row._id, {
-        storageId: null,
-        unreferencedAt: null,
-        deletedAt: now,
-        seq: seq.next(),
-      });
+      await ctx.db.patch("attachments", row._id, fileTombstone(now, seq.next()));
       freed.set(row.userId, (freed.get(row.userId) ?? 0) + row.bytes);
       deleted += 1;
     }

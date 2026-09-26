@@ -230,6 +230,11 @@ export default defineSchema({
     deletedAt: v.union(v.number(), v.null()),
     /** Reservation deadline; the hourly reaper releases anything past it. */
     expiresAt: v.union(v.number(), v.null()),
+    /**
+     * What kind of file it is, as the device declared it: known even for a
+     * locked file, whose type is encrypted. Missing on files from before.
+     */
+    category: v.optional(v.union(v.literal("image"), v.literal("video"), v.literal("other"))),
     seq: v.number(),
     createdAt: v.number(),
   })
@@ -238,7 +243,8 @@ export default defineSchema({
     .index("by_user_note", ["userId", "noteId"])
     .index("by_status_expires", ["status", "expiresAt"])
     .index("by_storage", ["storageId"])
-    .index("by_unreferenced", ["unreferencedAt"]),
+    .index("by_unreferenced", ["unreferencedAt"])
+    .index("by_deleted_at", ["deletedAt"]),
 
   /**
    * Which note uses which file, as its devices last reported it. One row per

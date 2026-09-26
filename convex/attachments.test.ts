@@ -1,8 +1,8 @@
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
-import type { Id } from "./_generated/dataModel";
-import { UNREFERENCED_GRACE_MS } from "./lib/constants";
+import type { Doc, Id } from "./_generated/dataModel";
+import { TOMBSTONE_MS, UNREFERENCED_GRACE_MS } from "./lib/constants";
 import schema from "./schema";
 
 /**
@@ -70,7 +70,14 @@ const edit = (t: T, noteId: string, lastUpdateSeq: number) =>
     await ctx.db.patch(note!._id, { lastUpdateSeq });
   });
 
-async function storeFile(t: T, userId: Id<"users">, noteId: string, attachmentId: string, bytes = 100) {
+async function storeFile(
+  t: T,
+  userId: Id<"users">,
+  noteId: string,
+  attachmentId: string,
+  bytes = 100,
+  over: Partial<Doc<"attachments">> = {},
+) {
   await t.run(async (ctx) => {
     const storageId = await ctx.storage.store(new Blob([new Uint8Array(bytes)]));
     await ctx.db.insert("attachments", {
@@ -91,6 +98,7 @@ async function storeFile(t: T, userId: Id<"users">, noteId: string, attachmentId
       expiresAt: null,
       seq: 1,
       createdAt: 0,
+      ...over,
     });
   });
 }
@@ -257,6 +265,8 @@ describe("the daily sweep", () => {
     // A tombstone with a new seq, so devices drop their copies.
     expect(row).toMatchObject({ storageId: null, deletedAt: expect.any(Number), unreferencedAt: null });
     expect(row!.seq).toBeGreaterThan(1);
+    // Nothing about the file is kept, its name included.
+    expect(row).toMatchObject({ name: null, mime: null, width: null, height: null });
     const user = await t.run((ctx) => ctx.db.get(userId));
     expect(user?.usedBytes).toBe(900);
     const stored = await t.run((ctx) => ctx.db.system.query("_storage").collect());
@@ -356,7 +366,7 @@ describe("purging a note from the trash", () => {
     await trash(t, "a");
     await as.mutation(api.trash.purge, { folderIds: [], noteIds: ["a"] });
 
-    expect(await file(t, "own")).toBeNull();
+    expect(await file(t, "own")).toMatchObject({ deletedAt: expect.any(Number), storageId: null });
     expect(await file(t, "copied")).toMatchObject({ deletedAt: null, storageId: expect.anything() });
     const user = await t.run((ctx) => ctx.db.get(userId));
     expect(user?.usedBytes).toBe(200);
@@ -385,5 +395,381 @@ describe("purging a note from the trash", () => {
     await trash(t, "b");
     await as.mutation(api.trash.purge, { folderIds: [], noteIds: ["b"] });
     expect((await file(t, "from-a"))?.unreferencedAt).toEqual(expect.any(Number));
+  });
+});
+
+describe("a file purged with its note", () => {
+  async function trash(t: T, noteId: string) {
+    await t.run(async (ctx) => {
+      const note = await ctx.db
+        .query("notes")
+        .filter((q) => q.eq(q.field("noteId"), noteId))
+        .unique();
+      await ctx.db.patch(note!._id, { deletedAt: Date.now() });
+    });
+  }
+
+  test("stays as a tombstone that syncs, so devices let go of their copy", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A, 100);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "a");
+    await storeFile(t, userId, "a", "own", 100);
+    const before = await file(t, "own");
+
+    await trash(t, "a");
+    await as.mutation(api.trash.purge, { folderIds: [], noteIds: ["a"] });
+
+    const after = await file(t, "own");
+    expect(after).toMatchObject({ deletedAt: expect.any(Number), storageId: null, unreferencedAt: null });
+    expect(after).toMatchObject({ name: null, mime: null, width: null, height: null });
+    expect(after!.seq).toBeGreaterThan(before!.seq);
+    expect(await t.run((ctx) => ctx.storage.get(before!.storageId!))).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.usedBytes).toBe(0);
+    // And it reaches devices, which drop their copy on seeing it.
+    const batch = await as.query(api.sync.pull, { since: 0 });
+    expect(batch!.attachments.find((row) => row.attachmentId === "own")).toMatchObject({
+      deletedAt: expect.any(Number),
+      name: null,
+    });
+  });
+
+  test("a locked file's sealed name and key go with it", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A, 100);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "a");
+    const sealed = { ct: new ArrayBuffer(8), iv: new ArrayBuffer(12) };
+    await storeFile(t, userId, "a", "secret", 100, {
+      locked: true,
+      name: null,
+      mime: null,
+      metaSealed: sealed,
+      wrappedKey: sealed,
+      contentIv: new ArrayBuffer(12),
+    });
+    await trash(t, "a");
+    await as.mutation(api.trash.purge, { folderIds: [], noteIds: ["a"] });
+    const after = await file(t, "secret");
+    expect(after?.metaSealed).toBeUndefined();
+    expect(after?.wrappedKey).toBeUndefined();
+    expect(after?.contentIv).toBeUndefined();
+  });
+
+  test("one arriving after its note was purged is not kept, and the room it held goes back", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "a");
+    await as.mutation(api.attachments.reserve, {
+      attachmentId: "late",
+      noteId: "a",
+      bytes: 100,
+      mime: "image/webp",
+      name: "late.webp",
+      width: 1,
+      height: 1,
+      locked: false,
+      category: "image",
+    });
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob([new Uint8Array(100)])));
+    await trash(t, "a");
+    await as.mutation(api.trash.purge, { folderIds: [], noteIds: ["a"] });
+
+    const pushed = await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [{ kind: "attachment.commit", opId: "commit-late", attachmentId: "late", storageId }],
+    });
+    expect(pushed.results[0]).toMatchObject({ status: "rejected" });
+    const user = await t.run((ctx) => ctx.db.get(userId));
+    expect(user).toMatchObject({ usedBytes: 0, reservedBytes: 0 });
+    expect(await t.run((ctx) => ctx.storage.get(storageId))).toBeNull();
+    expect(await file(t, "late")).toMatchObject({ status: "orphan", deletedAt: expect.any(Number) });
+    // The reaper does not give the same room back a second time.
+    await t.mutation(internal.attachments.reapReservations, {});
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.reservedBytes).toBe(0);
+  });
+
+  test("waits for the sweep when another note may show it without having said so yet", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A, 100);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "old");
+    await pushNote(as, "new");
+    await storeFile(t, userId, "old", "photo", 100);
+    // Pasted into "new": the edit arrived, what it shows has not been reported.
+    await edit(t, "new", 3);
+
+    await trash(t, "old");
+    await as.mutation(api.trash.purge, { folderIds: [], noteIds: ["old"] });
+    const kept = await file(t, "photo");
+    expect(kept).toMatchObject({ deletedAt: null, storageId: expect.anything() });
+    expect(kept!.unreferencedAt).toBeLessThanOrEqual(Date.now() - UNREFERENCED_GRACE_MS);
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.usedBytes).toBe(100);
+
+    // Then "new" reports it: it stays, for that note.
+    await report(as, "new", 3, ["photo"]);
+    await sweep(t, Date.now() + DAY);
+    expect(await file(t, "photo")).toMatchObject({ deletedAt: null, unreferencedAt: null });
+  });
+
+  test("and is deleted by the sweep, its bytes given back, once every note has reported without it", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A, 100);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "old");
+    await pushNote(as, "new");
+    await storeFile(t, userId, "old", "photo", 100);
+    await edit(t, "new", 3);
+    await trash(t, "old");
+    await as.mutation(api.trash.purge, { folderIds: [], noteIds: ["old"] });
+
+    await report(as, "new", 3, []);
+    await sweep(t, Date.now() + DAY);
+    expect(await file(t, "photo")).toMatchObject({ deletedAt: expect.any(Number), storageId: null });
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.usedBytes).toBe(0);
+  });
+
+  test("still under way, is released by the reaper as before", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A);
+    await t.run((ctx) => ctx.db.patch(userId, { reservedBytes: 50 }));
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "a");
+    await storeFile(t, userId, "a", "uploading", 0, {
+      status: "reserved",
+      storageId: null,
+      reservedBytes: 50,
+      expiresAt: Date.now() - 1,
+    });
+
+    await trash(t, "a");
+    await as.mutation(api.trash.purge, { folderIds: [], noteIds: ["a"] });
+    await t.mutation(internal.attachments.reapReservations, {});
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.reservedBytes).toBe(0);
+  });
+
+  test("is let go for good once tombstones are old enough, however many there are", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup();
+      const userId = await seedUser(t, AUTH_A);
+      const old = Date.now() - TOMBSTONE_MS - DAY;
+      await t.run(async (ctx) => {
+        // More than one batch of them.
+        for (let i = 0; i < 305; i += 1) {
+          await ctx.db.insert("attachments", {
+            userId,
+            attachmentId: `old-${i}`,
+            noteId: "a",
+            status: "committed",
+            storageId: null,
+            reservedBytes: 0,
+            bytes: 1,
+            mime: null,
+            name: null,
+            locked: false,
+            width: null,
+            height: null,
+            unreferencedAt: null,
+            deletedAt: old,
+            expiresAt: null,
+            seq: i,
+            createdAt: 0,
+          });
+        }
+      });
+      await storeFile(t, userId, "a", "just-gone", 100, { storageId: null, deletedAt: Date.now() - DAY });
+      await storeFile(t, userId, "a", "live", 100);
+      await t.mutation(internal.trash.dropOldTombstones, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const left = await t.run((ctx) => ctx.db.query("attachments").collect());
+      expect(left.map((row) => row.attachmentId).sort()).toEqual(["just-gone", "live"]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("the account's storage", () => {
+  test("a recount leaves out files deleted since", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A, 999);
+    await storeFile(t, userId, "a", "live", 100);
+    await storeFile(t, userId, "a", "swept", 300, { storageId: null, deletedAt: Date.now() });
+    expect(await t.mutation(internal.admin.recomputeUsage, { email: `${AUTH_A}@example.com` })).toBe(100);
+  });
+
+  test("a recount that could not read everything writes nothing", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A, 999);
+    await t.run(async (ctx) => {
+      for (let i = 0; i < 5000; i += 1) {
+        await ctx.db.insert("attachments", {
+          userId,
+          attachmentId: `f${i}`,
+          noteId: "a",
+          status: "committed",
+          storageId: null,
+          reservedBytes: 0,
+          bytes: 1,
+          mime: "image/webp",
+          name: null,
+          locked: false,
+          width: null,
+          height: null,
+          unreferencedAt: null,
+          deletedAt: null,
+          expiresAt: null,
+          seq: i,
+          createdAt: 0,
+        });
+      }
+    });
+    expect(await t.mutation(internal.admin.recomputeUsage, { email: `${AUTH_A}@example.com` })).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.usedBytes).toBe(999);
+  });
+
+  test("an upload tried again after the reaper let it go does not give its room back twice", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "a");
+    const reserve = (bytes: number) =>
+      as.mutation(api.attachments.reserve, {
+        attachmentId: "retry",
+        noteId: "a",
+        bytes,
+        mime: "image/webp",
+        name: "retry.webp",
+        width: 1,
+        height: 1,
+        locked: false,
+        category: "image",
+      });
+    await reserve(100);
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("attachments")
+        .filter((q) => q.eq(q.field("attachmentId"), "retry"))
+        .unique();
+      await ctx.db.patch(row!._id, { expiresAt: Date.now() - 1 });
+    });
+    await t.mutation(internal.attachments.reapReservations, {});
+    // Someone else's upload holds room meanwhile.
+    await t.run((ctx) => ctx.db.patch(userId, { reservedBytes: 300 }));
+    await reserve(100);
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.reservedBytes).toBe(400);
+  });
+
+  test("a file's kind is kept from its reservation, locked files included", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "a");
+    await as.mutation(api.attachments.reserve, {
+      attachmentId: "clip",
+      noteId: "a",
+      bytes: 100,
+      mime: null,
+      name: null,
+      width: null,
+      height: null,
+      locked: true,
+      category: "video",
+    });
+    expect(await file(t, "clip")).toMatchObject({ category: "video" });
+  });
+
+  test("is broken down: text, files by kind, the trash, what will be deleted, what is on its way, and the largest", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A, 1_000);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "live");
+    await pushNote(as, "binned");
+    await t.run(async (ctx) => {
+      for (const note of await ctx.db.query("notes").collect()) {
+        await ctx.db.patch(note._id, {
+          bodyBytes: note.noteId === "live" ? 40 : 7,
+          deletedAt: note.noteId === "binned" ? Date.now() : null,
+        });
+      }
+    });
+    const now = Date.now();
+    await storeFile(t, userId, "live", "photo", 500);
+    await storeFile(t, userId, "live", "clip", 300, { mime: "video/mp4" });
+    await storeFile(t, userId, "live", "secret", 200, { locked: true, mime: null, name: null, category: "image" });
+    await storeFile(t, userId, "live", "old-crop", 60, { unreferencedAt: now - DAY });
+    await storeFile(t, userId, "binned", "in-bin", 90);
+    await storeFile(t, userId, "live", "uploading", 0, { status: "reserved", storageId: null, reservedBytes: 25 });
+    await storeFile(t, userId, "live", "gone", 999, { storageId: null, deletedAt: now });
+    await t.run((ctx) =>
+      ctx.db.insert("attachmentRefs", { userId, noteId: "live", attachmentId: "photo" }),
+    );
+
+    const usage = await as.query(api.usage.breakdown, {});
+    expect(usage).toMatchObject({
+      usedBytes: 1_000,
+      bodies: { live: 40, trashed: 7 },
+      files: { image: 700, video: 300, other: 0 },
+      trashedFiles: 90,
+      unused: { bytes: 60, count: 1, nextDeleteAt: now - DAY + UNREFERENCED_GRACE_MS },
+      uploading: 25,
+      recomputedBytes: 40 + 7 + 500 + 300 + 200 + 60 + 90,
+      truncated: false,
+    });
+    expect(usage.largest.map((row) => row.attachmentId)).toEqual(["photo", "clip", "secret", "in-bin", "old-crop"]);
+    expect(usage.largest[0]).toMatchObject({ name: "photo.webp", mime: "image/webp", usedBy: ["live"] });
+    // A locked file's name and type stay for the device to read.
+    expect(usage.largest[2]).toMatchObject({ locked: true, name: null, mime: null, kind: "image" });
+    expect(usage.largest[3]).toMatchObject({ trashed: true });
+    expect(usage.largest[4]).toMatchObject({ unused: true });
+  });
+
+  test("counts a note in a folder put in the trash as in the trash, and a file another note shows as not", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "filed");
+    await pushNote(as, "binned");
+    await pushNote(as, "live");
+    await t.run(async (ctx) => {
+      const at = { t: 0, d: "d" };
+      await ctx.db.insert("folders", {
+        userId,
+        folderId: "work",
+        parentId: null,
+        name: "仕事",
+        icon: null,
+        sortKey: "a",
+        locked: false,
+        system: null,
+        deletedAt: Date.now(),
+        purged: false,
+        ts: { name: at, place: at, trash: at, lock: at },
+        deviceId: "d",
+        seq: 1,
+      });
+      for (const note of await ctx.db.query("notes").collect()) {
+        await ctx.db.patch(note._id, {
+          bodyBytes: 10,
+          folderId: note.noteId === "filed" ? "work" : note.folderId,
+          deletedAt: note.noteId === "binned" ? Date.now() : null,
+        });
+      }
+    });
+    await storeFile(t, userId, "filed", "in-folder", 100);
+    await storeFile(t, userId, "binned", "shared", 200);
+    await t.run(async (ctx) => {
+      await ctx.db.insert("attachmentRefs", { userId, noteId: "binned", attachmentId: "shared" });
+      await ctx.db.insert("attachmentRefs", { userId, noteId: "live", attachmentId: "shared" });
+    });
+
+    const usage = await as.query(api.usage.breakdown, {});
+    expect(usage.bodies).toEqual({ live: 10, trashed: 20 });
+    // Emptying the trash frees the folder's file, not the one "live" shows.
+    expect(usage.trashedFiles).toBe(100);
+    expect(usage.files.image).toBe(200);
+    expect(usage.largest.find((row) => row.attachmentId === "shared")).toMatchObject({ trashed: false });
   });
 });

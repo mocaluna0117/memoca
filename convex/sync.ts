@@ -645,6 +645,14 @@ async function applyAttachmentCommit(
   if (!row) return reject(op.opId, "unknownAttachment");
   if (row.status === "committed") return ok(op.opId);
   if (row.status === "orphan") return reject(op.opId, "reservationExpired");
+  if (row.deletedAt !== null) {
+    // Its note was purged while it was on its way: the row is only a
+    // tombstone now. The upload is not kept, and the room it held goes back.
+    if (await ctx.db.system.get(op.storageId)) await ctx.storage.delete(op.storageId);
+    await ctx.db.patch(row._id, { status: "orphan", expiresAt: null, seq: seq.next() });
+    session.reservedDelta -= row.reservedBytes;
+    return reject(op.opId, "unknownAttachment");
+  }
 
   // Trust the file, not the client: the declared size was only a reservation.
   const meta = await ctx.db.system.get(op.storageId);

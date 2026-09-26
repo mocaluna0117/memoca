@@ -73,8 +73,13 @@ export async function dropNoteRefs(
  * Whether every note the user has, in the trash or not, has reported the
  * files it uses as of its latest change. Until then a file that looks unused
  * may be named by a note nobody has reported yet, so nothing is deleted.
+ * Notes in `except` are not asked: the ones being purged.
  */
-export async function allNotesReported(ctx: MutationCtx, userId: Id<"users">): Promise<boolean> {
+export async function allNotesReported(
+  ctx: MutationCtx,
+  userId: Id<"users">,
+  except: ReadonlySet<string> = new Set(),
+): Promise<boolean> {
   const notes = await ctx.db
     .query("notes")
     .withIndex("by_user_seq", (q) => q.eq("userId", userId))
@@ -83,6 +88,7 @@ export async function allNotesReported(ctx: MutationCtx, userId: Id<"users">): P
   return notes.every(
     (note) =>
       note.purged ||
+      except.has(note.noteId) ||
       (note.refsThroughSeq !== undefined && note.refsThroughSeq >= note.lastUpdateSeq),
   );
 }

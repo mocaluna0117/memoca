@@ -151,7 +151,10 @@ export const recomputeUsage = internalMutation({
       .query("attachments")
       .withIndex("by_user_seq", (q) => q.eq("userId", user._id))
       .take(5000);
-    for (const row of attachments) if (row.status === "committed") used += row.bytes;
+    // Not all of them read: a partial sum would be written as the total.
+    if (notes.length === 5000 || attachments.length === 5000) return null;
+    // A file deleted since, by the sweep or with its note, gave its bytes back.
+    for (const row of attachments) if (row.status === "committed" && row.deletedAt === null) used += row.bytes;
 
     await ctx.db.patch(user._id, { usedBytes: used });
     return used;
