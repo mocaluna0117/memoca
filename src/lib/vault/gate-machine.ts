@@ -19,13 +19,20 @@ export type GateView =
   | "create"
   | "creating"
   | "createKey"
-  | "createPasskey";
+  | "createPasskey"
+  /** Opened with the password in a browser with no passkey of its own yet. */
+  | "offerPasskey";
 
 export type GateContext = {
   availability: "unknown" | "none" | "exists";
   online: boolean;
   unlocked: boolean;
-  /** A passkey is registered and this device can use one. */
+  /**
+   * This browser has registered or used one of the vault's passkeys, and has
+   * a platform authenticator. A passkey that lives only on another device, or
+   * in another browser, does not count: offering it first led to the
+   * browser's own "no passkey on this device" sheet.
+   */
   passkeyReady: boolean;
 };
 
@@ -52,8 +59,14 @@ export type GateEvent =
   | { type: "usePassword" }
   | { type: "useRecovery" }
   | { type: "usePasskey" }
-  /** The passkey gave no usable secret, so the password is the way in. */
-  | { type: "passkeyFailed" }
+  /**
+   * The passkey gave no usable secret, so the password is the way in.
+   * `notFound`: tried in a browser with no passkey known to be its own, and
+   * it came to nothing, most likely because there is none here.
+   */
+  | { type: "passkeyFailed"; notFound?: boolean }
+  /** The password opened it; `offer` when this browser could add a passkey. */
+  | { type: "openedWithPassword"; offer: boolean }
   | { type: "openedWithRecovery" }
   | { type: "setupStarted" }
   | { type: "setupSucceeded" }
@@ -69,7 +82,7 @@ export type GateState = {
 };
 
 /** Something the new screen has to explain, set by the move that led to it. */
-export type GateNotice = "createdElsewhere" | "alreadyExists";
+export type GateNotice = "createdElsewhere" | "alreadyExists" | "passkeyNotFound";
 
 const CREATION: readonly GateView[] = ["create", "creating", "createKey", "createPasskey"];
 
@@ -117,7 +130,11 @@ export function gateReducer(state: GateState, event: GateEvent): GateState {
         : state;
     case "passkeyFailed":
       // Not a choice, but the passkey has just failed: do not offer it again.
-      return view === "passkey" ? { view: "password", notice: null, chosen: true } : state;
+      return view === "passkey"
+        ? { view: "password", notice: event.notFound ? "passkeyNotFound" : null, chosen: true }
+        : state;
+    case "openedWithPassword":
+      return view === "password" && event.offer ? { view: "offerPasskey", notice: null } : state;
     case "openedWithRecovery":
       return view === "recovery" ? { view: "recovered", notice: null } : state;
     case "setupStarted":
@@ -140,7 +157,9 @@ export function gateReducer(state: GateState, event: GateEvent): GateState {
  * whatever asked for it can go ahead.
  */
 export function dismissResult(view: GateView): "ok" | "cancelled" {
-  return view === "recovered" || view === "createPasskey" ? "ok" : "cancelled";
+  return view === "recovered" || view === "createPasskey" || view === "offerPasskey"
+    ? "ok"
+    : "cancelled";
 }
 
 /**

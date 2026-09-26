@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { openApp, signUp } from "./helpers";
+import { openApp, signIn, signUp } from "./helpers";
 import {
   VAULT_PASSWORD,
   confirmRecoveryKey,
@@ -111,5 +111,102 @@ test.describe("passkey unlock", () => {
     await expect(dialog).toHaveCount(0);
     await expect(page.getByRole("button", { name: /のパスキーを削除$/ })).toHaveCount(1);
     await expect(page.getByText("この端末", { exact: true })).toBeVisible();
+  });
+
+  test("a browser without a passkey of its own asks for the password first, then offers to add one", async ({
+    page,
+    context,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "one browser profile standing in for another");
+    test.slow();
+    // The first browser has a passkey, so the vault has one.
+    const email = await signUp(page);
+    await addVirtualPasskey(context, page);
+    await openApp(page);
+    await createVaultInSettings(page);
+    await page.getByRole("button", { name: /^この端末で .+を使う$/ }).click();
+    const first = vaultPrompt(page);
+    await first.getByLabel("金庫のパスワード").fill(VAULT_PASSWORD);
+    await first.getByRole("button", { name: "次へ" }).click();
+    await first.getByRole("button", { name: "登録を始める" }).click({ timeout: 30_000 });
+    await expect(page.getByText(/を使えるようにしました$/)).toBeVisible({ timeout: 30_000 });
+
+    // A second browser, like Chrome on a Mac whose passkey lives in Safari:
+    // it can do Touch ID, but has none of the vault's passkeys.
+    const fresh = await context.browser()!.newContext({
+      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+      viewport: page.viewportSize(),
+    });
+    const other = await fresh.newPage();
+    await addVirtualPasskey(fresh, other);
+    await signIn(other, email);
+    await openApp(other);
+    await other.goto("/app/settings");
+    await other.getByRole("button", { name: "金庫を開く", exact: true }).click();
+    const prompt = vaultPrompt(other);
+
+    // The password comes first; the passkey is only something to try.
+    await expect(prompt.getByLabel("金庫のパスワード", { exact: true })).toBeVisible();
+    await expect(prompt.getByRole("button", { name: OPEN_WITH_PASSKEY })).toHaveCount(0);
+    const tryIt = prompt.getByRole("button", { name: /を試す$/ });
+    await expect(tryIt).toBeVisible();
+
+    // Tried, and there is none here: it says so and goes back to the password.
+    await tryIt.click();
+    await expect(prompt.getByText(/パスキーが登録されていない可能性があります/)).toBeVisible({
+      timeout: 70_000,
+    });
+    await expect(prompt.getByLabel("金庫のパスワード", { exact: true })).toBeVisible();
+    await expect(tryIt).toHaveCount(0);
+
+    // Opened with the password, it offers to add one here, and does.
+    await prompt.getByLabel("金庫のパスワード", { exact: true }).fill(VAULT_PASSWORD);
+    await prompt.getByRole("button", { name: "開く", exact: true }).click();
+    await expect(prompt.getByRole("heading", { name: /^この端末でも .+で開けるようにしますか？$/ })).toBeVisible({
+      timeout: 30_000,
+    });
+    await prompt.getByRole("button", { name: /を使う$/ }).click();
+    await prompt.getByRole("button", { name: "登録を始める" }).click({ timeout: 30_000 });
+    await expect(other.getByText(/を使えるようにしました$/)).toBeVisible({ timeout: 30_000 });
+    await expect(prompt).toHaveCount(0);
+    await expect(other.getByText("金庫：開いています")).toBeVisible();
+
+    // From now on this browser's own passkey comes first.
+    await other.goto("/app/settings");
+    await other.getByRole("button", { name: "金庫を開く", exact: true }).click();
+    const opened = other.getByText("金庫：開いています");
+    const button = prompt.getByRole("button", { name: OPEN_WITH_PASSKEY });
+    await expect(opened.or(button)).toBeVisible();
+    if (await button.isVisible()) await button.click();
+    await expect(opened).toBeVisible({ timeout: 30_000 });
+    await fresh.close();
+  });
+
+  test("declining the offer is remembered", async ({ page, context }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "the offer needs a platform authenticator");
+    await signUp(page);
+    await addVirtualPasskey(context, page);
+    await openApp(page);
+    await createVaultInSettings(page);
+    // No passkey anywhere yet: after the password, the offer.
+    await page.goto("/app/settings");
+    await page.getByRole("button", { name: "金庫を開く", exact: true }).click();
+    const prompt = vaultPrompt(page);
+    await prompt.getByLabel("金庫のパスワード", { exact: true }).fill(VAULT_PASSWORD);
+    await prompt.getByRole("button", { name: "開く", exact: true }).click();
+    await expect(prompt.getByRole("heading", { name: /で開けるようにしますか？$/ })).toBeVisible({
+      timeout: 30_000,
+    });
+    await prompt.getByRole("button", { name: "あとで" }).click();
+    await expect(prompt).toHaveCount(0);
+    await expect(page.getByText("金庫：開いています")).toBeVisible();
+
+    // Next time the password opens it straight away.
+    await page.goto("/app/settings");
+    await page.getByRole("button", { name: "金庫を開く", exact: true }).click();
+    await prompt.getByLabel("金庫のパスワード", { exact: true }).fill(VAULT_PASSWORD);
+    await prompt.getByRole("button", { name: "開く", exact: true }).click();
+    await expect(prompt).toHaveCount(0, { timeout: 30_000 });
+    await expect(page.getByText("金庫：開いています")).toBeVisible();
   });
 });

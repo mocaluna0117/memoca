@@ -16,6 +16,8 @@ export const META = {
   vaultRecord: "vaultRecord",
   /** Passkeys registered or used on this device, offered first on unlock. */
   passkeyLocal: "passkeyLocal",
+  /** When "use Face ID / Touch ID here too?" was last declined on this device. */
+  passkeyOfferAt: "passkeyOfferAt",
   /** When this device last asked for a new recovery key, to ask at most daily. */
   recoveryNudgeAt: "recoveryNudgeAt",
   /** What the last check found that this vault's key cannot open. */

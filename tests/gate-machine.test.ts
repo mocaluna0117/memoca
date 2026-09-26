@@ -97,6 +97,28 @@ describe("moving between screens", () => {
     expect(gateReducer(at("passkey"), { type: "passkeyFailed" }).view).toBe("password");
   });
 
+  test("a passkey tried where none is known says so, and is not offered again", () => {
+    const failed = gateReducer(at("passkey"), { type: "passkeyFailed", notFound: true });
+    expect(failed).toEqual({ view: "password", notice: "passkeyNotFound", chosen: true });
+    // Even if this browser turns out to know a passkey after all.
+    expect(gateReducer(failed, { type: "context", ctx: ctx({ passkeyReady: true }) }).view).toBe(
+      "password",
+    );
+  });
+
+  test("opening with the password offers a passkey here only when asked to", () => {
+    expect(gateReducer(at("password"), { type: "openedWithPassword", offer: true }).view).toBe(
+      "offerPasskey",
+    );
+    expect(gateReducer(at("password"), { type: "openedWithPassword", offer: false }).view).toBe(
+      "password",
+    );
+    // Only from the password screen.
+    expect(gateReducer(at("passkey"), { type: "openedWithPassword", offer: true }).view).toBe(
+      "passkey",
+    );
+  });
+
   test("the vault closing during a confirmation has to be opened again", () => {
     expect(gateReducer(at("confirm"), { type: "context", ctx: ctx() }).view).toBe("password");
   });
@@ -113,6 +135,8 @@ describe("closing the prompt", () => {
     }
     expect(dismissResult("recovered")).toBe("ok");
     expect(dismissResult("createPasskey")).toBe("ok");
+    // Opened already; the offer to add a passkey is only a question.
+    expect(dismissResult("offerPasskey")).toBe("ok");
   });
 
   test("is refused while a vault is being made or its key is on screen", () => {
@@ -133,6 +157,9 @@ describe("the rule that protects an existing vault", () => {
     { type: "useRecovery" },
     { type: "usePasskey" },
     { type: "passkeyFailed" },
+    { type: "passkeyFailed", notFound: true },
+    { type: "openedWithPassword", offer: true },
+    { type: "openedWithPassword", offer: false },
     { type: "openedWithRecovery" },
     { type: "setupStarted" },
     { type: "setupSucceeded" },

@@ -43,7 +43,8 @@ import {
   unlockWithPrf,
   unlockWithRecoveryKey,
 } from "@/lib/crypto/vault";
-import { db } from "@/lib/db";
+import { db, getMeta, setMeta } from "@/lib/db";
+import { META } from "@/lib/db/meta";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
 import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { useKeyboardInset } from "@/lib/hooks/use-keyboard-inset";
@@ -63,6 +64,7 @@ import {
 import {
   localPasskeyIds,
   rememberLocalPasskey,
+  useLocalPasskeyIds,
   usePlatformPasskey,
 } from "@/lib/vault/local-passkeys";
 import {
@@ -132,7 +134,15 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
   const markChecked = useMutation(api.vault.markRecoveryChecked);
   const rewrap = useMutation(api.vault.rewrap);
 
-  const passkeyReady = platform && (record?.passkeys.length ?? 0) > 0;
+  const local = useLocalPasskeyIds();
+  const passkeys = record?.passkeys ?? [];
+  // Offered first only where it has worked before: a passkey kept on another
+  // device, or in another browser, ends in the browser's own "no passkey on
+  // this device" sheet.
+  const passkeyReady = platform && passkeys.some((entry) => local.includes(entry.credentialId));
+  // One made elsewhere may still be here (synced through iCloud Keychain, say),
+  // so it can be tried, but only when asked for.
+  const passkeyMaybe = platform && passkeys.length > 0 && !passkeyReady;
   const ctx: GateContext = { availability, online, unlocked, passkeyReady };
   const [method] = useState(() => unlockMethodName());
   const counts = useFolderNoteCounts(purpose);
@@ -171,6 +181,10 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
   const [createdRaw, setCreatedRaw] = useState<Uint8Array | null>(null);
   const createdRawRef = useRef<Uint8Array | null>(null);
   const [enrolling, setEnrolling] = useState(false);
+  // The vault key, taken from the password only once the offer to add a
+  // passkey here is accepted, and dropped as soon as it is answered.
+  const [offerRaw, setOfferRaw] = useState<Uint8Array | null>(null);
+  const offerRawRef = useRef<Uint8Array | null>(null);
   const content = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -195,6 +209,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
       abort.current?.abort();
       if (recoveredKey.current) wipe(recoveredKey.current);
       if (createdRawRef.current) wipe(createdRawRef.current);
+      if (offerRawRef.current) wipe(offerRawRef.current);
     },
     [],
   );
@@ -228,7 +243,12 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     finish(dismissResult(view) === "ok" ? { ok: true } : { ok: false, reason: "cancelled" });
   };
 
-  const handleAttempt = ({ attempt, controller }: AutoPasskey) => {
+  /**
+   * `guess`: no passkey is known to be this browser's own, so a sheet that
+   * comes to nothing most likely means there is none here. The password
+   * screen then says so, instead of offering the same sheet again.
+   */
+  const handleAttempt = ({ attempt, controller }: AutoPasskey, guess = false) => {
     abort.current = controller;
     setPending("passkey");
     setError(null);
@@ -247,7 +267,11 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         ok();
       })
       .catch((cause) => {
-        if (controller.signal.aborted || cause instanceof PasskeyCancelledError) return;
+        if (controller.signal.aborted) return;
+        if (cause instanceof PasskeyCancelledError) {
+          if (guess) dispatch({ type: "passkeyFailed", notFound: true });
+          return;
+        }
         if (cause instanceof PasskeyNeedsRetryError) {
           setRetryPasskey(cause.credentialId);
           setError(`もう一度 ${method} で確認してください。`);
@@ -285,7 +309,38 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
       signal: controller.signal,
       only: retryPasskey ?? undefined,
     });
-    handleAttempt({ attempt, controller });
+    handleAttempt({ attempt, controller }, !passkeyReady);
+  };
+
+  /** Whether to ask, after the password, to add a passkey in this browser. */
+  const offerDue = async () => {
+    if (!platform || !online || passkeyReady || passkeys.length >= MAX_PASSKEYS) return false;
+    const declinedAt = await getMeta<number>(META.passkeyOfferAt, 0);
+    return Date.now() - declinedAt > OFFER_AGAIN_MS;
+  };
+
+  const acceptOffer = () =>
+    work(async () => {
+      if (!record) return;
+      try {
+        const raw = await openVaultRaw(record, { password });
+        offerRawRef.current = raw;
+        setOfferRaw(raw);
+      } catch {
+        setError(withMethod(method, "の登録を始められませんでした。あとで設定から登録してください。"));
+      }
+    });
+
+  const endOffer = () => {
+    if (offerRawRef.current) wipe(offerRawRef.current);
+    offerRawRef.current = null;
+    setOfferRaw(null);
+    ok();
+  };
+
+  const declineOffer = () => {
+    void setMeta(META.passkeyOfferAt, Date.now());
+    endOffer();
   };
 
   const work = async (run: () => Promise<void>) => {
@@ -311,6 +366,10 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         await unlockWithPassword(record, password);
       } catch {
         setError(t.vault.wrongPassword);
+        return;
+      }
+      if (await offerDue()) {
+        dispatch({ type: "openedWithPassword", offer: true });
         return;
       }
       ok();
@@ -479,6 +538,47 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                 </Button>
                 <Button onClick={() => setEnrolling(true)} className="gap-2" data-autofocus>
                   <Fingerprint className="size-4" aria-hidden />
+                  {withMethod(method, "を使う")}
+                </Button>
+              </DialogFooter>
+            </>
+          )
+        ) : view === "offerPasskey" && record ? (
+          offerRaw ? (
+            <PasskeyEnrollSteps
+              record={record}
+              raw={offerRaw}
+              cancelLabel="あとで"
+              onCancel={declineOffer}
+              onDone={(result) => {
+                toast.success(
+                  result === "added"
+                    ? withMethod(`この端末で ${method}`, "を使えるようにしました")
+                    : "この端末のパスキーを使えるようにしました",
+                );
+                endOffer();
+              }}
+            />
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>{withMethod(`この端末でも ${method}`, "で開けるようにしますか？")}</DialogTitle>
+                <DialogDescription>
+                  {withMethod(`次からはパスワードを入力せずに、${method}`, "だけで金庫を開けます。")}
+                  パスキーはこの端末（いま使っているブラウザ）に保存されます。
+                </DialogDescription>
+              </DialogHeader>
+              <ErrorLine error={error} />
+              <DialogFooter>
+                <Button variant="ghost" onClick={declineOffer} disabled={pending !== null}>
+                  あとで
+                </Button>
+                <Button onClick={() => void acceptOffer()} disabled={pending !== null} className="gap-2" data-autofocus>
+                  {pending === "work" ? (
+                    <Loader2 className="size-4 animate-spin" aria-hidden />
+                  ) : (
+                    <Fingerprint className="size-4" aria-hidden />
+                  )}
                   {withMethod(method, "を使う")}
                 </Button>
               </DialogFooter>
@@ -659,7 +759,12 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
               <p role="status" className="rounded-md border px-3 py-2 text-sm">
                 {notice === "createdElsewhere"
                   ? "ほかの端末で金庫が作成されました。その金庫のパスワードで開いてください。"
-                  : "このアカウントにはすでに金庫があります。金庫のパスワードで開いてください。"}
+                  : notice === "passkeyNotFound"
+                    ? withMethod(
+                        method,
+                        "で開けませんでした。この端末（いま使っているブラウザ）にはパスキーが登録されていない可能性があります。パスワードで開くと、この端末でも使えるように登録できます。",
+                      )
+                    : "このアカウントにはすでに金庫があります。金庫のパスワードで開いてください。"}
               </p>
             ) : null}
 
@@ -731,6 +836,18 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                 <LinkButton onClick={() => dispatch({ type: "usePasskey" })}>
                   {withMethod(method, "を使う")}
                 </LinkButton>
+              ) : passkeyMaybe && notice !== "passkeyNotFound" && !blockedOffline ? (
+                // A try, started inside this tap, for a passkey that may be
+                // synced here from another device.
+                <LinkButton
+                  onClick={() => {
+                    dispatch({ type: "usePasskey" });
+                    runPasskey();
+                  }}
+                >
+                  <Fingerprint className="size-3.5" aria-hidden />
+                  {withMethod(method, "を試す")}
+                </LinkButton>
               ) : null}
               {view !== "recovery" && record?.recWrap ? (
                 <LinkButton
@@ -764,6 +881,11 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
 }
 
 class StalePasskeyError extends Error {}
+
+/** The server accepts this many passkeys per vault (convex/lib/constants.ts). */
+const MAX_PASSKEYS = 10;
+/** A declined offer to add a passkey here is not repeated for this long. */
+const OFFER_AGAIN_MS = 30 * 24 * 60 * 60 * 1000;
 
 function Header({ title, body }: { title: string; body: string | string[] }) {
   return (
