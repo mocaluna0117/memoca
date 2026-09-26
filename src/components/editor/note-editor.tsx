@@ -30,6 +30,7 @@ import {
   stageUpload,
 } from "@/lib/media/attachments";
 import { uploadRefusal } from "@/lib/media/refusal";
+import { warmWebpEncoder } from "@/lib/media/webp-encoder";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
 
@@ -137,6 +138,11 @@ function EditorSurface({
     latest.current = { me, locked };
   }, [me, locked]);
   const editorRef = useRef<BlockNoteEditor | null>(null);
+  // Where the canvas cannot write WebP, the encoder is fetched while there is
+  // a network, ready for the first image.
+  useEffect(() => {
+    void warmWebpEncoder();
+  }, []);
 
   const uploadFile = useCallback(
     async (file: File, blockId?: string) => {

@@ -4,6 +4,7 @@
 import { defaultCache } from "@serwist/turbopack/worker";
 import { type PrecacheEntry, Serwist, type SerwistGlobalConfig } from "serwist";
 import { MEDIA_CACHE } from "@/lib/media/media-cache";
+import webpAsset from "@/lib/media/webp-asset.json";
 
 declare global {
   interface WorkerGlobalScope extends SerwistGlobalConfig {
@@ -68,6 +69,23 @@ const serwist = new Serwist({
       },
     },
     {
+      // The WebP encoder, only for browsers whose canvas cannot write WebP,
+      // so not precached for everyone: cached on first use, under a path that
+      // changes with each version.
+      matcher: ({ url }) =>
+        url.origin === self.location.origin && url.pathname.startsWith("/webp/"),
+      handler: {
+        handle: async ({ request, event }) => {
+          const cache = await caches.open("memoca-webp");
+          const cached = await cache.match(request);
+          if (cached) return cached;
+          const response = await fetch(request);
+          if (response.ok) event.waitUntil(cache.put(request, response.clone()));
+          return response;
+        },
+      },
+    },
+    {
       // Uploaded images and videos are immutable once stored, so the first
       // view is the only one that needs the network.
       matcher: ({ url }) => /\.convex\.(cloud|site)$/.test(url.hostname),
@@ -99,3 +117,17 @@ const serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+// A WebP encoder of an earlier version, cached when it was used, is of no use
+// to this one: about 300 KB let go.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open("memoca-webp");
+      const current = `/webp/${webpAsset.version}/`;
+      for (const request of await cache.keys()) {
+        if (!new URL(request.url).pathname.startsWith(current)) await cache.delete(request);
+      }
+    })(),
+  );
+});

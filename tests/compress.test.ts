@@ -39,7 +39,7 @@ beforeEach(() => {
     drawImage() {},
     getImageData(_x: number, _y: number, width: number, height: number) {
       scanned += 1;
-      return { data: new Uint8ClampedArray(width * height * 4).fill(browser.alpha) };
+      return { width, height, data: new Uint8ClampedArray(width * height * 4).fill(browser.alpha) };
     },
   };
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => context) as never);
@@ -252,5 +252,123 @@ describe("prepareImage", () => {
     browser.bytes = 1000;
     const result = await prepareImage(file("image/bmp", 1000));
     expect(result.mime).toBe("image/webp");
+  });
+});
+
+describe("where the canvas cannot write WebP, a worker does", () => {
+  /** Answers every image with a WebP of `workerBytes`, or fails when that is null. */
+  let workerBytes: number | null;
+  /** What the worker was sent, as it would see it. */
+  let sent: { width: number; height: number; quality: number; bytes: number }[];
+
+  beforeEach(() => {
+    browser.webp = false;
+    workerBytes = 5;
+    sent = [];
+    vi.stubGlobal(
+      "Worker",
+      class {
+        onmessage: ((event: MessageEvent) => void) | null = null;
+        onerror: (() => void) | null = null;
+        constructor() {
+          queueMicrotask(() => this.onmessage?.({ data: { ready: true, loadMs: 1 } } as MessageEvent));
+        }
+        postMessage(message: { id: number; width: number; height: number; quality: number; pixels: ArrayBuffer }, transfer: Transferable[]) {
+          sent.push({ width: message.width, height: message.height, quality: message.quality, bytes: message.pixels.byteLength });
+          // Handed over, as a real worker takes it: nothing is left behind.
+          structuredClone(undefined, { transfer });
+          const data =
+            workerBytes === null
+              ? { id: message.id, error: "encoding failed" }
+              : { id: message.id, webp: new Uint8Array(workerBytes).buffer, ms: 1, heap: null };
+          queueMicrotask(() => this.onmessage?.({ data } as MessageEvent));
+        }
+        terminate() {}
+      },
+    );
+  });
+
+  const file = (type: string, size = 1000) => new File([new Uint8Array(size)], "a", { type });
+
+  test("a photo, and a see-through image, come out as WebP", async () => {
+    expect(await prepareImage(file("image/jpeg"))).toMatchObject({ mime: "image/webp", width: 400 });
+    browser.alpha = 0;
+    expect((await prepareImage(file("image/png"))).mime).toBe("image/webp");
+    expect(sent).toHaveLength(2);
+    // The canvas is never asked for WebP at full size.
+    expect(asked).toEqual([]);
+  });
+
+  test("a trimmed image too", async () => {
+    expect((await cropImage(source("image/png"), quarter)).mime).toBe("image/webp");
+  });
+
+  test("where the canvas can write WebP, the worker is never asked", async () => {
+    browser.webp = true;
+    const writes: string[] = [];
+    await prepareImage(file("image/jpeg"), { onWrite: (write) => writes.push(write.by) });
+    expect(sent).toEqual([]);
+    expect(writes).toEqual(["canvas"]);
+  });
+
+  test("when the worker fails, the usual fallback is written", async () => {
+    workerBytes = null;
+    const result = await prepareImage(file("image/jpeg"));
+    expect(result.mime).toBe("image/jpeg");
+    expect(asked).toEqual([{ type: "image/jpeg", quality: 0.9 }]);
+  });
+
+  test("a see-through image stays see-through when the worker fails: it was looked at before handing it over", async () => {
+    workerBytes = null;
+    browser.alpha = 0;
+    const result = await prepareImage(file("image/webp"));
+    expect(result.mime).toBe("image/png");
+    // Read once, for both the worker and the fallback.
+    expect(scanned).toBe(1);
+  });
+
+  test("pixels that cannot be read out fall back instead of failing the image", async () => {
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockImplementation((() => ({
+      drawImage() {},
+      getImageData() {
+        throw new RangeError("Out of memory");
+      },
+    })) as never);
+    const writes: { by: string; issue?: string }[] = [];
+    const result = await prepareImage(file("image/jpeg"), { onWrite: (write) => writes.push(write) });
+    expect(result.mime).toBe("image/jpeg");
+    expect(writes).toEqual([expect.objectContaining({ by: "fallback", issue: "Out of memory" })]);
+    // And one of a type that may be see-through is kept as PNG, which loses nothing.
+    expect((await prepareImage(file("image/webp"))).mime).toBe("image/png");
+  });
+
+  test("an image over the limit steps down in size and quality through the worker too", async () => {
+    browser.size = { width: 4000, height: 3000 };
+    workerBytes = 6_000;
+    await prepareImage(file("image/jpeg", 20_000), { maxBytes: 5_000 });
+    expect(sent.map(({ width, height, quality }) => ({ width, height, quality }))).toEqual([
+      { width: 2048, height: 1536, quality: 82 },
+      { width: 1600, height: 1200, quality: 72 },
+      { width: 1280, height: 960, quality: 62 },
+    ]);
+  });
+
+  test("each image written is reported: by what, as what, how large, and where the time went", async () => {
+    const writes: { by: string; type: string; bytes: number; width: number; worker?: unknown }[] = [];
+    const reads: { width: number }[] = [];
+    await prepareImage(file("image/jpeg"), {
+      onRead: (read) => reads.push(read),
+      onWrite: (write) => writes.push(write),
+    });
+    expect(reads).toEqual([expect.objectContaining({ width: 400, height: 300 })]);
+    expect(writes).toEqual([
+      expect.objectContaining({
+        by: "worker",
+        type: "image/webp",
+        bytes: 5,
+        width: 400,
+        worker: expect.objectContaining({ loadMs: 1, encodeMs: 1 }),
+      }),
+    ]);
   });
 });

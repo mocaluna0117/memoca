@@ -16,6 +16,8 @@ const eslintConfig = defineConfig([
     "convex/_generated/**",
     // Third-party bundle copied in at build time by scripts/copy-kuromoji-dict.mjs.
     "public/kuromoji/**",
+    // Built from a dependency at build time by scripts/build-webp-worker.mjs.
+    "public/webp/**",
   ]),
 ]);
 

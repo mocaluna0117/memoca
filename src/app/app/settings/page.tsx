@@ -11,6 +11,7 @@ import { useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { YomiSetting } from "@/components/search/yomi-setting";
 import { VaultSettings } from "@/components/vault/vault-settings";
+import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -172,6 +173,7 @@ export default function SettingsPage() {
             画像は自動で縮小して保存されます。動画は 1 本あたり{" "}
             {formatBytes(me?.limits.maxVideoBytes ?? 0)} までです。
           </p>
+          {me?.role === "admin" ? <ImageDiagnostics maxImageBytes={me.limits.maxImageBytes} /> : null}
         </Section>
 
         <Separator />

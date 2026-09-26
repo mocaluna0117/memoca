@@ -13,7 +13,9 @@ export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
     // for everyone, including people who never search in kana, and it slowed
     // the service worker's install enough to delay taking control. The runtime
     // rule in sw.ts caches them on first fetch instead.
-    globIgnores: ["**/kuromoji/**"],
+    // The WebP encoder (about 300 KB) is only for browsers whose canvas cannot
+    // write WebP, and cached by a runtime rule on first use too.
+    globIgnores: ["**/kuromoji/**", "**/webp/**"],
     additionalPrecacheEntries: [
       { url: "/offline", revision: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev" },
     ],

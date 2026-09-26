@@ -60,3 +60,5 @@ next-env.d.ts
 .claude/settings.local.json
 # kuromoji の辞書はビルド時に配置します（scripts/copy-kuromoji-dict.mjs）
 /public/kuromoji
+# WebP のエンコーダーもビルド時に作ります（scripts/build-webp-worker.mjs）
+/public/webp
