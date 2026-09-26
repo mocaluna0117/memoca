@@ -13,11 +13,12 @@ crons.interval(
 /** Delete trashed items past their owner's retention window. */
 crons.cron("purge expired trash", "15 18 * * *", internal.trash.purgeExpired);
 
-/** Delete attachments no block has referenced for 30 days. */
+/** Delete files no note has used for 30 days. */
 crons.cron(
   "sweep unreferenced attachments",
   "45 18 * * *",
   internal.attachments.sweepUnreferenced,
+  {},
 );
 
 /** Drop tombstones older than any plausible offline client. */

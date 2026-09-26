@@ -168,6 +168,7 @@ export function publicNote(n: Doc<"notes">) {
     purged: n.purged,
     lastUpdateSeq: n.lastUpdateSeq,
     snapshotSeq: n.snapshotSeq,
+    refsThroughSeq: n.refsThroughSeq,
     lockOrigin: n.lockOrigin,
     ts: n.ts,
     seq: n.seq,
@@ -270,7 +271,10 @@ async function applyOp(
     case "attachment.commit":
       return applyAttachmentCommit(ctx, session, seq, op);
     case "attachment.sweep":
-      return applyAttachmentSweep(ctx, session, seq, now, op);
+      // Accepted and ignored; no client sends it. It judged a file by one
+      // note's use, which would delete a file copied into another note. Uses
+      // are reported through attachments.reportRefs instead.
+      return ok(op.opId);
   }
 }
 
@@ -446,6 +450,8 @@ async function applyNoteOp(
       purged: false,
       lastUpdateSeq: 0,
       snapshotSeq: 0,
+      // A new note uses no files yet: already up to date.
+      refsThroughSeq: 0,
       sinceSnapshot: { count: 0, bytes: 0 },
       bodyBytes: 0,
       ts: {
@@ -482,6 +488,8 @@ async function applyNoteOp(
       purged: false,
       lastUpdateSeq: 0,
       snapshotSeq: 0,
+      // A new note uses no files yet: already up to date.
+      refsThroughSeq: 0,
       sinceSnapshot: { count: 0, bytes: 0 },
       bodyBytes: 0,
       ts: {
@@ -659,38 +667,6 @@ async function applyAttachmentCommit(
   });
   session.usedDelta += actual;
   session.reservedDelta -= row.reservedBytes;
-  return ok(op.opId);
-}
-
-/**
- * After a compaction the client knows exactly which attachments the document
- * still references. Anything else is marked and swept 30 days later, so an
- * image removed by mistake can still come back with an undo.
- */
-async function applyAttachmentSweep(
-  ctx: MutationCtx,
-  session: Session,
-  seq: SeqWriter,
-  now: number,
-  op: Extract<Op, { kind: "attachment.sweep" }>,
-): Promise<OpResult> {
-  const referenced = new Set(op.referenced);
-  const rows = await ctx.db
-    .query("attachments")
-    .withIndex("by_user_note", (q) =>
-      q.eq("userId", session.user._id).eq("noteId", op.noteId),
-    )
-    .collect();
-
-  for (const row of rows) {
-    if (row.status !== "committed" || row.deletedAt !== null) continue;
-    const stillUsed = referenced.has(row.attachmentId);
-    if (stillUsed && row.unreferencedAt !== null) {
-      await ctx.db.patch(row._id, { unreferencedAt: null, seq: seq.next() });
-    } else if (!stillUsed && row.unreferencedAt === null) {
-      await ctx.db.patch(row._id, { unreferencedAt: now, seq: seq.next() });
-    }
-  }
   return ok(op.opId);
 }
 

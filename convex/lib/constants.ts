@@ -59,6 +59,12 @@ export const REPLACE_BODY_LIMIT = 2000;
 export const RESERVATION_TTL_MS = 60 * 60 * 1000;
 /** Grace period before an attachment no block references is deleted. */
 export const UNREFERENCED_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+/** Files one report may name; a note with more is simply not reported. */
+export const MAX_REFS_PER_NOTE = 500;
+/** The daily sweep deletes files only for users with at most this many notes. */
+export const MAX_NOTES_FOR_SWEEP = 2000;
+/** Files one run of the daily sweep deletes. */
+export const SWEEP_BATCH = 100;
 /** Purged rows stay as tombstones this long so lagging devices still see them. */
 export const TOMBSTONE_MS = 90 * 24 * 60 * 60 * 1000;
 

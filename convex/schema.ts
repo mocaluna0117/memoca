@@ -145,6 +145,13 @@ export default defineSchema({
     lastUpdateSeq: v.number(),
     /** `coversThroughSeq` of the current snapshot (0 when none). */
     snapshotSeq: v.number(),
+    /**
+     * The `lastUpdateSeq` that the latest report of the files this note uses
+     * was based on (attachments.reportRefs). Absent until a device has
+     * reported it once. Unused files are only deleted while every note of the
+     * user has a current report.
+     */
+    refsThroughSeq: v.optional(v.number()),
     /** How much has accumulated since the snapshot; drives compaction. */
     sinceSnapshot: v.object({ count: v.number(), bytes: v.number() }),
     /** Snapshot + pending updates, counted against the storage quota. */
@@ -230,7 +237,21 @@ export default defineSchema({
     .index("by_user_attachment", ["userId", "attachmentId"])
     .index("by_user_note", ["userId", "noteId"])
     .index("by_status_expires", ["status", "expiresAt"])
-    .index("by_storage", ["storageId"]),
+    .index("by_storage", ["storageId"])
+    .index("by_unreferenced", ["unreferencedAt"]),
+
+  /**
+   * Which note uses which file, as its devices last reported it. One row per
+   * pair. A file can be used by more than the note it was uploaded to, when it
+   * is copied into another, so a file is unused only when no row names it.
+   */
+  attachmentRefs: defineTable({
+    userId: v.id("users"),
+    noteId: v.string(),
+    attachmentId: v.string(),
+  })
+    .index("by_user_note", ["userId", "noteId"])
+    .index("by_user_attachment", ["userId", "attachmentId"]),
 
   /**
    * The vault key, wrapped once per unlock method. The key itself never leaves

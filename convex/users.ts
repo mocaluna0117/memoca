@@ -230,6 +230,7 @@ export const purgeAccount = internalMutation({
     let work = BATCH;
 
     type PurgeableId =
+      | Id<"attachmentRefs">
       | Id<"noteUpdates">
       | Id<"noteSnapshots">
       | Id<"attachments">
@@ -268,6 +269,13 @@ export const purgeAccount = internalMutation({
         if (row.storageId) await ctx.storage.delete(row.storageId);
       }
       await drop(attachments);
+    }
+    if (work > 0) {
+      const refs = await ctx.db
+        .query("attachmentRefs")
+        .withIndex("by_user_note", (q) => q.eq("userId", userId))
+        .take(work);
+      await drop(refs);
     }
     if (work > 0) {
       const notes = await ctx.db

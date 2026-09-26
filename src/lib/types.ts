@@ -54,6 +54,12 @@ export type Note = {
   purged: boolean;
   lastUpdateSeq: number;
   snapshotSeq: number;
+  /**
+   * The `lastUpdateSeq` the server's record of the files this note uses is
+   * based on. Behind `lastUpdateSeq` (or missing) means a device should report
+   * them again.
+   */
+  refsThroughSeq?: number;
   ts: NoteStamps;
   seq: number;
   updatedAt: number;

@@ -3,10 +3,13 @@ import type { Id } from "./_generated/dataModel";
 import { internalMutation, mutation, query } from "./_generated/server";
 import {
   ALLOWED_MIME,
+  MAX_REFS_PER_NOTE,
   RESERVATION_TTL_MS,
+  SWEEP_BATCH,
   UNREFERENCED_GRACE_MS,
 } from "./lib/constants";
 import { sealedV } from "./lib/ops";
+import { allNotesReported, isInUse, settleUse } from "./lib/refs";
 import { openSeq } from "./lib/seq";
 import { getConfig, requireUser } from "./lib/user";
 
@@ -183,41 +186,133 @@ export const reapReservations = internalMutation({
 });
 
 /**
- * Deletes attachments that no block has referenced for 30 days, and orphaned
- * files with no row at all. Runs daily.
+ * A device reports which files a note uses, read from its copy of the note.
+ *
+ * Accepted only when that copy is the server's latest (`throughSeq` equals the
+ * note's `lastUpdateSeq`): a device that has not caught up could otherwise
+ * report a file as gone that another device just added. Files that end up
+ * named by no note are marked unused from now; files named again are unmarked.
+ * The note's own files are checked too, which covers files it stopped using
+ * before reports existed.
+ */
+export const reportRefs = mutation({
+  args: {
+    noteId: v.string(),
+    throughSeq: v.number(),
+    refs: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx);
+    if (args.refs.length > MAX_REFS_PER_NOTE || args.refs.some((id) => id.length > 64)) {
+      return { status: "rejected" as const, reason: "tooMany" };
+    }
+    const note = await ctx.db
+      .query("notes")
+      .withIndex("by_user_note", (q) => q.eq("userId", user._id).eq("noteId", args.noteId))
+      .unique();
+    if (!note || note.purged) return { status: "rejected" as const, reason: "unknownNote" };
+    if (args.throughSeq !== note.lastUpdateSeq) return { status: "stale" as const };
+
+    const now = Date.now();
+    const wanted = new Set(args.refs);
+    const existing = await ctx.db
+      .query("attachmentRefs")
+      .withIndex("by_user_note", (q) => q.eq("userId", user._id).eq("noteId", args.noteId))
+      .take(MAX_REFS_PER_NOTE + 1);
+    const had = new Set(existing.map((row) => row.attachmentId));
+    const changed: string[] = [];
+    for (const row of existing) {
+      if (wanted.has(row.attachmentId)) continue;
+      await ctx.db.delete("attachmentRefs", row._id);
+      changed.push(row.attachmentId);
+    }
+    for (const attachmentId of wanted) {
+      if (had.has(attachmentId)) continue;
+      await ctx.db.insert("attachmentRefs", { userId: user._id, noteId: args.noteId, attachmentId });
+      changed.push(attachmentId);
+    }
+    const own = await ctx.db
+      .query("attachments")
+      .withIndex("by_user_note", (q) => q.eq("userId", user._id).eq("noteId", args.noteId))
+      .take(MAX_REFS_PER_NOTE);
+    await settleUse(ctx, user._id, [...changed, ...own.map((row) => row.attachmentId)], now);
+
+    // Other devices learn the note is reported, so they do not report it again.
+    const seq = await openSeq(ctx, user._id);
+    await ctx.db.patch("notes", note._id, { refsThroughSeq: args.throughSeq, seq: seq.next() });
+    await seq.commit();
+    return { status: "ok" as const };
+  },
+});
+
+/**
+ * Deletes files that no note has used for 30 days, and uploads that never
+ * completed. Runs daily; `now` exists for tests.
+ *
+ * A file is deleted only while every note of its owner has reported the files
+ * it uses as of its latest change, so a use nobody has reported yet cannot be
+ * missed. The row stays as a tombstone so devices drop their copies.
  */
 export const sweepUnreferenced = internalMutation({
-  args: {},
-  handler: async (ctx) => {
-    const cutoff = Date.now() - UNREFERENCED_GRACE_MS;
-    const rows = await ctx.db
+  args: { now: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const now = args.now ?? Date.now();
+    const cutoff = now - UNREFERENCED_GRACE_MS;
+
+    const orphans = await ctx.db
       .query("attachments")
-      .withIndex("by_user_seq")
-      .take(500);
-
-    let deleted = 0;
-    for (const row of rows) {
-      const expired =
-        row.status === "committed" &&
-        row.unreferencedAt !== null &&
-        row.unreferencedAt < cutoff;
-      const orphaned = row.status === "orphan";
-      if (!expired && !orphaned) continue;
-
+      .withIndex("by_status_expires", (q) => q.eq("status", "orphan"))
+      .take(SWEEP_BATCH);
+    for (const row of orphans) {
       if (row.storageId) await ctx.storage.delete(row.storageId);
-      if (expired) {
-        const user = await ctx.db.get(row.userId);
-        if (user) {
-          await ctx.db.patch(row.userId, {
-            usedBytes: Math.max(0, user.usedBytes - row.bytes),
-          });
-        }
-      }
-      await ctx.db.delete(row._id);
-      deleted += 1;
-      if (deleted >= 100) break;
+      await ctx.db.delete("attachments", row._id);
     }
-    return { deleted };
+
+    const expired = ctx.db
+      .query("attachments")
+      .withIndex("by_unreferenced", (q) => q.gt("unreferencedAt", 0).lt("unreferencedAt", cutoff));
+    const ready = new Map<Id<"users">, boolean>();
+    const freed = new Map<Id<"users">, number>();
+    const writers = new Map<Id<"users">, Awaited<ReturnType<typeof openSeq>>>();
+    let deleted = 0;
+    let waiting = 0;
+    let scanned = 0;
+    // Read past files whose owner is not ready yet, so one user's pending
+    // reports cannot hold everyone else's deletions back; but only so far.
+    for await (const row of expired) {
+      scanned += 1;
+      if (scanned > SWEEP_BATCH * 10 || deleted >= SWEEP_BATCH) break;
+      if (row.status !== "committed" || row.deletedAt !== null) continue;
+      if (await isInUse(ctx, row.userId, row.attachmentId)) {
+        await ctx.db.patch("attachments", row._id, { unreferencedAt: null });
+        continue;
+      }
+      if (!ready.has(row.userId)) ready.set(row.userId, await allNotesReported(ctx, row.userId));
+      if (!ready.get(row.userId)) {
+        waiting += 1;
+        continue;
+      }
+      let seq = writers.get(row.userId);
+      if (!seq) {
+        seq = await openSeq(ctx, row.userId);
+        writers.set(row.userId, seq);
+      }
+      if (row.storageId) await ctx.storage.delete(row.storageId);
+      await ctx.db.patch("attachments", row._id, {
+        storageId: null,
+        unreferencedAt: null,
+        deletedAt: now,
+        seq: seq.next(),
+      });
+      freed.set(row.userId, (freed.get(row.userId) ?? 0) + row.bytes);
+      deleted += 1;
+    }
+    for (const [userId, bytes] of freed) {
+      const user = await ctx.db.get("users", userId);
+      if (user) await ctx.db.patch("users", userId, { usedBytes: Math.max(0, user.usedBytes - bytes) });
+    }
+    for (const seq of writers.values()) await seq.commit();
+    return { orphans: orphans.length, deleted, waiting };
   },
 });
 

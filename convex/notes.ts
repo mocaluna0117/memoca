@@ -153,7 +153,10 @@ export const compact = mutation({
     storageId: v.optional(v.id("_storage")),
     size: v.number(),
     iv: v.optional(v.bytes()),
-    /** Attachment ids the merged document still references. */
+    /**
+     * Sent by older clients and ignored: it listed this device's files for
+     * the note, not the ones it uses. Uses come from attachments.reportRefs.
+     */
     referenced: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {

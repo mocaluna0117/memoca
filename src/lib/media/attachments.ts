@@ -11,12 +11,9 @@ import { db } from "@/lib/db";
 import { enqueue } from "@/lib/sync/outbox";
 import { type PreparedImage, categoryOf, prepareImage } from "./compress";
 
-/** Block content stores this, not a signed URL, so links survive re-encryption. */
-export const REF_PREFIX = "memoca://att/";
+import { refFor } from "./ref";
 
-export const refFor = (attachmentId: string) => `${REF_PREFIX}${attachmentId}`;
-export const idFromRef = (ref: string) =>
-  ref.startsWith(REF_PREFIX) ? ref.slice(REF_PREFIX.length) : null;
+export { REF_PREFIX, idFromRef, refFor } from "./ref";
 
 const BLOB_CACHE_BYTES = 200 * 1024 * 1024;
 const objectUrls = new Map<string, string>();

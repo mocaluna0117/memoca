@@ -107,6 +107,9 @@ function mergeNote(local: Note, remote: RemoteNote): Note {
   // later can still carry an older value than the update stream already gave us.
   next.lastUpdateSeq = Math.max(local.lastUpdateSeq, remote.lastUpdateSeq);
   next.snapshotSeq = Math.max(local.snapshotSeq, remote.snapshotSeq);
+  if (remote.refsThroughSeq !== undefined) {
+    next.refsThroughSeq = Math.max(local.refsThroughSeq ?? 0, remote.refsThroughSeq);
+  }
   next.seq = remote.seq;
   next.updatedAt = Math.max(local.updatedAt, remote.updatedAt);
   return next;

@@ -16,6 +16,7 @@ import type * as http from "../http.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_hlc from "../lib/hlc.js";
 import type * as lib_ops from "../lib/ops.js";
+import type * as lib_refs from "../lib/refs.js";
 import type * as lib_seq from "../lib/seq.js";
 import type * as lib_user from "../lib/user.js";
 import type * as notes from "../notes.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   "lib/constants": typeof lib_constants;
   "lib/hlc": typeof lib_hlc;
   "lib/ops": typeof lib_ops;
+  "lib/refs": typeof lib_refs;
   "lib/seq": typeof lib_seq;
   "lib/user": typeof lib_user;
   notes: typeof notes;

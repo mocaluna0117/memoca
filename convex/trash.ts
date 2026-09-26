@@ -2,7 +2,8 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, internalMutation, mutation } from "./_generated/server";
-import { TOMBSTONE_MS } from "./lib/constants";
+import { MAX_REFS_PER_NOTE, TOMBSTONE_MS } from "./lib/constants";
+import { dropNoteRefs, isInUse, settleUse } from "./lib/refs";
 import { type SeqWriter, openSeq } from "./lib/seq";
 import { requireUser } from "./lib/user";
 
@@ -42,6 +43,10 @@ async function purgeNote(
   }
   freed += note.bodyBytes;
 
+  // This note's own uses go first, so a file it shares with another note is
+  // judged by the other note's use alone.
+  const used = await dropNoteRefs(ctx, note.userId, note.noteId, MAX_REFS_PER_NOTE);
+
   const attachments = await ctx.db
     .query("attachments")
     .withIndex("by_user_note", (q) =>
@@ -49,10 +54,16 @@ async function purgeNote(
     )
     .take(500);
   for (const row of attachments) {
+    const live = row.status === "committed" && row.deletedAt === null;
+    // Copied into another note that still shows it: it stays, for that note.
+    if (live && (await isInUse(ctx, note.userId, row.attachmentId))) continue;
     if (row.storageId) await ctx.storage.delete(row.storageId);
-    if (row.status === "committed") freed += row.bytes;
+    // A file the daily sweep already deleted gave its bytes back then.
+    if (live) freed += row.bytes;
     await ctx.db.delete(row._id);
   }
+  // Files of other notes that only this one still used are unused from now.
+  await settleUse(ctx, note.userId, used, Date.now());
 
   await ctx.db.patch(note._id, {
     purged: true,

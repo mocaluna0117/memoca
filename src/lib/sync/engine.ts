@@ -52,6 +52,7 @@ export class SyncEngine {
   private unwatchOutbox: (() => void) | null = null;
   private lastReadingPass = 0;
   private lastInboxPass = 0;
+  private lastRefsPass = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private interval = IDLE_INTERVAL_MS;
   private draining = false;
@@ -392,6 +393,9 @@ export class SyncEngine {
         if (ops.length === entries.length && entries.length < PUSH_OP_LIMIT) break;
       }
       this.set({ state: "idle", pending: await database.outbox.count() });
+      // Everything of ours is sent: a good moment, and this loop keeps
+      // running while nothing else happens, which a quiet note needs.
+      void this.reportRefs();
     } catch {
       this.set({ state: navigator.onLine === false ? "offline" : "error" });
     } finally {
@@ -526,11 +530,6 @@ export class SyncEngine {
       iv = sealed.iv;
     }
 
-    const referenced = await database.attachments
-      .where("noteId")
-      .equals(noteId)
-      .primaryKeys();
-
     const result = await this.client.mutation(api.notes.compact, {
       noteId,
       keyEpoch: note.keyEpoch,
@@ -538,7 +537,6 @@ export class SyncEngine {
       payload: toArrayBuffer(payload),
       size: payload.byteLength,
       ...(iv ? { iv: toArrayBuffer(iv) } : {}),
-      referenced: referenced as string[],
     });
     if (result.status !== "ok") return;
 
@@ -571,6 +569,18 @@ export class SyncEngine {
     const { backfillReadings, isYomiEnabled } = await import("@/lib/search/yomi");
     if (!(await isYomiEnabled())) return;
     await backfillReadings().catch(() => {});
+  }
+
+  /**
+   * Tells the server which files recently changed notes use, so files no
+   * note uses any more can be deleted. Throttled: a few notes at a time is
+   * plenty, and nothing about it is urgent.
+   */
+  private async reportRefs(): Promise<void> {
+    if (Date.now() - this.lastRefsPass < 20_000) return;
+    this.lastRefsPass = Date.now();
+    const { reportAttachmentRefs } = await import("@/lib/media/report-refs");
+    await reportAttachmentRefs(this.client, (noteIds) => this.fetchBodies(noteIds)).catch(() => 0);
   }
 
   /**

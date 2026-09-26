@@ -1,6 +1,7 @@
 "use client";
 
 import * as Y from "yjs";
+import { idFromRef } from "@/lib/media/ref";
 
 /** The single Yjs fragment BlockNote edits, per note. */
 export const FRAGMENT = "body";
@@ -50,6 +51,35 @@ export function extractText(doc: Y.Doc, limit = 20_000): string {
 
   walk(bodyFragment(doc));
   return parts.join("").replace(/\n{2,}/g, "\n").trim().slice(0, limit);
+}
+
+/**
+ * The files a note uses: every attachment reference in its blocks' props
+ * (an image's, video's or file's url) and, to be safe, in text marks such as
+ * a link. The server is told these so it knows which files are still in use.
+ */
+export function attachmentRefs(doc: Y.Doc): string[] {
+  const found = new Set<string>();
+  const take = (value: unknown) => {
+    if (typeof value === "string") {
+      const id = idFromRef(value);
+      if (id) found.add(id);
+    } else if (value && typeof value === "object") {
+      for (const inner of Object.values(value)) take(inner);
+    }
+  };
+  const walk = (node: Y.XmlFragment | Y.XmlElement | Y.XmlText | Y.AbstractType<unknown>) => {
+    if (node instanceof Y.XmlText) {
+      for (const chunk of node.toDelta() as { attributes?: unknown }[]) take(chunk.attributes);
+      return;
+    }
+    if (node instanceof Y.XmlElement) take(node.getAttributes());
+    if (node instanceof Y.XmlElement || node instanceof Y.XmlFragment) {
+      for (const child of node.toArray()) walk(child as Y.XmlElement | Y.XmlText);
+    }
+  };
+  walk(bodyFragment(doc));
+  return [...found].sort();
 }
 
 /** First non-empty line, used as the list preview and the quick-note title. */

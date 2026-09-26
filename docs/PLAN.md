@@ -73,6 +73,7 @@ Notion のようなブロックエディタを持つメモアプリ「Memoca」�
 - `noteUpdates`: noteId, opId, deviceId, keyEpoch, payload(bytes), iv?, size, seq
 - `noteSnapshots`: noteId, keyEpoch, coversThroughSeq, payload(bytes)|storageId（約 900KB 超は File Storage に退避。Convex のドキュメント上限 1MiB 対策）, iv?, size, seq — メモごとに常に 1 件
 - `attachments`: attachmentId, noteId, status('reserved'|'committed'|'orphan'), storageId?, reservedBytes, bytes, mime|null, metaCt?（ロック時のファイル名・MIME）, locked, wrappedKey?, unreferencedAt, deletedAt, expiresAt, seq
+- `attachmentRefs`: userId, noteId, attachmentId（どのメモがどのファイルを使っているか。端末の報告から）
 - `vaults`: argon{m,t,p}, saltPw, pwWrap{ct,iv}, prfWraps[{credentialId, prfInput, hkdfSalt, ct, iv, label}], recWrap{hkdfSalt, ct, iv}, version
 
 インデックス: `by_user_seq`（folders / notes / noteUpdates / noteSnapshots / attachments）, `by_user_id`, `by_user_parent`, `by_user_folder`, `by_note_seq`, `by_user_op`（重複排除）, `by_status_expires`（予約掃除）, `by_deletedAt`（purge）, `users.by_authId`。
@@ -118,7 +119,7 @@ Notion のようなブロックエディタを持つメモアプリ「Memoca」�
 - **自動で閉じる**: 最後の操作から N 分（既定 5）で VK・DEK・復号済みのものをメモリから破棄する。閉じる前に編集中の内容を暗号化して保存する。ロックの処理中は閉じない。バックグラウンドから戻ったときに期限を過ぎていれば閉じ、トーストで知らせる。開いている間はサイドバーに「金庫：開いています」と［いますぐ閉じる］を出す。iOS のプロセス kill でも自然に閉じる。
 - **修復**: 金庫を開いたとき・同期が落ち着いたとき・オンラインに戻ったときに、途中だったロック、Inbox の旧フラグ、平文の添付、暗号化されていたフォルダ名を直し、開けないメモを数える（自動では削除しない。設定の「開けないメモがあります」から［ゴミ箱に移動］）。
 - パスワード変更・リカバリーキーの作り直し・パスキー登録は VK の再ラップのみ（`vaults.version` を上げ、`expectedVersion` で他端末との競合を検出。本文の再暗号化なし）。どれか 1 つ生きていれば他を再設定できる。全部紛失 → 復元不可（作成時に明示）。
-- 許容するメタデータ漏れ（利用規約で開示）: フォルダ名、メモの存在・数・ツリー形状・並び順、サイズ（暗号文 = 平文 + 16B）、更新日時と編集頻度、`locked` フラグ、どの端末が編集したか。ロック直後しばらくは Convex のバックアップに平文が残り得る。
+- 許容するメタデータ漏れ（利用規約で開示）: フォルダ名、メモの存在・数・ツリー形状・並び順、サイズ（暗号文 = 平文 + 16B）、更新日時と編集頻度、`locked` フラグ、どの端末が編集したか、どのメモがどの添付ファイルを使っているか。ロック直後しばらくは Convex のバックアップに平文が残り得る。
 - 古い版のまま動く PWA のため、サーバーの変更は追加だけにしている。`vault.status`、`vault.pendingLockCascade`、`setFolderLock` の `name` / `nameSealed` 引数は、いまのクライアントは使わないが、古いクライアント向けに残している。すべての端末が新しい版になったことを確かめてから削除する。
 
 ### 5. 検索（`src/lib/search/`, Web Worker）
@@ -129,7 +130,13 @@ Convex の全文検索は日本語を分かち書きできないため使わな�
 
 圧縮（Canvas → WebP 2048px、画像上限 2MB）→（ロック時は暗号化）→ `attachments.reserve({attachmentId, noteId, bytes, mime})`（`used + reserved + bytes <= quota` と種別上限を検査し、`reserved` 行と `expiresAt = 1h` を作って uploadUrl を返す）→ POST → storageId を即 Dexie に保存 → `attachments.commit({attachmentId, storageId})` を outbox 経由で送る（再送安全）。commit は `ctx.db.system.get(storageId)` の**実サイズ**で検査し、超過なら `storage.delete` して拒否、正常なら `used += 実サイズ, reserved -= 予約` で `committed` に。本文サイズ `bodyBytes` も容量に含める。
 ブロック内 URL は `memoca://att/<id>` とし `resolveFileUrl` で Convex Storage URL（Service Worker が CacheFirst）または復号後の `blob:` URL に解決（再暗号化やオフラインでも参照が壊れない）。オフライン中は Blob を `pendingUploads` に保持しローカル URL で表示、復帰後に送信。
-cron: 毎時、期限切れ `reserved` を `orphan` にして予約分を返却。日次で `_storage` を走査して参照の無いファイルを削除し、`used` を実測から再計算。エディタから外された画像は compaction 時に参照 ID を報告 → `unreferencedAt` を付けて 30 日後に削除。許可 MIME は image/* と video/mp4・webm・quicktime。
+cron: 毎時、期限切れ `reserved` を `orphan` にして予約分を返却。週次で `_storage` を走査して参照の無いファイルを削除し、`used` を実測から再計算。許可 MIME は image/* と video/mp4・webm・quicktime。
+
+**使われなくなったファイルの削除**（2026-09-26）：サーバーはメモを読めない（ロックしたメモは暗号文）ため、端末が報告する。
+- 端末は、手元の写しがサーバーの最新と一致したメモについて、使っているファイルの ID（ブロックの `memoca://att/<id>`）を `attachments.reportRefs({noteId, throughSeq, refs})` で送る。`throughSeq` がメモの `lastUpdateSeq` と一致しなければ `stale` で断る（追いついていない端末が、別の端末が足したファイルを消えたと報告しないため）。ロックしたメモは金庫が開いているときだけ、読んでいる間は金庫を閉じさせず、ブロックが 1 つもないと読めたメモは報告しない。送信ループ（5 秒ごと）から 20 秒に 1 回、5 件ずつ。
+- サーバーは `attachmentRefs`（メモ × ファイル）に記録し、どのメモからも使われなくなったファイルに `unreferencedAt` を付ける（また使われれば外す）。別のメモにコピーされたファイルは、どちらかが使っている限り使用中。メモの `refsThroughSeq` に報告済みの `lastUpdateSeq` を持ち、同期で端末に配る。新しいメモは 0 で作る。
+- 日次の `sweepUnreferenced` が、30 日使われていないファイルを消す（ストレージを消し、`usedBytes` を戻し、行は `deletedAt` 付きのトゥームストーンにして端末に配る）。**そのユーザーのすべてのメモ（ゴミ箱の中も）の報告が最新のときだけ**消す。まだ報告されていないメモがコピーを使っているかもしれないため。開けないメモ（鍵を失ったロック）が残っていると、ゴミ箱で完全に削除されるまで待つ。
+- ゴミ箱で完全に削除するとき、別のメモが使っているファイルは残す。
 
 ### 7. 即席メモ / Inbox
 
