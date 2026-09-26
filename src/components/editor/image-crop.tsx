@@ -35,6 +35,7 @@ import {
 } from "@/lib/media/apply-crop";
 import { idFromRef, isLockedFile } from "@/lib/media/attachments";
 import type { CroppedImage } from "@/lib/media/compress";
+import { tooLargeMessage } from "@/lib/media/refusal";
 import { t } from "@/lib/i18n/ja";
 
 export type { CropTarget } from "@/lib/media/apply-crop";
@@ -196,7 +197,7 @@ export function ImageCrop({
     switch (outcome.status) {
       case "tooLarge":
         // The dialog stays open: a smaller part may still fit.
-        toast.error(t.quota.exceeded);
+        toast.error(outcome.limit === undefined ? t.quota.exceeded : tooLargeMessage("image", outcome.limit));
         return false;
       case "gone":
         return true;

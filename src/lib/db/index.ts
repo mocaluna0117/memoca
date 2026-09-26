@@ -76,6 +76,11 @@ export type PendingUpload = {
    * locked, and taken back if the lock does not go through.
    */
   heldForLock?: boolean;
+  /**
+   * The server has reserved room for it: counted there from then on, so no
+   * longer as waiting here (see queuedBytes).
+   */
+  reserved?: boolean;
   createdAt: number;
 };
 

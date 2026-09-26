@@ -9,7 +9,7 @@ import { open, seal } from "@/lib/crypto/primitives";
 import { VaultLockedError, vault } from "@/lib/crypto/vault";
 import { db } from "@/lib/db";
 import { enqueue } from "@/lib/sync/outbox";
-import { type PreparedImage, categoryOf, prepareImage } from "./compress";
+import { type PreparedImage, UnsupportedImageError, categoryOf, prepareImage } from "./compress";
 import { purgeMediaCache } from "./media-cache";
 
 import { refFor } from "./ref";
@@ -22,12 +22,41 @@ const objectUrls = new Map<string, string>();
 /** How long to wait for a file from the server before calling it unreachable. */
 const DOWNLOAD_TIMEOUT_MS = 20_000;
 
+/**
+ * A file the server would not take for its size: `tooLarge` over the limit
+ * for one file of its `kind` (`limit`, when known), else over what the
+ * account has left.
+ */
 export class QuotaError extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly limit?: number,
+    readonly kind?: "image" | "video" | "other",
+  ) {
     super(message);
     this.name = "QuotaError";
   }
 }
+
+/** A file of a type the server does not take in an ordinary note, such as a PDF. */
+export class UnsupportedFileError extends Error {
+  constructor(readonly type: string) {
+    super(`unsupported file: ${type}`);
+    this.name = "UnsupportedFileError";
+  }
+}
+
+/**
+ * The types, other than images, the server takes in an ordinary note: videos,
+ * and a file of no known type. A locked note's file goes up encrypted, with no
+ * type the server can see, so it takes any.
+ */
+export const UPLOADABLE_FILE_TYPES = [
+  "video/mp4",
+  "video/webm",
+  "video/quicktime",
+  "application/octet-stream",
+] as const;
 
 /** A file this device cannot get at: `offline` when it needs a network there is not. */
 export class AttachmentUnavailableError extends Error {
@@ -62,19 +91,70 @@ export function fitsAllowance(
   queued = 0,
   category: "image" | "video" | "other" = "image",
 ): boolean {
-  const cap = category === "image" ? me.limits?.maxImageBytes : me.limits?.maxVideoBytes;
+  const cap = fileLimit(me, category);
   if (cap !== undefined && bytes > cap) return false;
   return me.usedBytes + me.reservedBytes + queued + bytes <= me.quotaBytes;
 }
 
+/** The limit for one file of this kind, when the account figures say. */
+export function fileLimit(me: Allowance, category: "image" | "video" | "other"): number | undefined {
+  return category === "image" ? me.limits?.maxImageBytes : me.limits?.maxVideoBytes;
+}
+
 /**
- * The size of every file waiting in this device's upload queue. A file whose
- * reservation has already been made is counted by the server too; counting it
- * twice for the moment only makes {@link fitsAllowance} stricter.
+ * Gets a file ready to add to a note, before anything is staged: an image
+ * compressed (made smaller again if it is over the limit for one image), and
+ * then the result checked against the account's figures when they are known.
+ * Throws, so the person hears of it now rather than never:
+ * {@link UnsupportedImageError} for an image this browser cannot read and the
+ * server would not take, {@link UnsupportedFileError} for any other file of a
+ * type the server does not take, and {@link QuotaError} for one that would not
+ * fit. A `locked` note takes files of any type, as they are when they cannot
+ * be converted: they go up encrypted, and the server does not look inside.
+ */
+export async function prepareUpload(
+  file: File,
+  me: Allowance | null | undefined,
+  opts: { locked?: boolean } = {},
+): Promise<PreparedImage> {
+  const asIs: PreparedImage = {
+    blob: file,
+    mime: file.type || "application/octet-stream",
+    width: 0,
+    height: 0,
+  };
+  // A HEIC photo may arrive with no type at all.
+  const image = categoryOf(file.type) === "image" || /\.(heic|heif)$/i.test(file.name);
+  let prepared = asIs;
+  if (image) {
+    try {
+      prepared = await prepareImage(file, { maxBytes: me ? fileLimit(me, "image") : undefined });
+    } catch (error) {
+      if (!(error instanceof UnsupportedImageError) || !opts.locked) throw error;
+    }
+  } else if (!opts.locked && !(UPLOADABLE_FILE_TYPES as readonly string[]).includes(asIs.mime)) {
+    throw new UnsupportedFileError(asIs.mime);
+  }
+  if (me) {
+    const category = categoryOf(prepared.mime);
+    if (!fitsAllowance(me, prepared.blob.size, await queuedBytes(), category)) {
+      const limit = fileLimit(me, category);
+      throw limit !== undefined && prepared.blob.size > limit
+        ? new QuotaError("tooLarge", limit, category)
+        : new QuotaError("quotaExceeded");
+    }
+  }
+  return prepared;
+}
+
+/**
+ * The size of every file waiting in this device's upload queue that the
+ * server does not count yet: once it has reserved room for one, its own
+ * figures do, and counting it here too would turn away files that fit.
  */
 export async function queuedBytes(): Promise<number> {
   const waiting = await db().pendingUploads.toArray();
-  return waiting.reduce((sum, row) => sum + row.blob.size, 0);
+  return waiting.reduce((sum, row) => (row.reserved ? sum : sum + row.blob.size), 0);
 }
 
 /**
@@ -250,6 +330,10 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
         // A note made here that has not reached the server yet: files go up
         // before the notes they belong to, so this one waits for its note.
         continue;
+      }
+      if (reservation.status === "ok" && reservation.uploadUrl && !item.reserved) {
+        // Counted by the server from now on.
+        await database.pendingUploads.update(item.attachmentId, { reserved: true });
       }
       if (reservation.status === "rejected" || !reservation.uploadUrl) {
         // A note's copy of another note's file: the note is to show the

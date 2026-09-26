@@ -4,6 +4,7 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import { db } from "@/lib/db";
 import {
   discardStaged,
+  fileLimit,
   fitsAllowance,
   idFromRef,
   isLockedFile,
@@ -36,7 +37,8 @@ export type CropOutcome =
   /** The image is kept encrypted and this note is not: see {@link copiesLockedFile}. */
   | { status: "lockedSource" }
   /** Over the account's allowance or the per-image cap. */
-  | { status: "tooLarge" }
+  /** `limit`: over the limit for one image, rather than the account's room. */
+  | { status: "tooLarge"; limit?: number }
   /** The editor went away while the file was being staged. */
   | { status: "gone" };
 
@@ -98,7 +100,8 @@ export async function applyCrop({
   const early = await refusal();
   if (early) return { status: early };
   if (me && !fitsAllowance(me, image.blob.size, await queuedBytes())) {
-    return { status: "tooLarge" };
+    const limit = fileLimit(me, "image");
+    return limit !== undefined && image.blob.size > limit ? { status: "tooLarge", limit } : { status: "tooLarge" };
   }
 
   const ref = await stageUpload({

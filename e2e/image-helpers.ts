@@ -61,6 +61,24 @@ export async function pasteImage(
   return image;
 }
 
+/**
+ * Pastes a file of the given name and type, whatever its bytes, as a photo
+ * from another device might arrive. Nothing is waited for.
+ */
+export async function pasteFile(page: Page, { name, type, size }: { name: string; type: string; size: number }) {
+  await editor(page).click();
+  await editor(page).evaluate(
+    (target, options) => {
+      const data = new DataTransfer();
+      data.items.add(new File([new Uint8Array(options.size).fill(7)], options.name, { type: options.type }));
+      target.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+      );
+    },
+    { name, type, size },
+  );
+}
+
 /** Pastes HTML into the note, as copying a block out of another note does. */
 export async function pasteHtml(page: Page, html: string): Promise<void> {
   await editor(page).click();

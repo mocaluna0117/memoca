@@ -239,6 +239,28 @@ describe("flushUploads", () => {
     expect(await db().pendingUploads.count()).toBe(0);
   });
 
+  test("a file the server has reserved room for is no longer counted as waiting here", async () => {
+    await putNote("n1", false);
+    await stageUpload({
+      noteId: "n1",
+      file: new File([], "a.webp", { type: "image/webp" }),
+      prepared: { blob: image(10), mime: "image/webp", width: 1, height: 1 },
+    });
+    expect(await queuedBytes()).toBe(10);
+    const server = fakeConvex({
+      "attachments:reserve": () => ({ status: "ok", uploadUrl: "https://upload.test" }),
+    });
+    // Reserved, then the upload itself does not get through.
+    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("network"))));
+    try {
+      await flushUploads(server.client);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(await db().pendingUploads.count()).toBe(1);
+    expect(await queuedBytes()).toBe(0);
+  });
+
   test("a file for a note gone from this device is given up", async () => {
     await putNote("n1", false);
     await stageUpload({

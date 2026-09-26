@@ -147,11 +147,11 @@ describe("applyCrop", () => {
     expect(await db().pendingUploads.count()).toBe(1);
   });
 
-  test("an image over the per-image cap is refused however much room is left", async () => {
+  test("an image over the per-image cap is refused however much room is left, and says which limit", async () => {
     const { editor } = fakeEditor({});
     expect(
       await applyCrop({ editor, noteId: "n1", target, image: cropped(5001), me: roomy, alive }),
-    ).toEqual({ status: "tooLarge" });
+    ).toEqual({ status: "tooLarge", limit: roomy.limits.maxImageBytes });
   });
 
   test("a read-only note is not changed", async () => {

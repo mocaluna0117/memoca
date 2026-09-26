@@ -4,12 +4,13 @@ import "@blocknote/core/fonts/inter.css";
 import "@blocknote/shadcn/style.css";
 
 import { ja as blocknoteJa } from "@blocknote/core/locales";
+import type { BlockNoteEditor } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
 import { FormattingToolbarController, useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { useConvex } from "convex/react";
 import { useTheme } from "next-themes";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type * as Y from "yjs";
 import { useSync } from "@/components/providers/sync-provider";
@@ -23,14 +24,35 @@ import { useRelockCopies } from "@/components/editor/use-relock-copies";
 import { Skeleton } from "@/components/ui/skeleton";
 import { vault } from "@/lib/crypto/vault";
 import {
-  QuotaError,
   idFromRef,
+  prepareUpload,
   resolveAttachment,
   stageUpload,
 } from "@/lib/media/attachments";
+import { uploadRefusal } from "@/lib/media/refusal";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
-import { t } from "@/lib/i18n/ja";
+
+/**
+ * Puts right the block a refused file leaves. BlockNote makes one before the
+ * file is handed over (for a paste or a drop), or uses the empty one the
+ * person picked a file for, and in either case shows it loading until a file
+ * arrives, which now never happens. One made for this file becomes the empty
+ * line it was made from; the person's own goes back to its button, to try
+ * again. A file that was to replace another leaves that one as it was.
+ */
+function settleRefusedBlock(editor: BlockNoteEditor | null, blockId: string | undefined, file: File) {
+  const block = editor && blockId ? editor.getBlock(blockId) : undefined;
+  if (!editor || !block) return;
+  const props = block.props as { url?: string; name?: string };
+  if (props.url) return;
+  const fresh = props.name === file.name ? { type: "paragraph" } : { type: block.type };
+  try {
+    editor.replaceBlocks([block.id], [fresh as never]);
+  } catch {
+    // Gone meanwhile: nothing left to put right.
+  }
+}
 
 /**
  * The note body.
@@ -108,17 +130,29 @@ function EditorSurface({
   const client = useConvex();
   const { me } = useSync();
   const { resolvedTheme } = useTheme();
+  // Read when a file arrives: BlockNote keeps the uploadFile it was made with,
+  // so what that sees has to be looked up, not remembered.
+  const latest = useRef({ me, locked });
+  useEffect(() => {
+    latest.current = { me, locked };
+  }, [me, locked]);
+  const editorRef = useRef<BlockNoteEditor | null>(null);
 
   const uploadFile = useCallback(
-    async (file: File) => {
+    async (file: File, blockId?: string) => {
+      const { me: figures, locked: lockedNow } = latest.current;
       try {
-        return await stageUpload({ noteId, file, locked });
+        // Checked before it is staged: a refusal later happens in the
+        // background, with nobody to tell.
+        const prepared = await prepareUpload(file, figures, { locked: lockedNow });
+        return await stageUpload({ noteId, file, locked: lockedNow, prepared });
       } catch (error) {
-        toast.error(error instanceof QuotaError ? t.quota.exceeded : "追加できませんでした");
+        toast.error(uploadRefusal(error));
+        settleRefusedBlock(editorRef.current, blockId, file);
         throw error;
       }
     },
-    [noteId, locked],
+    [noteId],
   );
 
   const resolveFileUrl = useCallback(
@@ -132,6 +166,9 @@ function EditorSurface({
 
   const options = useMemo(
     () =>
+      // uploadFile reads its refs when a file arrives, never while rendering:
+      // BlockNote only calls it for a paste, a drop or the file panel.
+      // eslint-disable-next-line react-hooks/refs
       withCollaboration({
         collaboration: {
           fragment: bodyFragment(doc),
@@ -147,6 +184,9 @@ function EditorSurface({
   );
 
   const editor = useCreateBlockNote(options, [doc]);
+  useEffect(() => {
+    editorRef.current = editor as unknown as BlockNoteEditor;
+  }, [editor]);
   useRelockCopies({ client, noteId, editor, enabled: locked && !readOnly, allowance: me });
 
   return (

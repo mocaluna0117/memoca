@@ -1,20 +1,39 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { cropImage, prepareImage } from "@/lib/media/compress";
+import { UnsupportedImageError, cropImage, prepareImage } from "@/lib/media/compress";
+import { forgetWebpSupport } from "@/lib/media/webp-encoder";
 
 /**
  * jsdom has no canvas, so these stand in for the browser: `webp` is whether it
  * can write WebP (Safari hands back a PNG instead), `alpha` is the opacity of
- * every pixel drawn, and `bytes` is how big any file it writes is.
+ * every pixel drawn, `bytes` is how big a file it writes at a given width and
+ * quality, `size` is the picture's own size, and `decodes` whether it can be
+ * read at all.
  */
-let browser: { webp: boolean; alpha: number; bytes: number };
-let asked: { type: string; quality?: number }[];
+let browser: {
+  webp: boolean;
+  alpha: number;
+  bytes: number | ((width: number, quality?: number) => number);
+  size: { width: number; height: number };
+  decodes: boolean;
+  /** The one-pixel WebP check throws, as a canvas that cannot be used would. */
+  checkThrows?: boolean;
+};
+/** What the canvas was asked to write, the one-pixel WebP check apart. */
+let asked: { type: string; quality?: number; width?: number }[];
+/** How often the one-pixel check ran. */
+let probes: number;
 let scanned: number;
 
 beforeEach(() => {
-  browser = { webp: true, alpha: 255, bytes: 10 };
+  browser = { webp: true, alpha: 255, bytes: 10, size: { width: 400, height: 300 }, decodes: true };
   asked = [];
+  probes = 0;
   scanned = 0;
-  vi.stubGlobal("createImageBitmap", async () => ({ width: 400, height: 300, close() {} }));
+  forgetWebpSupport();
+  vi.stubGlobal("createImageBitmap", async () => {
+    if (!browser.decodes) throw new DOMException("The source image could not be decoded.");
+    return { ...browser.size, close() {} };
+  });
   const context = {
     imageSmoothingQuality: "low",
     drawImage() {},
@@ -24,11 +43,23 @@ beforeEach(() => {
     },
   };
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => context) as never);
-  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation((callback, type, quality) => {
+  vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
+    this: HTMLCanvasElement,
+    callback,
+    type,
+    quality,
+  ) {
     const wanted = type ?? "image/png";
-    asked.push({ type: wanted, ...(quality === undefined ? {} : { quality }) });
     const written = wanted === "image/webp" && !browser.webp ? "image/png" : wanted;
-    callback(new Blob([new Uint8Array(browser.bytes)], { type: written }));
+    if (this.width === 1 && this.height === 1) {
+      probes += 1;
+      if (browser.checkThrows) throw new Error("canvas unavailable");
+      callback(new Blob([new Uint8Array(1)], { type: written }));
+      return;
+    }
+    asked.push({ type: wanted, ...(quality === undefined ? {} : { quality }) });
+    const bytes = typeof browser.bytes === "number" ? browser.bytes : browser.bytes(this.width, quality);
+    callback(new Blob([new Uint8Array(bytes)], { type: written }));
   });
 });
 
@@ -67,8 +98,8 @@ describe("cropImage", () => {
       const result = await cropImage(source(type), quarter);
       expect(result.mime, type).toBe(expected);
       expect(result.blob.type, type).toBe(expected);
+      // Not asked for WebP first, only to be handed a PNG: it said once it cannot.
       expect(asked, type).toEqual([
-        { type: "image/webp", quality: 0.82 },
         expected === "image/png" ? { type: "image/png" } : { type: "image/jpeg", quality: 0.9 },
       ]);
     }
@@ -123,5 +154,103 @@ describe("prepareImage", () => {
     const result = await prepareImage(original);
     expect(result.blob).toBe(original);
     expect(result).toMatchObject({ mime: "image/jpeg", width: 400, height: 300 });
+  });
+
+  test("finds out once whether WebP can be written, not from every image", async () => {
+    browser.webp = false;
+    await prepareImage(file("image/png"));
+    await prepareImage(file("image/png"));
+    await cropImage(source("image/png"), quarter);
+    expect(probes).toBe(1);
+    expect(asked.some((call) => call.type === "image/webp")).toBe(false);
+  });
+
+  test("an image over the limit for one image is written smaller until it fits", async () => {
+    browser.size = { width: 4000, height: 3000 };
+    // Three bytes per pixel of width, whatever the quality.
+    browser.bytes = (width) => width * 3;
+    const result = await prepareImage(file("image/jpeg", 20_000), { maxBytes: 5_000 });
+    // 2048 wide came to 6144 bytes; 1600 wide, a step lower, to 4800.
+    expect(result).toMatchObject({ mime: "image/webp", width: 1600, height: 1200 });
+    expect(asked.map((call) => call.type)).toEqual(["image/webp", "image/webp"]);
+    expect(asked[0]!.quality).toBeCloseTo(0.82);
+    expect(asked[1]!.quality).toBeCloseTo(0.72);
+  });
+
+  test("stops at the smallest step, for the caller to refuse what is still too large", async () => {
+    browser.size = { width: 4000, height: 3000 };
+    browser.bytes = (width) => width * 3;
+    const result = await prepareImage(file("image/jpeg", 20_000), { maxBytes: 1_000 });
+    expect(result).toMatchObject({ width: 1280, height: 960 });
+    expect(result.blob.size).toBe(3_840);
+    expect(asked).toHaveLength(3);
+    expect(asked[2]!.quality).toBeCloseTo(0.62);
+  });
+
+  test("where WebP cannot be written, the fallback's quality steps down too", async () => {
+    browser = { ...browser, webp: false, size: { width: 4000, height: 3000 }, bytes: (width) => width * 3 };
+    const result = await prepareImage(file("image/jpeg", 20_000), { maxBytes: 5_000 });
+    expect(result).toMatchObject({ mime: "image/jpeg", width: 1600 });
+    expect(asked.map((call) => call.type)).toEqual(["image/jpeg", "image/jpeg"]);
+    expect(asked[0]!.quality).toBeCloseTo(0.9);
+    expect(asked[1]!.quality).toBeCloseTo(0.8);
+  });
+
+  test("an image within the limit is written once", async () => {
+    browser.size = { width: 4000, height: 3000 };
+    browser.bytes = (width) => width * 3;
+    await prepareImage(file("image/jpeg", 20_000), { maxBytes: 10_000 });
+    expect(asked).toHaveLength(1);
+  });
+
+  test("an image this browser cannot read is refused, unless the server takes it as it is", async () => {
+    browser.decodes = false;
+    await expect(prepareImage(file("image/heic"))).rejects.toBeInstanceOf(UnsupportedImageError);
+    await expect(prepareImage(new File([new Uint8Array(10)], "IMG_0001.HEIC"))).rejects.toBeInstanceOf(
+      UnsupportedImageError,
+    );
+    const png = file("image/png");
+    expect((await prepareImage(png)).blob).toBe(png);
+  });
+
+  test("a see-through image made smaller stays a PNG at every step, where WebP cannot be written", async () => {
+    browser = {
+      ...browser,
+      webp: false,
+      alpha: 0,
+      size: { width: 4000, height: 3000 },
+      bytes: (width) => width * 3,
+    };
+    const result = await prepareImage(file("image/webp", 20_000), { maxBytes: 5_000 });
+    expect(result.mime).toBe("image/png");
+    expect(asked.map((call) => call.type)).toEqual(["image/png", "image/png"]);
+    expect(scanned).toBe(2);
+  });
+
+  test("a canvas that fails the WebP check leaves the fallback, and is not asked again", async () => {
+    browser.checkThrows = true;
+    expect((await prepareImage(file("image/webp"))).mime).toBe("image/jpeg");
+    expect((await prepareImage(file("image/webp"))).mime).toBe("image/jpeg");
+    expect(probes).toBe(1);
+  });
+
+  test("an image the server would not take is made smaller too until it fits, however small it came", async () => {
+    // A HEIC photo Safari can read, written as PNG because it is see-through.
+    browser = {
+      ...browser,
+      webp: false,
+      alpha: 0,
+      size: { width: 4000, height: 3000 },
+      bytes: (width) => width * 3,
+    };
+    const result = await prepareImage(file("image/heic", 4_000), { maxBytes: 5_000 });
+    expect(result).toMatchObject({ mime: "image/png", width: 1600 });
+  });
+
+  test("one it can read but the server would not take is always converted", async () => {
+    // A bitmap is no smaller as WebP here, but the server does not take BMP.
+    browser.bytes = 1000;
+    const result = await prepareImage(file("image/bmp", 1000));
+    expect(result.mime).toBe("image/webp");
   });
 });

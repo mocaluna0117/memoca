@@ -78,6 +78,14 @@ export const ja = {
   quota: {
     used: (used: string, total: string) => `${used} / ${total} 使用中`,
     exceeded: "保存できる容量を超えました。不要なメモや画像を削除してください。",
+    imageTooLarge: (limit: string) => `画像が大きすぎて追加できません（1 枚 ${limit} まで）。`,
+    videoTooLarge: (limit: string) => `動画が大きすぎて追加できません（1 本 ${limit} まで）。`,
+    fileTooLarge: (limit: string) => `ファイルが大きすぎて追加できません（1 つ ${limit} まで）。`,
+    heicUnreadable:
+      "HEIC 形式の画像は、このブラウザでは読み込めません。JPEG か PNG にするか、iPhone や Mac の Safari から追加してください。",
+    unsupportedImage:
+      "この形式の画像は追加できません。JPEG・PNG・WebP・GIF のいずれかにしてから、もう一度お試しください。",
+    unsupportedFile: "この種類のファイルは追加できません。追加できるのは画像と動画（MP4・MOV・WebM）です。",
   },
 } as const;
 
