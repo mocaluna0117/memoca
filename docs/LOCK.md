@@ -643,6 +643,7 @@ type VaultResult = { ok: true; raw?: Uint8Array } | { ok: false; reason: "cancel
 ### 12. 添付ファイル
 
 - `flushUploads`（`attachments.ts`）は、アップロード時点のメモの `locked` を読み直す。
+  - サーバーがまだ知らないメモ（オフラインで作ったメモ）のファイルは、`unknownNote` で拒まれても消さずに、メモが届いてから送る（ファイルはメモより先に送られるため）。
   - ロック済みで金庫が閉じていれば、今回は送らない。
   - サーバーが `lockMismatch` を返したら、保留中のアップロードを消さずに、あとで暗号化して送り直す。
   - ロック済みのファイルは `blobs` に入れない。

@@ -246,6 +246,11 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
         await database.pendingUploads.update(item.attachmentId, { locked: true });
         continue;
       }
+      if (reservation.status === "rejected" && reservation.reason === "unknownNote" && note && !note.purged) {
+        // A note made here that has not reached the server yet: files go up
+        // before the notes they belong to, so this one waits for its note.
+        continue;
+      }
       if (reservation.status === "rejected" || !reservation.uploadUrl) {
         // A note's copy of another note's file: the note is to show the
         // original again rather than a file that will never exist. Written

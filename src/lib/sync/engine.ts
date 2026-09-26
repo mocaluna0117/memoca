@@ -399,6 +399,8 @@ export class SyncEngine {
         for (const noteId of response.shouldCompact) void this.compact(noteId);
         if (ops.length === entries.length && entries.length < PUSH_OP_LIMIT) break;
       }
+      // A file for a note that has only now reached the server waited above.
+      if ((await database.pendingUploads.count()) > 0) await flushUploads(this.client).catch(() => {});
       this.set({ state: "idle", pending: await database.outbox.count() });
       // Everything of ours is sent: a good moment, and this loop keeps
       // running while nothing else happens, which a quiet note needs.

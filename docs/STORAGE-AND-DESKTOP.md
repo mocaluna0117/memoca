@@ -21,6 +21,7 @@
 - **サーバーがコピーを受け取らなかったとき**（容量超過など）は、メモを元の画像に戻し、そのことを端末に記録する。書き換えがあとから届いても（別のタブ、保存待ちの編集）、次のパスで元に戻す。同じ画像は 10 分コピーし直さない。1 ファイルの上限（画像・動画ごと、暗号化で増える 16 バイト込み）も、ダウンロードの前に確かめる。
 - **古い状態のままコピーしない**：持ち主のメモがロック済みなのに、ファイルの行がまだ平文と書かれているとき、また平文のはずのファイルが行のサイズより長く届いたとき（ほかの端末で暗号化され、この端末にその知らせがまだ届いていない）は、中身が暗号文かもしれないので待つ。
 - **端末に平文を残さない**：まだ送っていない暗号化予定のファイルは、金庫を閉じている間は表示しない。本文のスナップショットと、ロックのために読み出す平文のファイルは、Service Worker とブラウザのキャッシュに残さない。
+- オフラインで作ったメモに貼った画像が、通信が戻ったときに消えることがあった（ファイルがメモより先に送られ、サーバーが「知らないメモ」として断り、端末から消していた）。メモが届くまで待って送るように直した。
 - 途中で見つけた同期の不具合 2 件も直した：同じメモを同時に開くと文書が 2 つでき、片方の編集が保存されない。ロック・ロック解除・本文の取り直しのあとの読み直し（`reloadDoc`）の間に書いた編集が保存されず、保存待ちの編集もすぐには書かれない。
 - **残した課題**：
   - `<img>` で表示したふつうの画像は、あとでロックしても、ブラウザ自身のキャッシュに最大 30 日残る（Convex のストレージが `max-age=2592000` を返すため）。オフラインでの表示に使っているので、いまは残す。
@@ -104,7 +105,7 @@
 | # | コミット | 内容 |
 |---|---|---|
 | Q1 | `feat(quick): pure helpers` | 新規 `src/lib/quick/`：`mode.ts`（`detectQuickMode`、`useQuickMode` は `useClientValue` で hydration 不一致を避ける）、`shell.ts`（`window.memocaShell?: {hide, openExternal, beginSignIn?, platform}` の型と no-op 付きラッパー）、`text.ts`（`joinShared`、`splitQuickText`：1 行目が 80 字以内ならタイトルにして本文から外す。今はタイトルと本文に同じ行が重複表示される）、`body.ts`（`appendQuickBlocks(doc, parts)`：BlockNote と同じ `blockGroup > blockContainer > paragraph/image` の形で書く。今は素の `paragraph` を根に置いていて、エディタが直すまで不正な形）、`draft.ts`（`META.quickDraft` に 300 ms デバウンスで保存、`pagehide`/非表示で flush、保存で消す。Blob も入れられる形）。`platform.ts` に `modKeyLabel()`（⌘ / Ctrl）。 |
-| Q2 | `refactor(app): one workspace layout for /app and /quick` | `src/app/(workspace)/layout.tsx` に `SyncProvider`+`AccountGate` をまとめ、`app/` と `quick/` を配下に移す（URL は不変）。`/quick` ↔ `/app` で同期エンジンを作り直さず、`vault.lock()` も走らない。`prefetchBodies` は pathname が `/app` のときだけ。`SerwistProvider` に `reloadOnOnline={false}`（オンライン復帰の自動リロードで下書きが消えるのを止める）。 |
+| Q2 | `refactor(app): one workspace layout for /app and /quick` | `src/app/(workspace)/layout.tsx` に `SyncProvider`+`AccountGate` をまとめ、`app/` と `quick/` を配下に移す（URL は不変）。`/quick` ↔ `/app` で同期エンジンを作り直さず、`vault.lock()` も走らない。`prefetchBodies` は pathname が `/app` のときだけ。`SerwistProvider` に `reloadOnOnline={false}`（オンライン復帰の自動リロードで下書きが消えるのを止める。直前 0.5 秒の編集も、保存が間に合わずに消えることがある：2026-09-26 の E2E で確認）。 |
 | Q3 | `feat(quick): window mode, drafts, honest save` | `quick-capture.tsx` を上の表どおりに。`try/finally` で `saving` を戻す、IME 変換中の Enter を無視、`autoFocus`、窓では `window` の focus で再フォーカス、トーストは使わず `role="status"` の行で伝える。 |
 | Q4 | `feat(auth): return to where sign-in started` | `/quick` のページで `isAuthenticated()` を見て `/sign-in?next=/quick?...` へ。`sign-in-card.tsx` は `next`（`/` 始まりのみ）を `signInWithGoogle(next)` に渡す。 |
 | Q5 | `feat(sw): keep /quick as an offline shell` | `sw.ts` の `/app` の規則を `/quick` にも（クエリを除いたパスで 1 エントリ）。precache には入れない（未ログインのリダイレクトを保存してしまう）。 |

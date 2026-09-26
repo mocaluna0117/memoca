@@ -5,6 +5,7 @@ import {
   AttachmentUnavailableError,
   discardStaged,
   fitsAllowance,
+  flushUploads,
   idFromRef,
   loadAttachmentBlob,
   queuedBytes,
@@ -205,6 +206,52 @@ describe("fitsAllowance", () => {
     expect(fitsAllowance({ ...roomy, limits }, 501, 0, "image")).toBe(false);
     // Not reported by an older server: left to the server to decide.
     expect(fitsAllowance({ ...roomy, limits: { maxImageBytes: 500 } }, 5_000, 0, "video")).toBe(true);
+  });
+});
+
+describe("flushUploads", () => {
+  test("a file for a note the server has not heard of yet waits for it, and then goes up", async () => {
+    // A note made offline: its file goes up before the note itself does.
+    await putNote("n1", false);
+    await stageUpload({
+      noteId: "n1",
+      file: new File([], "a.webp", { type: "image/webp" }),
+      prepared: { blob: image(10), mime: "image/webp", width: 1, height: 1 },
+    });
+    const server = fakeConvex({
+      "attachments:reserve": () => ({ status: "rejected", reason: "unknownNote", uploadUrl: null }),
+    });
+    await flushUploads(server.client);
+    expect(await db().pendingUploads.count()).toBe(1);
+    expect(await db().attachments.count()).toBe(1);
+
+    // Once the note is through, the next pass sends the file.
+    server.handlers["attachments:reserve"] = () => ({ status: "ok", uploadUrl: "https://upload.test" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ storageId: "stored-1" }))),
+    );
+    try {
+      await flushUploads(server.client);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(await db().pendingUploads.count()).toBe(0);
+  });
+
+  test("a file for a note gone from this device is given up", async () => {
+    await putNote("n1", false);
+    await stageUpload({
+      noteId: "n1",
+      file: new File([], "a.webp", { type: "image/webp" }),
+      prepared: { blob: image(10), mime: "image/webp", width: 1, height: 1 },
+    });
+    await db().notes.delete("n1");
+    const server = fakeConvex({
+      "attachments:reserve": () => ({ status: "rejected", reason: "unknownNote", uploadUrl: null }),
+    });
+    await expect(flushUploads(server.client)).rejects.toThrow();
+    expect(await db().pendingUploads.count()).toBe(0);
   });
 });
 
