@@ -197,22 +197,24 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
   announce(handle.noteId);
 }
 
-export async function acquireDoc(noteId: string): Promise<Y.Doc> {
-  const existing = handles.get(noteId);
-  if (existing) {
-    existing.refs += 1;
-    return existing.doc;
-  }
+/** Documents being built from storage, shared by everyone who asks meanwhile. */
+const opening = new Map<string, Promise<Handle>>();
 
+async function openHandle(noteId: string): Promise<Handle> {
   const doc = new Y.Doc();
   const note = await db().notes.get(noteId);
-  await hydrate(noteId, note, doc);
+  try {
+    await hydrate(noteId, note, doc);
+  } catch (error) {
+    doc.destroy();
+    throw error;
+  }
 
   const handle: Handle = {
     noteId,
     doc,
     keyEpoch: note?.keyEpoch ?? 0,
-    refs: 1,
+    refs: 0,
     buffer: [],
     timer: null,
     detach: () => {},
@@ -227,7 +229,28 @@ export async function acquireDoc(noteId: string): Promise<Y.Doc> {
   handle.detach = () => doc.off("update", observer);
 
   handles.set(noteId, handle);
-  return doc;
+  return handle;
+}
+
+/**
+ * The note's live document, shared by everyone who has it open. Two callers
+ * asking while it is still being built get the same one: two documents for
+ * one note would each save only their own edits.
+ */
+export async function acquireDoc(noteId: string): Promise<Y.Doc> {
+  const existing = handles.get(noteId);
+  if (existing) {
+    existing.refs += 1;
+    return existing.doc;
+  }
+  let pending = opening.get(noteId);
+  if (!pending) {
+    pending = openHandle(noteId).finally(() => opening.delete(noteId));
+    opening.set(noteId, pending);
+  }
+  const handle = await pending;
+  handle.refs += 1;
+  return handle.doc;
 }
 
 export async function releaseDoc(noteId: string): Promise<void> {
@@ -236,10 +259,14 @@ export async function releaseDoc(noteId: string): Promise<void> {
   handle.refs -= 1;
   if (handle.refs > 0) return;
   if (handle.timer) clearTimeout(handle.timer);
+  handle.timer = null;
   await flush(handle);
+  // Opened again while its last edits were being written: someone is using
+  // it, so it stays.
+  if (handle.refs > 0) return;
   handle.detach();
   handle.doc.destroy();
-  handles.delete(noteId);
+  if (handles.get(noteId) === handle) handles.delete(noteId);
 }
 
 export function openDoc(noteId: string): Y.Doc | undefined {
@@ -254,30 +281,37 @@ export function applyRemote(noteId: string, update: Uint8Array): void {
   announce(noteId);
 }
 
-/** Forces a reload after a lock, an unlock, or a snapshot replacement. */
+/**
+ * Forces a reload after a lock, an unlock, or a snapshot replacement. Edits
+ * go on being recorded and saved throughout, those made while the stored
+ * version is read included: they are written under whatever key the note has
+ * by then, and what is read back only adds to the document.
+ */
 export async function reloadDoc(noteId: string): Promise<void> {
   const handle = handles.get(noteId);
   if (!handle) return;
-  if (handle.timer) {
-    clearTimeout(handle.timer);
-    handle.timer = null;
-  }
-  handle.detach();
   const fresh = new Y.Doc();
-  const note = await db().notes.get(noteId);
-  await hydrate(noteId, note, fresh);
-  // Replace contents in place so open editors keep their binding.
-  Y.applyUpdate(handle.doc, Y.encodeStateAsUpdate(fresh), ORIGIN.remote);
-  fresh.destroy();
-  const observer = (update: Uint8Array, origin: unknown) => {
-    if (origin === ORIGIN.remote || origin === ORIGIN.load) return;
-    handle.buffer.push(update);
-    if (!handle.timer) handle.timer = setTimeout(() => void flush(handle), FLUSH_MS);
-  };
-  handle.doc.on("update", observer);
-  handle.detach = () => handle.doc.off("update", observer);
-  handle.keyEpoch = note?.keyEpoch ?? handle.keyEpoch;
+  try {
+    const note = await db().notes.get(noteId);
+    await hydrate(noteId, note, fresh);
+    // Closed meanwhile: nobody is showing it any more.
+    if (handles.get(noteId) !== handle) return;
+    // Replace contents in place so open editors keep their binding.
+    Y.applyUpdate(handle.doc, Y.encodeStateAsUpdate(fresh), ORIGIN.remote);
+    handle.keyEpoch = note?.keyEpoch ?? handle.keyEpoch;
+  } finally {
+    fresh.destroy();
+  }
   announce(noteId);
+}
+
+/**
+ * Writes an open note's waiting edits now, rather than after the usual short
+ * wait: for an edit something else is about to read back from storage.
+ */
+export async function flushDoc(noteId: string): Promise<void> {
+  const handle = handles.get(noteId);
+  if (handle) await flush(handle);
 }
 
 /** Flushes every open document, for example before the tab goes away. */
