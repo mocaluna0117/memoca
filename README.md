@@ -28,7 +28,7 @@ Web ブラウザと、ホーム画面に追加した iOS / Android の PWA で�
 - **PWA**: Serwist
 - **暗号**: WebCrypto（AES-256-GCM / HKDF）, Argon2id（hash-wasm）, WebAuthn PRF
 
-詳しい設計と実装計画は [docs/PLAN.md](docs/PLAN.md)、公開の手順は [docs/DEPLOY.md](docs/DEPLOY.md) にあります。
+詳しい設計と実装計画は [docs/PLAN.md](docs/PLAN.md)、公開の手順は [docs/DEPLOY.md](docs/DEPLOY.md) にあります。容量対策とデスクトップ版の即席メモの計画は [docs/STORAGE-AND-DESKTOP.md](docs/STORAGE-AND-DESKTOP.md) です。
 
 ## 実装の状況
 
