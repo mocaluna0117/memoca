@@ -1,6 +1,6 @@
 "use client";
 
-import { FilePlus2, FolderPlus, Lock, Search, Settings, Trash2 } from "lucide-react";
+import { FilePlus2, FolderPlus, Lock, Search, Settings, Trash2, Zap } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
@@ -19,6 +19,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { useOpenQuickNote } from "@/components/notes/quick-entry";
 import { useLockActions } from "@/components/vault/use-lock-actions";
 import { useSearch } from "@/lib/hooks/use-search";
 import { lockedSearchNote } from "@/lib/search/rows";
@@ -35,6 +36,7 @@ import { t } from "@/lib/i18n/ja";
 export function CommandPalette() {
   const { createNoteIn } = useLockActions();
   const router = useRouter();
+  const openQuickNote = useOpenQuickNote();
   const { selection, navigate } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -107,6 +109,10 @@ export function CommandPalette() {
             <CommandSeparator />
 
             <CommandGroup heading="操作">
+              <CommandItem value="quick-note" onSelect={() => run(openQuickNote)}>
+                <Zap className="size-4 opacity-70" aria-hidden />
+                {t.nav.quick}
+              </CommandItem>
               <CommandItem
                 value="new-note"
                 onSelect={() =>

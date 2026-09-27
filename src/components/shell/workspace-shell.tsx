@@ -4,6 +4,7 @@ import { useConvex } from "convex/react";
 import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
+import { QuickNoteShortcut } from "@/components/notes/quick-entry";
 import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
 import { PwaPrompts } from "@/components/shell/pwa-prompts";
@@ -163,6 +164,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     <>
       <AppShell>{children}</AppShell>
       <CommandPalette />
+      <QuickNoteShortcut />
       <PwaPrompts />
       <VaultRecordSync />
       <VaultDialog />

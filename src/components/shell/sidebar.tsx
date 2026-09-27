@@ -10,7 +10,9 @@ import {
   Shield,
   Trash2,
   X,
+  Zap,
 } from "lucide-react";
+import { useOpenQuickNote } from "@/components/notes/quick-entry";
 import { useSync } from "@/components/providers/sync-provider";
 import { FolderTree } from "@/components/folders/folder-tree";
 import { SyncBadge } from "@/components/shell/sync-badge";
@@ -46,6 +48,7 @@ export function Sidebar({
 }: Props) {
   const { me } = useSync();
   const pathname = usePathname();
+  const openQuickNote = useOpenQuickNote();
 
   const links = [
     { href: "/app/search", label: t.nav.search, icon: Search },
@@ -82,6 +85,15 @@ export function Sidebar({
       </div>
 
       <div className="px-2">
+        {/* On a phone the bottom bar has its own. */}
+        <button
+          type="button"
+          onClick={openQuickNote}
+          className="hover:bg-accent/60 hidden w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm md:flex"
+        >
+          <Zap className="text-primary size-4" aria-hidden />
+          {t.nav.quick}
+        </button>
         <button
           type="button"
           onClick={() => {
