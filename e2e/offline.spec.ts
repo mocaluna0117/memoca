@@ -102,4 +102,27 @@ test.describe("offline", () => {
     await context.setOffline(false);
     await waitForSynced(page);
   });
+
+  test("the quick note opens with no network, once it has been opened with one", async ({ page, context }) => {
+    await signUp(page);
+    await openApp(page);
+    await offlineReady(page);
+    await page.goto("/quick");
+    await expect.poll(() => page.evaluate(async () => Boolean(await caches.match("/quick")))).toBe(true);
+
+    // Another address of it, from the one copy kept, and written into as ever.
+    await context.setOffline(true);
+    await page.goto("/quick?window=1");
+    const field = page.getByLabel("即席メモ");
+    await field.fill("圏外で書いた即席メモ");
+    await field.press("Control+Enter");
+    await expect(page.getByRole("status").filter({ hasText: "保存しました" })).toBeVisible();
+
+    // And it goes up once the network is back.
+    await context.setOffline(false);
+    await openApp(page);
+    await waitForSynced(page);
+    await showList(page);
+    await expect(page.getByText("圏外で書いた即席メモ").filter({ visible: true }).first()).toBeVisible();
+  });
 });

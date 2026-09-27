@@ -14,6 +14,9 @@ declare global {
 
 declare const self: ServiceWorkerGlobalScope;
 
+/** Pages served offline from a copy of their own, whatever their query string. */
+const SHELLS = new Set(["/app", "/quick"]);
+
 /**
  * The service worker is what makes the app usable with no network at all.
  *
@@ -29,21 +32,22 @@ const serwist = new Serwist({
   navigationPreload: true,
   runtimeCaching: [
     {
-      // The whole workspace lives at /app and keeps its state in the query
-      // string, so a reload of /app?n=... must be served by the cached /app
-      // document. Caching per full URL would miss every note the device has
-      // not reloaded on before, which is exactly the offline case.
-      matcher: ({ url, request }) =>
-        request.destination === "document" && url.pathname === "/app",
+      // The workspace (/app) and the quick note (/quick) keep their state in
+      // the query string, so a reload of /app?n=... or /quick?window=1 must be
+      // served by the one cached copy of each. Caching per full URL would miss
+      // every address the device has not loaded before, which is exactly the
+      // offline case. A redirect (to sign in) is not a copy worth keeping: a
+      // navigation receives it as one, not ok, and it is not stored.
+      matcher: ({ url, request }) => request.destination === "document" && SHELLS.has(url.pathname),
       handler: {
-        handle: async ({ request, event }) => {
+        handle: async ({ request, url, event }) => {
           const cache = await caches.open("memoca-shell");
           try {
             const response = await fetch(request);
-            if (response.ok) event.waitUntil(cache.put("/app", response.clone()));
+            if (response.ok) event.waitUntil(cache.put(url.pathname, response.clone()));
             return response;
           } catch (cause) {
-            const cached = await cache.match("/app");
+            const cached = await cache.match(url.pathname);
             if (cached) return cached;
             throw cause;
           }
