@@ -191,7 +191,12 @@ export function QuickCapture() {
         className="text-muted-foreground flex flex-wrap items-center gap-x-3 gap-y-1 border-t px-4 py-2 text-xs"
         style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem)" }}
       >
-        <p role="status" aria-live="polite" className="empty:hidden">
+        <p>
+          {modKey} + Enter で保存{windowed ? " ・ Esc で閉じる" : ""}
+        </p>
+        {/* Always in the page, even empty: a screen reader announces what comes
+            into a region it already knows, not one that has just appeared. */}
+        <p role="status" aria-live="polite">
           {outcome?.kind === "saved" ? (
             <>
               保存しました ・{" "}
@@ -206,9 +211,6 @@ export function QuickCapture() {
           ) : outcome?.kind === "failed" ? (
             "保存できませんでした。もう一度お試しください。"
           ) : null}
-        </p>
-        <p>
-          {modKey} + Enter で保存{windowed ? " ・ Esc で閉じる" : ""}
         </p>
       </div>
     </main>
