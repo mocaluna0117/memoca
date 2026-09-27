@@ -2,7 +2,7 @@
 /// <reference lib="webworker" />
 
 import { defaultCache } from "@serwist/turbopack/worker";
-import { type PrecacheEntry, Serwist, type SerwistGlobalConfig } from "serwist";
+import { NetworkOnly, type PrecacheEntry, Serwist, type SerwistGlobalConfig } from "serwist";
 import { MEDIA_CACHE } from "@/lib/media/media-cache";
 import webpAsset from "@/lib/media/webp-asset.json";
 
@@ -31,6 +31,12 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
+    {
+      // Signing the desktop shell in: a page with a token in its address, or
+      // on it, is kept nowhere on the device.
+      matcher: ({ url, sameOrigin }) => sameOrigin && url.pathname.startsWith("/desktop/"),
+      handler: new NetworkOnly(),
+    },
     {
       // The workspace (/app) and the quick note (/quick) keep their state in
       // the query string, so a reload of /app?n=... or /quick?window=1 must be

@@ -1,15 +1,20 @@
 import type { Metadata } from "next";
+import { headers } from "next/headers";
 import Link from "next/link";
+import { ShellSignInCard } from "@/components/auth/shell-sign-in-card";
 import { SignInCard } from "@/components/auth/sign-in-card";
+import { shellAgent } from "@/lib/auth/handoff";
 import { HOME, safeNext } from "@/lib/auth/next";
 
 export const metadata: Metadata = { title: "ログイン" };
 
 export default async function SignInPage({ searchParams }: PageProps<"/sign-in">) {
   const next = safeNext((await searchParams).next) ?? HOME;
+  // The desktop shell's window, where Google turns a sign-in away.
+  const shell = shellAgent((await headers()).get("user-agent"));
   return (
     <main className="flex flex-1 flex-col items-center justify-center gap-8 px-5 py-16">
-      <SignInCard next={next} />
+      {shell ? <ShellSignInCard /> : <SignInCard next={next} />}
       <p className="text-muted-foreground max-w-sm text-center text-xs leading-relaxed">
         ログインすると
         <Link href="/terms" className="underline underline-offset-2">

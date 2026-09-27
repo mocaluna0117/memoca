@@ -1,6 +1,7 @@
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth/minimal";
+import { oneTimeToken } from "better-auth/plugins/one-time-token";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import authConfig from "./auth.config";
@@ -43,5 +44,12 @@ export const createAuth = (ctx: GenericCtx<DataModel>) =>
       // purged separately by users.deleteAccount before this runs.
       deleteUser: { enabled: true },
     },
-    plugins: [convex({ authConfig })],
+    plugins: [
+      convex({ authConfig }),
+      // Signing the desktop shell in: Google turns away a sign-in inside an
+      // app's own window, so it is done in the browser, and the session is
+      // handed over as a token the shell's window exchanges for its own. Good
+      // for one exchange, for three minutes, and kept only as a hash.
+      oneTimeToken({ expiresIn: 3, storeToken: "hashed" }),
+    ],
   });
