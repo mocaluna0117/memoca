@@ -84,6 +84,9 @@
     ],
     "patchedDependencies": {
       "@blocknote/react@0.54.2": "patches/@blocknote__react@0.54.2.patch"
+    },
+    "overrides": {
+      "browserslist": "4.29.0"
     }
   }
 }
