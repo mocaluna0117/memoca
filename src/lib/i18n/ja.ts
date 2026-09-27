@@ -119,6 +119,32 @@ export const ja = {
     notHere: "この端末にないメモ",
     untitled: "無題のメモ",
   },
+  convert: {
+    title: "画像を WebP にし直す",
+    looking: "画像を調べています…",
+    found: (count: number, size: string) =>
+      `PNG・JPEG の画像が ${count} 枚（${size}）あります。WebP にし直すと、容量を減らせます。`,
+    none: "WebP にし直す画像はありません。",
+    start: "WebP にし直す",
+    stop: "止める",
+    progress: (done: number, total: number) => `${done} / ${total} 枚`,
+    keepOpen: "終わるまで、このページを開いたままにしてください。ほかの画面に移ると止まります。",
+    stopping: "いまの 1 枚が済んだら止めます…",
+    done: (count: number, before: string, after: string) =>
+      `${count} 枚を WebP にしました（${before} → ${after}）。元の画像は 1 週間ほどで削除され、その分の容量が空きます。`,
+    kept: (count: number) => `${count} 枚は WebP にしても小さくならないため、そのままにしました。`,
+    failed: (count: number) => `${count} 枚は変換できませんでした。あとでもう一度お試しください。`,
+    cancelled: "途中で止めました。もう一度押すと、残りを変換します。",
+    offline: "オフラインのため、いまは変換できません。",
+    stoppedOffline: "通信が切れたため、途中で止めました。つながったら、もう一度押すと残りを変換します。",
+    quota:
+      "保存容量が足りないため、途中で止めました。元の画像が削除されて容量が空いたら（1 週間ほど）、もう一度押すと残りを変換します。",
+    unsent: "まだ送信していない変更があります。同期が済んでから、もう一度お試しください。",
+    waitingForVault: (count: number) => `ロックしたメモのファイル ${count} 件は、金庫を開くと調べます。`,
+    lookFailed: "画像を調べられませんでした。ページを開き直して、もう一度お試しください。",
+    runFailed: "途中でうまくいかなくなりました。もう一度押すと、残りを変換します。",
+    note: "画像は、いま追加したときと同じ画質（WebP）で保存し直します。元の画像は 1 週間ほどで削除され、戻せません。",
+  },
   quota: {
     used: (used: string, total: string) => `${used} / ${total} 使用中`,
     exceeded: "保存できる容量を超えました。不要なメモや画像を削除してください。",

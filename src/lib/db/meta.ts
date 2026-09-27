@@ -28,6 +28,10 @@ export const META = {
   refusedCopies: "refusedCopies",
   /** What was being written in the quick note, until it is saved. */
   quickDraft: "quickDraft",
+  /** Images written again as WebP whose replacement the server has yet to hear of. */
+  replacedToTell: "replacedToTell",
+  /** Images that, written again as WebP, came to no less (or are animated): not offered again. */
+  convertKept: "convertKept",
 } as const;
 
 /**

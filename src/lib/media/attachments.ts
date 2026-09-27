@@ -8,6 +8,7 @@ import { ctx } from "@/lib/crypto/context";
 import { open, seal } from "@/lib/crypto/primitives";
 import { VaultLockedError, vault } from "@/lib/crypto/vault";
 import { db } from "@/lib/db";
+import type { Attachment } from "@/lib/types";
 import { enqueue } from "@/lib/sync/outbox";
 import { type PreparedImage, UnsupportedImageError, categoryOf, prepareImage } from "./compress";
 import { purgeMediaCache } from "./media-cache";
@@ -175,6 +176,23 @@ export async function prepareUpload(
 export async function queuedBytes(): Promise<number> {
   const waiting = await db().pendingUploads.toArray();
   return waiting.reduce((sum, row) => (row.reserved ? sum : sum + row.blob.size), 0);
+}
+
+/**
+ * A locked file's name and type, sealed with it where the server cannot read
+ * them: read with the vault open, null with it closed or for a file sealed
+ * without them.
+ */
+export async function sealedMeta(row: Attachment): Promise<{ name: string; mime: string } | null> {
+  if (!row.wrappedKey || !row.metaSealed || !vault.isUnlocked) return null;
+  const key = await vault.attachmentKey(row.attachmentId, row.wrappedKey);
+  const raw = await open(
+    key,
+    new Uint8Array(row.metaSealed.ct),
+    new Uint8Array(row.metaSealed.iv),
+    ctx.attachmentMeta(row.attachmentId),
+  );
+  return JSON.parse(new TextDecoder().decode(raw)) as { name: string; mime: string };
 }
 
 /**

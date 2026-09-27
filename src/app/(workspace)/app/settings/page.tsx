@@ -12,6 +12,7 @@ import { MobileHeader } from "@/components/shell/app-shell";
 import { YomiSetting } from "@/components/search/yomi-setting";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
+import { ConvertImages } from "@/components/settings/convert-images";
 import { StorageBreakdown } from "@/components/settings/storage-breakdown";
 import {
   AlertDialog,
@@ -181,6 +182,7 @@ export default function SettingsPage() {
               admin={me.role === "admin"}
             />
           ) : null}
+          {me ? <ConvertImages allowance={me} /> : null}
           {me?.role === "admin" ? <ImageDiagnostics maxImageBytes={me.limits.maxImageBytes} /> : null}
         </Section>
 
