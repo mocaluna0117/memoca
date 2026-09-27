@@ -3,14 +3,14 @@
 import { ArrowLeft, Check } from "lucide-react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import * as Y from "yjs";
 import { useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { t } from "@/lib/i18n/ja";
+import { appendParagraphs } from "@/lib/quick/body";
+import { joinShared, splitQuickText } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { createNote } from "@/lib/sync/mutations";
-import { bodyFragment, firstLine } from "@/lib/sync/ydoc";
-import { t } from "@/lib/i18n/ja";
 
 /**
  * Write first, organise later.
@@ -27,10 +27,7 @@ export function QuickCapture() {
   // Android's share sheet and the home-screen shortcut arrive with the text in
   // the query string, so the first render already has it.
   const shared = useMemo(
-    () =>
-      [params.get("title"), params.get("text"), params.get("url")]
-        .filter((part): part is string => Boolean(part))
-        .join("\n"),
+    () => joinShared({ title: params.get("title"), text: params.get("text"), url: params.get("url") }),
     [params],
   );
   const [text, setText] = useState(shared);
@@ -42,30 +39,20 @@ export function QuickCapture() {
   }, []);
 
   const save = async () => {
-    const trimmed = text.trim();
-    if (trimmed.length === 0 || saving) return;
+    const { title, body } = splitQuickText(text);
+    if ((title.length === 0 && body.length === 0) || saving) return;
     setSaving(true);
 
-    const noteId = await createNote({
-      folderId: me?.inboxFolderId ?? null,
-      title: firstLine(trimmed, 80),
-      kind: "quick",
-    });
+    // The first line is the title, as long as it is short enough to be one.
+    const noteId = await createNote({ folderId: me?.inboxFolderId ?? null, title, kind: "quick" });
 
-    // Write the text straight into the note's document, so the full editor
+    // The rest goes straight into the note's document, so the full editor
     // opens on exactly what was typed here.
-    const doc = await acquireDoc(noteId);
-    const fragment = bodyFragment(doc);
-    doc.transact(() => {
-      for (const line of trimmed.split("\n")) {
-        const paragraph = new Y.XmlElement("paragraph");
-        const content = new Y.XmlText();
-        if (line.length > 0) content.insert(0, line);
-        paragraph.insert(0, [content]);
-        fragment.push([paragraph]);
-      }
-    });
-    await releaseDoc(noteId);
+    if (body.length > 0) {
+      const doc = await acquireDoc(noteId);
+      appendParagraphs(doc, body);
+      await releaseDoc(noteId);
+    }
 
     router.replace(`/app?n=${noteId}`);
   };
@@ -93,7 +80,7 @@ export function QuickCapture() {
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void save();
         }}
-        placeholder="思いついたことをそのまま書いてください。Inbox に入ります。"
+        placeholder="思いついたことをそのまま書いてください。短い 1 行目はタイトルになります。Inbox に入ります。"
         aria-label="即席メモ"
         className="min-h-0 flex-1 resize-none rounded-none border-0 p-4 text-base shadow-none focus-visible:ring-0 dark:bg-transparent"
       />

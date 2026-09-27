@@ -14,7 +14,8 @@
 | S5 | 画像の種類で画質と大きさを選ぶ | 済み（2026-09-27）。下の「S5 の実装で決めたこと」 |
 | S6 | サーバー：保存容量の内訳、完全削除したファイルのトゥームストーン、正しい再計算 | 済み（2026-09-26）。下の「S6 の実装で決めたこと」 |
 | S7 | 設定：保存容量の内訳と大きいファイル | 済み（2026-09-27）。下の「S7 の実装で決めたこと」 |
-| Q1〜Q6 | 即席メモ画面の改修 | 未着手 |
+| Q1 | 即席メモ：1 行目をタイトルに、本文を BlockNote の形で | 済み（2026-09-27）。下の「Q1 の実装で決めたこと」 |
+| Q2〜Q6 | 即席メモ画面の改修（残り） | 未着手 |
 | D0〜D3 | デスクトップ版 | 未着手 |
 
 ### S1 の実装で決めたこと（2026-09-26）
@@ -112,6 +113,25 @@
 - **大きいファイル 20 件**：名前（ロックしたものは「ロックされたファイル」）、大きさ、寸法、入っているメモの題名。押すとそのメモを開く（ゴミ箱の外のメモを優先。ゴミ箱のものはゴミ箱を開く）。使われなくなったファイルは「どのメモにも使われていません」、この端末にないメモは「この端末にないメモ」と表示する。
 - **記録と数え直しの差**は管理者にだけ、数字と直し方（`admin:recomputeUsage`）を添えて出す。利用者にはできることがないため。一部しか数えられなかったときは出さない。
 
+### Q1 の実装で決めたこと（2026-09-27）
+
+- **短い 1 行目をタイトルにし、本文からは外す**：これまでは 1 行目がタイトルと本文の両方に入り、メモを開くと同じ行が 2 回出ていた。
+  - タイトルにするのは、1 行目が 30 字以内で、リンクだけの行でも箇条書きの 1 項目目でもないとき。30 字は、iPhone の一覧の 1 行にほぼ収まる長さ。
+  - タイトル欄は 1 行の入力欄で、iPhone では 16 字ほどしか見えない。長い 1 行目をタイトルにすると中身が隠れるので、それより長い 1 行目や箇条書きは、タイトルを空にして全文を本文に残す。一覧には「無題のメモ」と本文の書き出しが出る。
+  - リンクで始まるメモは、リンクを本文に残し（押して開ける）、タイトルをサイト名（ドメイン）にする。
+  - 字数は見たとおりの文字で数える。家族の絵文字や国旗も 1 字。
+  - 全体の前後の空行と、タイトルのすぐ後の空行は捨てる。本文の中の空行と字下げは残す。
+  - 入力欄の案内に「短い 1 行目はタイトルになります」と添えた。
+- **本文を BlockNote と同じ形で書く**：ブロックのまとまりの中に、ID 付きの入れ物を置き、その中に既定の属性を持つ段落を入れる。これまでは段落を本文の根に直接置いていて、BlockNote のスキーマに合わず、エディタが開くときに直していた。テストでは、BlockNote 自身が書いたものと同じ形になることと、スキーマの検査を通ることを確かめる。
+- **共有シートから届いたものは、同じことを 2 回書かない**。まとめた結果は入力欄に入り、1 行目が短ければタイトルになる。
+  - 共有された文章がタイトルで始まり、その直後が空白か改行のときは、文章からその頭を除く。タイトルは 1 行目に残る。
+  - タイトルが文章の途中に出てくるだけなら、両方残す。
+  - リンクは、文章かタイトルの中に語として（空白で区切られて）あるときだけ省く。
+- **計画から変えたこと**：
+  - タイトルにする 1 行目の上限を、80 字から 30 字に下げた。上のとおり、長い 1 行目はタイトル欄に隠れてしまうため（レビューの指摘）。
+  - 計画では Q1 で補助関数をまとめて作る予定だったが、今の画面で使うもの（上の 3 つ）だけを作ってつないだ。使われないコードだけのコミットにしないため。表示モード・殻との橋渡し・下書き・⌘/Ctrl の表示は、使い始める Q3 で作る。
+  - 画像ブロックの書き込みは、使い始める D3 で作る。BlockNote の画像ブロックには `previewWidth: undefined` という属性があり、その合わせ方も D3 で決める。
+
 ## 背景
 
 依頼は 2 つ。
@@ -187,9 +207,9 @@
 
 | # | コミット | 内容 |
 |---|---|---|
-| Q1 | `feat(quick): pure helpers` | 新規 `src/lib/quick/`：`mode.ts`（`detectQuickMode`、`useQuickMode` は `useClientValue` で hydration 不一致を避ける）、`shell.ts`（`window.memocaShell?: {hide, openExternal, beginSignIn?, platform}` の型と no-op 付きラッパー）、`text.ts`（`joinShared`、`splitQuickText`：1 行目が 80 字以内ならタイトルにして本文から外す。今はタイトルと本文に同じ行が重複表示される）、`body.ts`（`appendQuickBlocks(doc, parts)`：BlockNote と同じ `blockGroup > blockContainer > paragraph/image` の形で書く。今は素の `paragraph` を根に置いていて、エディタが直すまで不正な形）、`draft.ts`（`META.quickDraft` に 300 ms デバウンスで保存、`pagehide`/非表示で flush、保存で消す。Blob も入れられる形）。`platform.ts` に `modKeyLabel()`（⌘ / Ctrl）。 |
+| Q1 | `feat(quick): pure helpers` | 新規 `src/lib/quick/`：`mode.ts`（`detectQuickMode`、`useQuickMode` は `useClientValue` で hydration 不一致を避ける）、`shell.ts`（`window.memocaShell?: {hide, openExternal, beginSignIn?, platform}` の型と no-op 付きラッパー）、`text.ts`（`joinShared`、`splitQuickText`：1 行目が 80 字以内ならタイトルにして本文から外す。今はタイトルと本文に同じ行が重複表示される）、`body.ts`（`appendQuickBlocks(doc, parts)`：BlockNote と同じ `blockGroup > blockContainer > paragraph/image` の形で書く。今は素の `paragraph` を根に置いていて、エディタが直すまで不正な形）、`draft.ts`（`META.quickDraft` に 300 ms デバウンスで保存、`pagehide`/非表示で flush、保存で消す。Blob も入れられる形）。`platform.ts` に `modKeyLabel()`（⌘ / Ctrl）。**当初の計画。実際に作ったものと変えた点は、上の「Q1 の実装で決めたこと」**。 |
 | Q2 | `refactor(app): one workspace layout for /app and /quick` | `src/app/(workspace)/layout.tsx` に `SyncProvider`+`AccountGate` をまとめ、`app/` と `quick/` を配下に移す（URL は不変）。`/quick` ↔ `/app` で同期エンジンを作り直さず、`vault.lock()` も走らない。`prefetchBodies` は pathname が `/app` のときだけ。`SerwistProvider` に `reloadOnOnline={false}`（オンライン復帰の自動リロードで下書きが消えるのを止める。直前 0.5 秒の編集も、保存が間に合わずに消えることがある：2026-09-26 の E2E で確認）。 |
-| Q3 | `feat(quick): window mode, drafts, honest save` | `quick-capture.tsx` を上の表どおりに。`try/finally` で `saving` を戻す、IME 変換中の Enter を無視、`autoFocus`、窓では `window` の focus で再フォーカス、トーストは使わず `role="status"` の行で伝える。 |
+| Q3 | `feat(quick): window mode, drafts, honest save` | Q1 から移した `mode.ts`・`shell.ts`・`draft.ts`・`modKeyLabel()`（内容は Q1 の行のとおり）を作り、`quick-capture.tsx` を上の表どおりに。`try/finally` で `saving` を戻す、IME 変換中の Enter を無視、`autoFocus`、窓では `window` の focus で再フォーカス、トーストは使わず `role="status"` の行で伝える。 |
 | Q4 | `feat(auth): return to where sign-in started` | `/quick` のページで `isAuthenticated()` を見て `/sign-in?next=/quick?...` へ。`sign-in-card.tsx` は `next`（`/` 始まりのみ）を `signInWithGoogle(next)` に渡す。 |
 | Q5 | `feat(sw): keep /quick as an offline shell` | `sw.ts` の `/app` の規則を `/quick` にも（クエリを除いたパスで 1 エントリ）。precache には入れない（未ログインのリダイレクトを保存してしまう）。 |
 | Q6 | `feat(quick): open it from the desktop web app` | サイドバーの「すべてのメモ」の上に ⚡ ボタン、⌘K に「即席メモ」、`Q` キー（入力欄・エディタ・ダイアログ中は無効）。いずれも `window.open("/quick?window=1", "memoca-quick", "popup,width=380,height=460")`、ブロックされたら `router.push("/quick")`。 |
@@ -228,7 +248,7 @@ Mac / Windows                              Vercel（Next）                 Conv
 | D0 | Web 側の下地：`src/lib/shell/native.ts`（UA 判定）、`sign-in/page.tsx` で殻用カード（「ブラウザでログイン」＋コード貼り付け）、`/desktop/sign-in`・`/desktop/handoff`・`/desktop/complete`（`robots: noindex`）、`oneTimeToken` の配線、リポジトリの除外設定。バックアップを先に。 | 1 日 |
 | D1 | Mac 版：Rust 環境（`rustup`）、`desktop/` の Tauri プロジェクト、窓・トレイ（日本語メニュー：即席メモを開く／ピン留め／ホットコーナー▸なし・4 隅／ブラウザで Memoca を開く／再読み込み／バージョン／終了）・ホットキー（既定 ⌘⇧M、`settings.json` で変更）・ホットコーナー（100 ms ごとにカーソルを監視、隅 2 px に 300 ms とどまる、離れるまで再発火しない、既定オフ）・single-instance・deep-link・opener、3 コマンドと capability、遷移ガード、blur で隠す＋ピン留め、`.github/workflows/desktop.yml`（`desktop-v*` タグで macOS ビルド、下書きリリースに `.dmg`）。 | 4〜6 日 |
 | D2 | Windows 版（NSIS、WebView2 のブートストラップ、Ctrl 表示、Alt-Tab から隠す）、ログイン時起動（`--hidden`）、自動更新（更新鍵、6 時間ごと）、窓の位置とサイズの記憶、12 時間以上たった窓を表示時に再読み込み、`docs/DESKTOP.md`。Windows 機か VM で確認。 | 3〜4 日 |
-| D3 | 即席メモに画像（テキスト欄に `image/*` の貼り付け・ドロップを受け、サムネイル付きの一覧に持ち、保存時に `stageUpload` → `appendQuickBlocks` の image。`flushUploads` の `unknownNote` を `lockMismatch` と同じく再試行に。HEIC は不可と表示。BlockNote は載せない：保存前に `noteId` が要る、起動が重い、WKWebView の contenteditable は未検証）。Apple Developer Program に入る場合のみ：Developer ID 署名＋公証、Associated Domains と `public/.well-known/apple-app-site-association` でパスキー。 | 3〜5 日 |
+| D3 | 即席メモに画像（テキスト欄に `image/*` の貼り付け・ドロップを受け、サムネイル付きの一覧に持ち、保存時に `stageUpload` → `appendParagraphs`（`src/lib/quick/body.ts`）に画像ブロックを足して書く。`flushUploads` の `unknownNote` を `lockMismatch` と同じく再試行に。HEIC は不可と表示。BlockNote は載せない：保存前に `noteId` が要る、起動が重い、WKWebView の contenteditable は未検証）。Apple Developer Program に入る場合のみ：Developer ID 署名＋公証、Associated Domains と `public/.well-known/apple-app-site-association` でパスキー。 | 3〜5 日 |
 
 ---
 
