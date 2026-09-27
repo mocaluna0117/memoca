@@ -2,7 +2,7 @@
 
 import { useConvex } from "convex/react";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { OpenNoteFromQuickWindow, QuickNoteShortcut } from "@/components/notes/quick-entry";
 import { CommandPalette } from "@/components/search/command-palette";
@@ -15,7 +15,6 @@ import { getMeta, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { useVaultRecord } from "@/lib/vault/record";
 import { vault } from "@/lib/crypto/vault";
-import { revokeResolvedUrls } from "@/lib/media/attachments";
 import { flushAll } from "@/lib/sync/docs";
 import { useLiveQuery } from "dexie-react-hooks";
 import { watchVaultActivity } from "@/lib/vault/activity";
@@ -31,18 +30,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const client = useConvex();
   const { engine, status } = useSync();
   const router = useRouter();
-  const [, setUnlocked] = useState(vault.isUnlocked);
-
-  useEffect(
-    () =>
-      vault.subscribe((unlocked) => {
-        setUnlocked(unlocked);
-        // Decrypted images live only as blob URLs in this tab; locking the
-        // vault has to take them with it.
-        if (!unlocked) revokeResolvedUrls();
-      }),
-    [],
-  );
 
   // The vault closes after a period of no use, counted from the last
   // activity, and says so when it does.

@@ -1,5 +1,9 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import { toArrayBuffer } from "@/lib/bytes";
+import { ctx } from "@/lib/crypto/context";
+import { seal } from "@/lib/crypto/primitives";
+import { prepareVault, vault } from "@/lib/crypto/vault";
 import { db, resetLocalData } from "@/lib/db";
 import {
   AttachmentUnavailableError,
@@ -9,10 +13,12 @@ import {
   idFromRef,
   loadAttachmentBlob,
   queuedBytes,
+  resolveAttachment,
   stageUpload,
 } from "@/lib/media/attachments";
 import type { Note } from "@/lib/types";
 import { fakeConvex } from "./helpers/fake-convex";
+import { FAST_ARGON } from "./helpers/seed";
 
 const zero = { t: 0, d: "test" };
 
@@ -168,6 +174,157 @@ describe("loadAttachmentBlob", () => {
     await expect(loadAttachmentBlob(server().client, "nothing")).rejects.toMatchObject({
       reason: "missing",
     });
+  });
+});
+
+describe("resolveAttachment and the vault", () => {
+  // Storage serves every file asked for.
+  const server = () =>
+    fakeConvex({
+      "attachments:urls": (args) =>
+        Object.fromEntries(
+          (args.attachmentIds as string[]).map((id) => [id, `https://storage.test/${id}`]),
+        ),
+    });
+  let revoked: string[];
+
+  beforeEach(async () => {
+    (await prepareVault("パスワード", FAST_ARGON)).adopt();
+    revoked = [];
+    vi.spyOn(URL, "revokeObjectURL").mockImplementation((url) => {
+      revoked.push(url);
+    });
+  });
+
+  afterEach(() => {
+    vault.lock();
+    vi.unstubAllGlobals();
+  });
+
+  /**
+   * A locked note's file as the server holds it, sealed under the open vault,
+   * and storage serving it. `onFetch` runs while it is being downloaded.
+   */
+  async function lockedFile(attachmentId: string, onFetch = () => {}) {
+    await putNote("n-locked", true);
+    const { key, wrapped } = await vault.createAttachmentKey(attachmentId);
+    const body = await seal(key, new Uint8Array([1, 2, 3]), ctx.attachmentBody(attachmentId));
+    const meta = await seal(
+      key,
+      new TextEncoder().encode(JSON.stringify({ name: "a.webp", mime: "image/webp" })),
+      ctx.attachmentMeta(attachmentId),
+    );
+    await db().attachments.put({
+      attachmentId,
+      noteId: "n-locked",
+      status: "committed",
+      bytes: body.ct.byteLength,
+      mime: null,
+      name: null,
+      locked: true,
+      wrappedKey: wrapped,
+      contentIv: toArrayBuffer(body.iv),
+      metaSealed: { ct: toArrayBuffer(meta.ct), iv: toArrayBuffer(meta.iv) },
+      width: 1,
+      height: 1,
+      deletedAt: null,
+      seq: 1,
+    });
+    const stored = toArrayBuffer(body.ct);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        onFetch();
+        return new Response(stored);
+      }),
+    );
+  }
+
+  /** A plain file uploaded from this device, kept in its cache. */
+  async function cachedPlainFile(attachmentId: string) {
+    await db().attachments.put({
+      attachmentId,
+      noteId: "n-plain",
+      status: "committed",
+      bytes: 7,
+      mime: "image/webp",
+      name: "a.webp",
+      locked: false,
+      width: 1,
+      height: 1,
+      deletedAt: null,
+      seq: 1,
+    });
+    await db().blobs.put({ attachmentId, blob: image(7, "cached"), bytes: 7, lastUsed: 0 });
+  }
+
+  test("a decrypted file's URL is revoked when the vault closes, with no workspace shell mounted", async () => {
+    const client = server().client;
+    await lockedFile("secret-1");
+    const url = await resolveAttachment(client, "secret-1");
+    expect(url).toMatch(/^blob:/);
+
+    // Closed for inactivity, as it can be on the quick note, which has no
+    // workspace shell.
+    await vault.close("idle");
+    expect(revoked).toContain(url);
+    expect(await resolveAttachment(client, "secret-1")).toBeNull();
+  });
+
+  test("a locked file's URL is not handed out while the vault is closed", async () => {
+    const client = server().client;
+    await putNote("n-locked", true);
+    vault.lock();
+    // Dropped into a locked note as the vault closed: staged once the close
+    // had revoked everything else, so its URL is still kept.
+    const blob = image(10, "secret");
+    const ref = await stageUpload({
+      noteId: "n-locked",
+      file: new File([blob], "a.webp", { type: "image/webp" }),
+      prepared: { blob, mime: "image/webp", width: 1, height: 1 },
+    });
+    expect(await resolveAttachment(client, idFromRef(ref)!)).toBeNull();
+  });
+
+  test("nor is the URL of a file locked since it was shown", async () => {
+    const client = server().client;
+    vault.lock();
+    await cachedPlainFile("photo-2");
+    expect(await resolveAttachment(client, "photo-2")).toMatch(/^blob:/);
+    // Its note was locked on another device, and the change has arrived.
+    await db().attachments.update("photo-2", { locked: true });
+    expect(await resolveAttachment(client, "photo-2")).toBeNull();
+  });
+
+  test("a plain file's URL is handed out as before while the vault is closed", async () => {
+    const client = server().client;
+    await putNote("n-plain", false);
+    vault.lock();
+    await cachedPlainFile("photo-3");
+    const blob = image(10, "waiting");
+    const waiting = idFromRef(
+      await stageUpload({
+        noteId: "n-plain",
+        file: new File([blob], "b.webp", { type: "image/webp" }),
+        prepared: { blob, mime: "image/webp", width: 1, height: 1 },
+      }),
+    )!;
+
+    for (const id of ["photo-3", waiting]) {
+      const url = await resolveAttachment(client, id);
+      expect(url).toMatch(/^blob:/);
+      expect(await resolveAttachment(client, id)).toBe(url);
+      expect(revoked).not.toContain(url);
+    }
+  });
+
+  test("a file still being decrypted when the vault closes is not shown", async () => {
+    const client = server().client;
+    // The vault closes while the file is on its way from storage.
+    await lockedFile("secret-4", () => vault.lock());
+    const made = vi.spyOn(URL, "createObjectURL");
+    expect(await resolveAttachment(client, "secret-4")).toBeNull();
+    expect(made).not.toHaveBeenCalled();
   });
 });
 

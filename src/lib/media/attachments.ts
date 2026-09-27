@@ -18,6 +18,9 @@ export { REF_PREFIX, idFromRef, refFor } from "./ref";
 
 const BLOB_CACHE_BYTES = 200 * 1024 * 1024;
 const objectUrls = new Map<string, string>();
+/** Bumped when the vault closes, so a decryption still running is dropped. */
+let generation = 0;
+let watching = false;
 
 /** How long to wait for a file from the server before calling it unreachable. */
 const DOWNLOAD_TIMEOUT_MS = 20_000;
@@ -189,6 +192,7 @@ export async function stageUpload(opts: {
   /** Not to be sent until the note is locked: a copy made for its lock. */
   heldForLock?: boolean;
 }): Promise<string> {
+  watchVault();
   const attachmentId = uuidv7();
   const category = categoryOf(opts.prepared?.mime ?? opts.file.type);
 
@@ -244,6 +248,13 @@ export async function stageUpload(opts: {
 /** A file waiting to go up that will be encrypted when it does. */
 async function isProtectedUpload(waiting: { locked: boolean; noteId: string }): Promise<boolean> {
   return waiting.locked || (await db().notes.get(waiting.noteId))?.locked === true;
+}
+
+/** A file to show only while the vault is open: locked, or to go up encrypted. */
+async function needsVault(attachmentId: string): Promise<boolean> {
+  const waiting = await db().pendingUploads.get(attachmentId);
+  if (waiting && (await isProtectedUpload(waiting))) return true;
+  return isLockedFile(attachmentId);
 }
 
 /**
@@ -414,8 +425,16 @@ export async function resolveAttachment(
   client: ConvexReactClient,
   attachmentId: string,
 ): Promise<string | null> {
+  watchVault();
   const cached = objectUrls.get(attachmentId);
-  if (cached) return cached;
+  if (cached) {
+    // A locked file's URL is handed out only while the vault is open. Closing
+    // it revokes them all, so one still here was made as it closed, or is for
+    // a file locked since: it goes, and the file is looked up as it is now.
+    if (vault.isUnlocked || !(await needsVault(attachmentId))) return cached;
+    URL.revokeObjectURL(cached);
+    objectUrls.delete(attachmentId);
+  }
 
   const database = db();
   const row0 = await database.attachments.get(attachmentId);
@@ -454,6 +473,7 @@ export async function resolveAttachment(
   }
   if (!row.wrappedKey || !row.contentIv || !vault.isUnlocked) return null;
 
+  const started = generation;
   const key = await vault.attachmentKey(attachmentId, row.wrappedKey);
   const cipher = new Uint8Array(await (await fetch(remote)).arrayBuffer());
   const plain = await open(
@@ -474,6 +494,9 @@ export async function resolveAttachment(
     mime = (JSON.parse(new TextDecoder().decode(raw)) as { mime: string }).mime;
   }
 
+  // The vault closed while the file was on its way: what it would have shown
+  // goes with it, rather than outliving the close as a URL.
+  if (generation !== started || !vault.isUnlocked) return null;
   const url = URL.createObjectURL(new Blob([toArrayBuffer(plain)], { type: mime }));
   objectUrls.set(attachmentId, url);
   return url;
@@ -554,6 +577,22 @@ export async function purgeLockedBlobs(noteIds?: string[]): Promise<number> {
   // The service worker kept its own copy of whatever it fetched in plaintext.
   if (doomed.length > 0) await purgeMediaCache();
   return doomed.length;
+}
+
+/**
+ * Revokes this tab's URLs whenever the vault closes. Decrypted files live only
+ * as those URLs, and have to go with the key. Watched from here rather than
+ * from a page: the notes and the quick note share one vault, and it can close
+ * on either.
+ */
+function watchVault() {
+  if (watching) return;
+  watching = true;
+  vault.subscribe((unlocked) => {
+    if (unlocked) return;
+    generation += 1;
+    revokeResolvedUrls();
+  });
 }
 
 /** Drops decrypted blob URLs, for example when the vault auto-locks. */
