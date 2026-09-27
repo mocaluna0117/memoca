@@ -1,12 +1,21 @@
 import { expect, type Page, test } from "@playwright/test";
 
-/** What the Google button asks the server to come back to, stopped before Google. */
-async function askedToComeBackTo(page: Page): Promise<unknown> {
+/**
+ * What the Google button asks the server to come back to, once the server
+ * has taken it (better-auth turns away a way back it does not accept), and
+ * stopped on the way to Google.
+ */
+async function askedToComeBackTo(page: Page): Promise<{ callbackURL: string }> {
+  await page.route("https://accounts.google.com/**", (route) => route.abort());
   const asked = page.waitForRequest("**/api/auth/sign-in/social");
-  await page.route("**/api/auth/sign-in/social", (route) => route.abort());
+  const answered = page.waitForResponse("**/api/auth/sign-in/social");
   await page.getByRole("button", { name: "Google でログイン" }).click();
+  expect((await answered).status(), "the server takes the way back").toBeLessThan(400);
   return (await asked).postDataJSON();
 }
+
+/** The text a way back carries to the quick note. */
+const sharedIn = (path: string) => new URL(path, "http://localhost").searchParams.get("text");
 
 test.describe("signing in from the quick note", () => {
   test("a share waits through sign-in, and comes back to the quick note", async ({ page }) => {
@@ -18,6 +27,16 @@ test.describe("signing in from the quick note", () => {
       provider: "google",
       callbackURL: shared,
     });
+  });
+
+  test("whatever a share holds, a * of its Markdown included, it waits through sign-in", async ({
+    page,
+  }) => {
+    const text = "**大事** (あとで) https://example.com/a?b=c";
+    await page.goto(`/quick?${new URLSearchParams({ text })}`);
+    await expect(page).toHaveURL(/\/sign-in\?/);
+    const { callbackURL } = await askedToComeBackTo(page);
+    expect(sharedIn(callbackURL)).toBe(text);
   });
 
   test("the notes send to sign in as well, to come back to them", async ({ page }) => {
@@ -42,12 +61,20 @@ test.describe("signing in from the quick note", () => {
   test("the way back is the address itself, whatever the browser claims it to be", async ({
     page,
   }) => {
-    const response = await page.request.get("/app", {
-      maxRedirects: 0,
-      headers: { "x-memoca-asked-for": "//evil.example/steal" },
-    });
-    const next = new URL(response.headers().location!, "http://localhost").searchParams.get("next");
-    expect(next).toBe("/app");
+    // Claims that would pass as ways back, so only the proxy's own can win.
+    for (const [address, claimed] of [
+      ["/app?n=abc", "/quick?text=planted"],
+      ["/quick?text=abc", "/app/settings"],
+    ]) {
+      const response = await page.request.get(address, {
+        maxRedirects: 0,
+        headers: { "x-memoca-asked-for": claimed },
+      });
+      const next = new URL(response.headers().location!, "http://localhost").searchParams.get(
+        "next",
+      );
+      expect(next, address).toBe(address);
+    }
   });
 
   test("a way back that leads off the site is not followed", async ({ page }) => {
