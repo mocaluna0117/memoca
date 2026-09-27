@@ -6,8 +6,9 @@ import { forgetWebpSupport } from "@/lib/media/webp-encoder";
  * jsdom has no canvas, so these stand in for the browser: `webp` is whether it
  * can write WebP (Safari hands back a PNG instead), `alpha` is the opacity of
  * every pixel drawn, `bytes` is how big a file it writes at a given width and
- * quality, `size` is the picture's own size, and `decodes` whether it can be
- * read at all.
+ * quality, `size` is the picture's own size, `decodes` whether it can be read
+ * at all, and `picture` what the small copy it is judged from looks like: a
+ * photo's grain, or a screen's flat colour.
  */
 let browser: {
   webp: boolean;
@@ -15,6 +16,7 @@ let browser: {
   bytes: number | ((width: number, quality?: number) => number);
   size: { width: number; height: number };
   decodes: boolean;
+  picture: "photo" | "screen" | "unreadable";
   /** The one-pixel WebP check throws, as a canvas that cannot be used would. */
   checkThrows?: boolean;
 };
@@ -22,13 +24,30 @@ let browser: {
 let asked: { type: string; quality?: number; width?: number }[];
 /** How often the one-pixel check ran. */
 let probes: number;
+/** Pixels read out of the image as drawn to be written. */
 let scanned: number;
+/**
+ * The small copies an image was judged from: the part of it drawn, where it
+ * was drawn to, the copy's canvas, and the pixels read back.
+ */
+let sampled: { from: number[]; to: number[]; canvas: number[]; read: number[] }[];
+/** How smoothly the image was drawn, each time it was drawn to be written. */
+let smoothing: string[];
 
 beforeEach(() => {
-  browser = { webp: true, alpha: 255, bytes: 10, size: { width: 400, height: 300 }, decodes: true };
+  browser = {
+    webp: true,
+    alpha: 255,
+    bytes: 10,
+    size: { width: 400, height: 300 },
+    decodes: true,
+    picture: "photo",
+  };
   asked = [];
   probes = 0;
   scanned = 0;
+  sampled = [];
+  smoothing = [];
   forgetWebpSupport();
   vi.stubGlobal("createImageBitmap", async () => {
     if (!browser.decodes) throw new DOMException("The source image could not be decoded.");
@@ -36,13 +55,43 @@ beforeEach(() => {
   });
   const context = {
     imageSmoothingQuality: "low",
-    drawImage() {},
+    drawImage() {
+      smoothing.push(context.imageSmoothingQuality);
+    },
     getImageData(_x: number, _y: number, width: number, height: number) {
       scanned += 1;
       return { width, height, data: new Uint8ClampedArray(width * height * 4).fill(browser.alpha) };
     },
   };
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => context) as never);
+  // The copy an image is judged from is the one canvas made to be read back.
+  const sampleOf = (canvas: HTMLCanvasElement) => {
+    let drawn: number[] = [];
+    return {
+      drawImage(_image: unknown, ...area: number[]) {
+        drawn = area;
+      },
+      getImageData(_x: number, _y: number, width: number, height: number) {
+        if (browser.picture === "unreadable") throw new DOMException("The canvas has been tainted.");
+        sampled.push({
+          from: drawn.slice(0, 4),
+          to: drawn.slice(4, 8),
+          canvas: [canvas.width, canvas.height],
+          read: [width, height],
+        });
+        const data = new Uint8ClampedArray(width * height * 4);
+        // Grain: no two neighbours alike. Flat colour: all of them.
+        for (let i = 0; i < data.length; i += 1) data[i] = browser.picture === "screen" ? 240 : (i * 37) % 251;
+        return { width, height, data };
+      },
+    };
+  };
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(function (
+    this: HTMLCanvasElement,
+    _type: string,
+    options?: { willReadFrequently?: boolean },
+  ) {
+    return options?.willReadFrequently ? sampleOf(this) : context;
+  } as never);
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
     this: HTMLCanvasElement,
     callback,
@@ -113,6 +162,30 @@ describe("cropImage", () => {
       expect(result.mime, type).toBe("image/png");
       expect(asked.at(-1)).toEqual({ type: "image/png" });
     }
+  });
+
+  test("a trimmed screenshot keeps its own size, and is written as one", async () => {
+    browser = { ...browser, size: { width: 1179, height: 2556 }, picture: "screen" };
+    const result = await cropImage(source("image/webp"), { x: 0, y: 0, width: 100, height: 90 });
+    expect(result).toMatchObject({ width: 1179, height: 2300 });
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.65 }]);
+  });
+
+  test("what is kept is judged, not the whole image, and from a small copy", async () => {
+    browser.size = { width: 4284, height: 5712 };
+    const result = await cropImage(source("image/webp"), { x: 0, y: 50, width: 100, height: 50 });
+    expect(sampled).toEqual([
+      { from: [0, 2856, 4284, 2856], to: [0, 0, 314, 209], canvas: [314, 209], read: [314, 209] },
+    ]);
+    // Grain there: a photo, brought down to 2048 as photos are.
+    expect(result).toMatchObject({ width: 2048, height: 1365 });
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.82 }]);
+  });
+
+  test("a trimmed screenshot larger than 4 million pixels is brought within them", async () => {
+    browser = { ...browser, size: { width: 3420, height: 2214 }, picture: "screen" };
+    const result = await cropImage(source("image/webp"), { x: 0, y: 0, width: 100, height: 99 });
+    expect(result).toMatchObject({ width: 2498, height: 1601 });
   });
 
   test("a JPEG or a PNG is not looked at pixel by pixel: the type already decides", async () => {
@@ -201,6 +274,90 @@ describe("prepareImage", () => {
     browser.bytes = (width) => width * 3;
     await prepareImage(file("image/jpeg", 20_000), { maxBytes: 10_000 });
     expect(asked).toHaveLength(1);
+  });
+
+  test("a screenshot is kept at its own size, and written at 0.65", async () => {
+    browser = { ...browser, size: { width: 1179, height: 2556 }, picture: "screen" };
+    expect(await prepareImage(file("image/png", 300_000))).toMatchObject({
+      mime: "image/webp",
+      width: 1179,
+      height: 2556,
+    });
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.65 }]);
+  });
+
+  test("a Mac's screenshot, twice the size of its screen, is brought within 4 million pixels", async () => {
+    browser = { ...browser, size: { width: 3420, height: 2214 }, picture: "screen" };
+    expect(await prepareImage(file("image/png", 1_000_000))).toMatchObject({ width: 2486, height: 1609 });
+  });
+
+  test("a photo is brought down to 2048 on its long edge and written at 0.82, as before", async () => {
+    browser.size = { width: 4284, height: 5712 };
+    expect(await prepareImage(file("image/jpeg", 3_000_000))).toMatchObject({ width: 1536, height: 2048 });
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.82 }]);
+  });
+
+  test("is judged once, from a copy of about 65,000 pixels, whatever its size", async () => {
+    browser.size = { width: 4284, height: 5712 };
+    await prepareImage(file("image/jpeg", 3_000_000));
+    expect(sampled).toEqual([
+      { from: [0, 0, 4284, 5712], to: [0, 0, 222, 296], canvas: [222, 296], read: [222, 296] },
+    ]);
+  });
+
+  test("a long capture is judged from a copy wide enough to tell, and brought within 4 million pixels", async () => {
+    // Three screens of an iPhone, one above the other.
+    browser = { ...browser, size: { width: 1179, height: 7668 }, picture: "screen" };
+    const result = await prepareImage(file("image/png", 900_000));
+    expect(sampled.map((sample) => sample.canvas)).toEqual([[100, 653]]);
+    expect(result).toMatchObject({ width: 784, height: 5101 });
+  });
+
+  test("one that cannot be looked at is written as a photo, as every image was before", async () => {
+    browser = { ...browser, size: { width: 1179, height: 2556 }, picture: "unreadable" };
+    const reads: unknown[] = [];
+    const result = await prepareImage(file("image/png", 300_000), { onRead: (read) => reads.push(read) });
+    expect(result).toMatchObject({ width: 945, height: 2048 });
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.82 }]);
+    expect(reads).toEqual([expect.objectContaining({ kind: "photo", flat: null })]);
+  });
+
+  test("a screen only a little over 4 million pixels keeps its own size, rather than blur in bands", async () => {
+    // A Pixel Pro's screen: 4.02 million pixels.
+    browser = { ...browser, size: { width: 1344, height: 2992 }, picture: "screen" };
+    expect(await prepareImage(file("image/png", 300_000))).toMatchObject({ width: 1344, height: 2992 });
+  });
+
+  test("a screenshot over the limit is tried next as a photo would be, then smaller", async () => {
+    browser = { ...browser, size: { width: 1179, height: 2556 }, picture: "screen", bytes: (width) => width * 3 };
+    const writes: number[][] = [];
+    const result = await prepareImage(file("image/png", 20_000), {
+      maxBytes: 1_000,
+      onWrite: (write) => writes.push([write.width, write.height]),
+    });
+    expect(writes).toEqual([
+      [1179, 2556],
+      [945, 2048],
+      [738, 1600],
+    ]);
+    expect(result).toMatchObject({ width: 738, height: 1600 });
+    expect(asked.map((call) => call.quality)).toEqual([0.65, expect.closeTo(0.55), expect.closeTo(0.45)]);
+  });
+
+  test("draws the image with care before writing it, as a crop is drawn", async () => {
+    browser.size = { width: 4284, height: 5712 };
+    await prepareImage(file("image/jpeg", 3_000_000));
+    await cropImage(source("image/jpeg"), quarter);
+    expect(smoothing).toEqual(["high", "high"]);
+  });
+
+  test("tells the diagnostics what it was taken for, and why", async () => {
+    browser.picture = "screen";
+    const reads: unknown[] = [];
+    await prepareImage(file("image/png"), { onRead: (read) => reads.push(read) });
+    expect(reads).toEqual([
+      expect.objectContaining({ width: 400, height: 300, kind: "screen", flat: 1, sampleMs: expect.any(Number) }),
+    ]);
   });
 
   test("an image this browser cannot read is refused, unless the server takes it as it is", async () => {
@@ -297,6 +454,14 @@ describe("where the canvas cannot write WebP, a worker does", () => {
     expect(sent).toHaveLength(2);
     // The canvas is never asked for WebP at full size.
     expect(asked).toEqual([]);
+  });
+
+  test("a screenshot goes to the worker at its own size, at 65", async () => {
+    browser = { ...browser, size: { width: 1179, height: 2556 }, picture: "screen" };
+    await prepareImage(file("image/png", 300_000));
+    expect(sent.map(({ width, height, quality }) => ({ width, height, quality }))).toEqual([
+      { width: 1179, height: 2556, quality: 65 },
+    ]);
   });
 
   test("a trimmed image too", async () => {

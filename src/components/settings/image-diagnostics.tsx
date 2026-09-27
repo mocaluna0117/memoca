@@ -3,11 +3,22 @@
 import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/bytes";
-import { type WriteTrace, prepareImage } from "@/lib/media/compress";
+import { FLAT_SHARE } from "@/lib/media/classify";
+import { type ReadTrace, type WriteTrace, prepareImage } from "@/lib/media/compress";
 import { WEBP_ASSET_VERSION, canvasWritesWebp, webpWorkerState } from "@/lib/media/webp-encoder";
 
 const BY = { canvas: "canvas", worker: "WebAssembly", fallback: "予備の形式" } as const;
+const KIND = { photo: "写真", screen: "スクショ・図" } as const;
 const ms = (value: number | undefined) => (value === undefined ? "―" : `${Math.round(value)} ms`);
+
+/** What the image was taken for, and why. */
+export function describeKind(read: ReadTrace): string {
+  const why =
+    read.flat === null
+      ? "見分けられなかったため"
+      : `隣と同じ色の画素 ${Math.round(read.flat * 100)}%。${Math.round(FLAT_SHARE * 100)}% 以上でスクショ・図`;
+  return `種類: ${KIND[read.kind]}（${why}、${ms(read.sampleMs)}）`;
+}
 
 /** One write, as a line: what wrote it, and where the time went. */
 function describeWrite(write: WriteTrace): string {
@@ -16,6 +27,7 @@ function describeWrite(write: WriteTrace): string {
     BY[write.by],
     write.type,
     formatBytes(write.bytes),
+    `描画 ${ms(write.drawMs)}`,
     `計 ${ms(write.ms)}`,
   ];
   if (write.pixelsMs !== undefined) parts.push(`画素の読み出し ${ms(write.pixelsMs)}`);
@@ -70,7 +82,11 @@ export function ImageDiagnostics({ maxImageBytes }: { maxImageBytes: number | un
       const result = await prepareImage(file, {
         maxBytes: maxImageBytes,
         trial: true,
-        onRead: (read) => lines.push(`読み込み: ${read.width}×${read.height}、${ms(read.ms)}`),
+        onRead: (read) =>
+          lines.push(
+            `読み込み: ${read.width}×${read.height}、${ms(read.ms)}`,
+            describeKind(read),
+          ),
         onWrite: (write) => lines.push(describeWrite(write)),
       });
       lines.push(

@@ -79,6 +79,56 @@ export async function pasteFile(page: Page, { name, type, size }: { name: string
   );
 }
 
+/**
+ * Pastes a made-up picture of the given size as a PNG: a photo (a gradient
+ * with a camera's grain in every channel) or a screen (a white page with a
+ * dark bar and lines of text, as a phone's screenshot is). Either is far
+ * smaller as WebP, so the size it is kept at says how it was written.
+ * Nothing is waited for.
+ */
+export async function pastePicture(
+  page: Page,
+  { width, height, kind }: { width: number; height: number; kind: "photo" | "screen" },
+): Promise<void> {
+  await editor(page).click();
+  await editor(page).evaluate(
+    async (target, options) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = options.width;
+      canvas.height = options.height;
+      const context = canvas.getContext("2d")!;
+      if (options.kind === "photo") {
+        const gradient = context.createLinearGradient(0, 0, options.width, options.height);
+        gradient.addColorStop(0, "#1d4ed8");
+        gradient.addColorStop(1, "#f59e0b");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, options.width, options.height);
+        const grain = context.getImageData(0, 0, options.width, options.height);
+        for (let i = 0; i < grain.data.length; i += 1) {
+          if (i % 4 === 3) continue;
+          grain.data[i] = Math.max(0, Math.min(255, grain.data[i]! + (Math.imul(i, 2654435761) >>> 28) - 8));
+        }
+        context.putImageData(grain, 0, 0);
+      } else {
+        context.fillStyle = "#ffffff";
+        context.fillRect(0, 0, options.width, options.height);
+        context.fillStyle = "#1f2937";
+        context.fillRect(0, 0, options.width, options.height * 0.06);
+        context.font = `${Math.round(options.width / 26)}px sans-serif`;
+        for (let line = 0, y = options.height * 0.12; y < options.height * 0.95; line += 1, y += options.width / 8) {
+          context.fillStyle = line % 3 === 0 ? "#2563eb" : "#111827";
+          context.fillText("明日の打ち合わせは 10:00 から、3-A 会議室で。", options.width * 0.05, y);
+        }
+      }
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((result) => resolve(result!), "image/png"));
+      const data = new DataTransfer();
+      data.items.add(new File([blob], options.kind === "photo" ? "photo.png" : "IMG_0001.PNG", { type: "image/png" }));
+      target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    },
+    { width, height, kind },
+  );
+}
+
 /** Pastes HTML into the note, as copying a block out of another note does. */
 export async function pasteHtml(page: Page, html: string): Promise<void> {
   await editor(page).click();

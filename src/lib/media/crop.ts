@@ -16,11 +16,16 @@ export const PERCENT: Size = { width: 100, height: 100 };
 /** The whole image, as a percent crop. */
 export const WHOLE: Rect = { x: 0, y: 0, width: 100, height: 100 };
 
-export type CropPlan = {
-  /** What to cut out of the source, in its own pixels. */
-  source: Rect;
-  /** How big the result is drawn: the source rectangle, shrunk to the long-edge cap. */
-  output: Size;
+/** The most an image may be: its long edge, and, if given, its pixels in all. */
+export type Fit = {
+  maxEdge: number;
+  maxPixels?: number;
+  /**
+   * The scale from which the image is left at its own size after all:
+   * drawn only a little smaller, it saves little, and its lines a pixel wide
+   * blur in bands.
+   */
+  keepFrom?: number;
 };
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
@@ -34,29 +39,40 @@ function span(start: number, length: number, scale: number, limit: number): [num
 }
 
 /**
- * Maps a crop drawn over the shown image onto the stored one.
+ * Maps a crop drawn over the shown image onto the stored one: what to cut out
+ * of it, in its own pixels.
  *
  * `displayed` is the size the crop was measured against: the shown size for a
  * crop in pixels, or {@link PERCENT} for one in percent. The result always lies
- * inside the image, is at least one pixel each way, and its drawn size keeps
- * the long edge within `maxEdge`, the same cap new uploads get.
+ * inside the image and is at least one pixel each way.
  */
-export function planCrop(crop: Rect, displayed: Size, natural: Size, maxEdge: number): CropPlan {
+export function cropSource(crop: Rect, displayed: Size, natural: Size): Rect {
   const [x, width] = span(crop.x, crop.width, natural.width / displayed.width, natural.width);
   const [y, height] = span(crop.y, crop.height, natural.height / displayed.height, natural.height);
-  const scale = Math.min(1, maxEdge / Math.max(width, height));
+  return { x, y, width, height };
+}
+
+/**
+ * The size to draw an image of `size` at so it stays within `fit`, keeping
+ * its shape: never larger than it is, and at least one pixel each way. One
+ * that would come out only a little smaller (see `keepFrom`) keeps its size.
+ */
+export function fitSize(size: Size, fit: Fit): Size {
+  const within = Math.min(
+    1,
+    fit.maxEdge / Math.max(size.width, size.height),
+    fit.maxPixels === undefined ? 1 : Math.sqrt(fit.maxPixels / (size.width * size.height)),
+  );
+  const scale = fit.keepFrom !== undefined && within >= fit.keepFrom ? 1 : within;
   return {
-    source: { x, y, width, height },
-    output: {
-      width: Math.max(1, Math.round(width * scale)),
-      height: Math.max(1, Math.round(height * scale)),
-    },
+    width: Math.max(1, Math.round(size.width * scale)),
+    height: Math.max(1, Math.round(size.height * scale)),
   };
 }
 
 /** True when the crop keeps every pixel, so trimming would change nothing. */
-export function keepsWholeImage(plan: CropPlan, natural: Size): boolean {
-  return plan.source.width === natural.width && plan.source.height === natural.height;
+export function keepsWholeImage(source: Rect, natural: Size): boolean {
+  return source.width === natural.width && source.height === natural.height;
 }
 
 /**

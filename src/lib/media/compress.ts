@@ -1,25 +1,26 @@
 "use client";
 
+import { ENCODING, type ImageKind, SAMPLE, flatShare, kindOf } from "./classify";
 import {
+  type Fit,
   type Rect,
   type Size,
   PERCENT,
+  cropSource,
   fallbackEncoding,
+  fitSize,
   hasTransparency,
   mayHideTransparency,
-  planCrop,
 } from "./crop";
 import { type WorkerReport, canvasWritesWebp, encodeWebp, webpWorkerAvailable } from "./webp-encoder";
 
-/** Long edge, in pixels, that uploaded images are reduced to. */
-export const MAX_IMAGE_EDGE = 2048;
-const WEBP_QUALITY = 0.82;
-
 /**
  * For an image still over the limit for one image: smaller long edges, each
- * written a step lower in quality, tried in turn.
+ * written a step lower in quality, tried in turn after its kind's own size.
+ * Only those smaller than that size, and at most two: a screenshot kept at
+ * its own size is tried next at 2048, as a photo would have been.
  */
-const SHRINK_EDGES = [MAX_IMAGE_EDGE, 1600, 1280];
+const SHRINK_EDGES = [2048, 1600, 1280];
 /** How much lower the quality is at each of those steps. */
 const QUALITY_STEP = 0.1;
 
@@ -62,6 +63,8 @@ export type WriteTrace = {
   by: "canvas" | "worker" | "fallback";
   type: string;
   bytes: number;
+  /** Drawing the image at that size, before writing it. */
+  drawMs: number;
   /** Writing it, all in. */
   ms: number;
   /** Reading the pixels out of the canvas, for the worker. */
@@ -73,7 +76,17 @@ export type WriteTrace = {
 };
 
 /** The image as read, before anything was written: for the diagnostics too. */
-export type ReadTrace = { width: number; height: number; ms: number };
+export type ReadTrace = {
+  width: number;
+  height: number;
+  /** Reading it. */
+  ms: number;
+  /** What it was taken for, from how much of it is flat colour (null: it could not be looked at). */
+  kind: ImageKind;
+  flat: number | null;
+  /** Telling which, from a small copy. */
+  sampleMs: number;
+};
 
 type Tracing = {
   onRead?: (trace: ReadTrace) => void;
@@ -98,7 +111,8 @@ export type CroppedImage = PreparedImage & { natural: Size; kept: Rect };
  * A phone camera file is several megabytes and no note needs that: resizing to
  * a sensible long edge and re-encoding as WebP typically cuts it by an order of
  * magnitude, which is the difference between a 100 MB allowance holding a
- * handful of notes and holding hundreds.
+ * handful of notes and holding hundreds. A screenshot or a diagram is kept at
+ * its own size instead, so its text stays sharp ({@link ENCODING}).
  *
  * `maxBytes` is the limit for one image. An image still over it is written
  * again smaller and at a lower quality, up to twice; what comes back may still
@@ -117,22 +131,31 @@ export async function prepareImage(
 
   const reading = performance.now();
   const bitmap = await createImageBitmap(file).catch(() => null);
-  if (bitmap) opts.onRead?.({ width: bitmap.width, height: bitmap.height, ms: performance.now() - reading });
   if (!bitmap) {
     // Not readable here: fine as it is only if the server takes it.
     if (!uploadable(file.type)) throw new UnsupportedImageError(file.type || file.name);
     return { blob: file, mime: file.type, width: 0, height: 0 };
   }
+  const readMs = performance.now() - reading;
 
   const original = { width: bitmap.width, height: bitmap.height };
+  const judging = performance.now();
+  const flat = flatnessOf(bitmap, { x: 0, y: 0, ...original });
+  const kind = kindOf(flat);
+  opts.onRead?.({ ...original, ms: readMs, kind, flat, sampleMs: performance.now() - judging });
+
   const over = (bytes: number) => opts.maxBytes !== undefined && bytes > opts.maxBytes;
   // Written again smaller only when what is written has to be used and does
   // not fit: the original is over the limit, or not a type the server takes.
   const mustFit = over(file.size) || !uploadable(file.type);
+  const { fit, quality } = ENCODING[kind];
+  const own = fitSize(original, fit);
+  const smaller = SHRINK_EDGES.filter((edge) => edge < Math.max(own.width, own.height)).slice(0, 2);
+  const fits: Fit[] = [fit, ...smaller.map((maxEdge) => ({ maxEdge }))];
   let best: PreparedImage | null = null;
   try {
-    for (const [step, edge] of SHRINK_EDGES.entries()) {
-      const written = await writeAt(bitmap, edge, file.type, step, opts);
+    for (const [step, size] of fits.entries()) {
+      const written = await writeAt(bitmap, size, file.type, quality - step * QUALITY_STEP, step, opts);
       if (!written) break;
       if (!best || written.blob.size < best.blob.size) best = written;
       if (!mustFit || !over(best.blob.size)) break;
@@ -152,25 +175,28 @@ export async function prepareImage(
   return best;
 }
 
-/** Draws the image at most `maxEdge` on its long side and writes it. */
+/** Draws the image within `fit` and writes it, as WebP at `quality` where it can. */
 async function writeAt(
   bitmap: ImageBitmap,
-  maxEdge: number,
+  fit: Fit,
   sourceMime: string,
+  quality: number,
   step: number,
   tracing: Tracing,
 ): Promise<PreparedImage | null> {
-  const scale = Math.min(1, maxEdge / Math.max(bitmap.width, bitmap.height));
-  const width = Math.max(1, Math.round(bitmap.width * scale));
-  const height = Math.max(1, Math.round(bitmap.height * scale));
+  const { width, height } = fitSize(bitmap, fit);
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const context = canvas.getContext("2d");
   if (!context) return null;
+  // Made smaller with care, as a crop is: a photo brought down from a phone
+  // camera's size by the default filter comes out jagged, and larger.
+  context.imageSmoothingQuality = "high";
+  const drawing = performance.now();
   context.drawImage(bitmap, 0, 0, width, height);
   const started = performance.now();
-  const written = await encodeCanvas(canvas, context, sourceMime, step, tracing.trial);
+  const written = await encodeCanvas(canvas, context, sourceMime, quality, step, tracing.trial);
   if (!written) return null;
   const { blob, by, details } = written;
   tracing.onWrite?.({
@@ -179,6 +205,7 @@ async function writeAt(
     by,
     type: blob.type,
     bytes: blob.size,
+    drawMs: started - drawing,
     ms: performance.now() - started,
     ...details,
   });
@@ -192,54 +219,71 @@ async function writeAt(
  * Works from the file's bytes, never from an `<img>` on the page: an image
  * served from another origin would taint the canvas and could not be read
  * back. `crop` is in percent of the image, so it does not matter how large
- * the image was shown while the rectangle was chosen.
+ * the image was shown while the rectangle was chosen. What is kept is judged
+ * on its own: a photo cut out of a screenshot of it is written as a photo.
  */
 export async function cropImage(source: Blob, crop: Rect): Promise<CroppedImage> {
   const bitmap = await createImageBitmap(source, { imageOrientation: "from-image" });
   const natural = { width: bitmap.width, height: bitmap.height };
-  const plan = planCrop(crop, PERCENT, natural, MAX_IMAGE_EDGE);
+  const kept = cropSource(crop, PERCENT, natural);
+  const { fit, quality } = ENCODING[kindOf(flatnessOf(bitmap, kept))];
+  const output = fitSize(kept, fit);
 
   const canvas = document.createElement("canvas");
-  canvas.width = plan.output.width;
-  canvas.height = plan.output.height;
+  canvas.width = output.width;
+  canvas.height = output.height;
   const context = canvas.getContext("2d");
   if (!context) {
     bitmap.close();
     throw new Error("canvas unavailable");
   }
   context.imageSmoothingQuality = "high";
-  const { x, y, width, height } = plan.source;
-  context.drawImage(bitmap, x, y, width, height, 0, 0, plan.output.width, plan.output.height);
+  context.drawImage(bitmap, kept.x, kept.y, kept.width, kept.height, 0, 0, output.width, output.height);
   bitmap.close();
 
-  const blob = (await encodeCanvas(canvas, context, source.type))?.blob;
+  const blob = (await encodeCanvas(canvas, context, source.type, quality))?.blob;
   if (!blob) throw new Error("encoding failed");
-  return {
-    blob,
-    mime: blob.type,
-    width: plan.output.width,
-    height: plan.output.height,
-    natural,
-    kept: plan.source,
-  };
+  return { blob, mime: blob.type, ...output, natural, kept };
 }
 
 /**
- * Encodes a canvas as WebP: by the canvas where the browser can, else by the
- * WebAssembly worker (Safari), else in {@link fallbackEncoding}'s format.
- * Whether the canvas can is asked once (see {@link canvasWritesWebp}); the
- * result's own type is still checked, in case a browser that said yes writes
- * something else after all. `step` lowers the quality, for an image being
- * made smaller to fit.
+ * How much of `area` of the image is flat colour ({@link flatShare}), looked
+ * at in a small copy ({@link SAMPLE}), which takes a few milliseconds
+ * whatever the image's size. Null when it cannot be looked at, and the image
+ * is then written as a photo, as every image was before.
+ */
+function flatnessOf(bitmap: ImageBitmap, area: Rect): number | null {
+  const size = fitSize(area, SAMPLE);
+  const canvas = document.createElement("canvas");
+  canvas.width = size.width;
+  canvas.height = size.height;
+  // Read back once and never shown: kept in memory rather than on the GPU.
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return null;
+  try {
+    context.drawImage(bitmap, area.x, area.y, area.width, area.height, 0, 0, size.width, size.height);
+    return flatShare(context.getImageData(0, 0, size.width, size.height).data, size.width, size.height);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Encodes a canvas as WebP at `quality`: by the canvas where the browser can,
+ * else by the WebAssembly worker (Safari), else in {@link fallbackEncoding}'s
+ * format. Whether the canvas can is asked once (see {@link canvasWritesWebp});
+ * the result's own type is still checked, in case a browser that said yes
+ * writes something else after all. `step` lowers the fallback's quality too,
+ * for an image being made smaller to fit.
  */
 async function encodeCanvas(
   canvas: HTMLCanvasElement,
   context: CanvasRenderingContext2D,
   sourceMime: string,
+  quality: number,
   step = 0,
   trial = false,
 ): Promise<{ blob: Blob; by: WriteTrace["by"]; details: Partial<WriteTrace> } | null> {
-  const quality = WEBP_QUALITY - step * QUALITY_STEP;
   const details: Partial<WriteTrace> = {};
   let transparent: boolean | null = null;
   if (await canvasWritesWebp()) {

@@ -20,16 +20,8 @@ import type { CropTarget } from "@/components/editor/image-crop";
 import { vault } from "@/lib/crypto/vault";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
 import { AttachmentUnavailableError, idFromRef, loadAttachmentBlob } from "@/lib/media/attachments";
-import { type CroppedImage, MAX_IMAGE_EDGE, cropImage } from "@/lib/media/compress";
-import {
-  PERCENT,
-  type Rect,
-  type Size,
-  WHOLE,
-  aspectCrop,
-  keepsWholeImage,
-  planCrop,
-} from "@/lib/media/crop";
+import { type CroppedImage, cropImage } from "@/lib/media/compress";
+import { PERCENT, type Rect, type Size, WHOLE, aspectCrop, cropSource, keepsWholeImage } from "@/lib/media/crop";
 import { cn } from "@/lib/utils";
 import styles from "./image-crop-dialog.module.css";
 
@@ -145,9 +137,7 @@ export function ImageCropDialog({
     };
   }, [client, target.originalUrl, onCancel]);
 
-  const unchanged = natural
-    ? keepsWholeImage(planCrop(crop, PERCENT, natural, MAX_IMAGE_EDGE), natural)
-    : true;
+  const unchanged = natural ? keepsWholeImage(cropSource(crop, PERCENT, natural), natural) : true;
 
   const choose = (next: number | undefined) => {
     setAspect(next);

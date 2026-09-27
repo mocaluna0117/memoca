@@ -14,11 +14,14 @@ import { forgetWebpSupport } from "@/lib/media/webp-encoder";
 /**
  * jsdom has no canvas: this one writes WebP of `written` bytes (a number, or
  * worked out from the width written) for an image of `size`, which `decodes`
- * says can be read.
+ * says can be read. The small copy an image is judged from (the canvas made
+ * to be read back) shows a photo's grain.
  */
 let written: number | ((width: number) => number);
 let decodes: boolean;
 let size: { width: number; height: number };
+/** The widths images were written at. */
+let widths: number[];
 
 beforeEach(async () => {
   await resetLocalData();
@@ -26,14 +29,20 @@ beforeEach(async () => {
   written = 100;
   decodes = true;
   size = { width: 400, height: 300 };
+  widths = [];
   vi.stubGlobal("createImageBitmap", async () => {
     if (!decodes) throw new DOMException("The source image could not be decoded.");
     return { ...size, close() {} };
   });
-  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation((() => ({
+  vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockImplementation(((
+    _type: string,
+    options?: { willReadFrequently?: boolean },
+  ) => ({
     drawImage() {},
     getImageData: (_x: number, _y: number, w: number, h: number) => ({
-      data: new Uint8ClampedArray(w * h * 4).fill(255),
+      data: options?.willReadFrequently
+        ? Uint8ClampedArray.from({ length: w * h * 4 }, (_, i) => (i * 37) % 251)
+        : new Uint8ClampedArray(w * h * 4).fill(255),
     }),
   })) as never);
   vi.spyOn(HTMLCanvasElement.prototype, "toBlob").mockImplementation(function (
@@ -41,6 +50,7 @@ beforeEach(async () => {
     callback,
     type,
   ) {
+    widths.push(this.width);
     const bytes = typeof written === "number" ? written : written(this.width);
     callback(new Blob([new Uint8Array(bytes)], { type: type ?? "image/png" }));
   });
@@ -106,6 +116,8 @@ describe("getting a file ready to add", () => {
       limits: { maxImageBytes: 5_000, maxVideoBytes: 50_000 },
     });
     expect(prepared).toMatchObject({ width: 1600, height: 1200 });
+    // A photo: written at 2048 first, as photos are.
+    expect(widths.filter((width) => width > 1)).toEqual([2048, 1600]);
   });
 
   test("an image still over the limit for one image says what the limit is", async () => {

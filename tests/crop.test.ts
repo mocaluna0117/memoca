@@ -3,97 +3,104 @@ import {
   PERCENT,
   WHOLE,
   aspectCrop,
+  cropSource,
   fallbackEncoding,
+  fitSize,
   hasTransparency,
   keepsWholeImage,
   mayHideTransparency,
-  planCrop,
   scaledPreviewWidth,
 } from "@/lib/media/crop";
 
 const photo = { width: 400, height: 300 };
 
-describe("planCrop", () => {
+describe("cropSource", () => {
   test("maps a percent crop onto whole source pixels", () => {
-    const plan = planCrop({ x: 0, y: 0, width: 50, height: 50 }, PERCENT, photo, 2048);
-    expect(plan).toEqual({
-      source: { x: 0, y: 0, width: 200, height: 150 },
-      output: { width: 200, height: 150 },
+    expect(cropSource({ x: 0, y: 0, width: 50, height: 50 }, PERCENT, photo)).toEqual({
+      x: 0,
+      y: 0,
+      width: 200,
+      height: 150,
     });
   });
 
   test("maps a crop measured on a shrunken preview onto the full image", () => {
     // The image shown at 380 x 285, the right half chosen.
-    const plan = planCrop(
-      { x: 190, y: 0, width: 190, height: 285 },
-      { width: 380, height: 285 },
-      photo,
-      2048,
-    );
-    expect(plan.source).toEqual({ x: 200, y: 0, width: 200, height: 300 });
+    const source = cropSource({ x: 190, y: 0, width: 190, height: 285 }, { width: 380, height: 285 }, photo);
+    expect(source).toEqual({ x: 200, y: 0, width: 200, height: 300 });
   });
 
   test("rounds the edges, so neighbouring crops meet without a gap", () => {
-    const left = planCrop(
-      { x: 0, y: 0, width: 33.3, height: 100 },
-      PERCENT,
-      { width: 100, height: 10 },
-      2048,
-    );
-    const right = planCrop(
-      { x: 33.3, y: 0, width: 66.7, height: 100 },
-      PERCENT,
-      { width: 100, height: 10 },
-      2048,
-    );
-    expect(left.source.x + left.source.width).toBe(right.source.x);
-    expect(right.source.x + right.source.width).toBe(100);
+    const strip = { width: 100, height: 10 };
+    const left = cropSource({ x: 0, y: 0, width: 33.3, height: 100 }, PERCENT, strip);
+    const right = cropSource({ x: 33.3, y: 0, width: 66.7, height: 100 }, PERCENT, strip);
+    expect(left.x + left.width).toBe(right.x);
+    expect(right.x + right.width).toBe(100);
   });
 
   test("keeps a crop that spills over the edge inside the image", () => {
-    const plan = planCrop({ x: 90, y: -5, width: 20, height: 110 }, PERCENT, photo, 2048);
-    expect(plan.source).toEqual({ x: 360, y: 0, width: 40, height: 300 });
+    const source = cropSource({ x: 90, y: -5, width: 20, height: 110 }, PERCENT, photo);
+    expect(source).toEqual({ x: 360, y: 0, width: 40, height: 300 });
   });
 
   test("never produces an empty image", () => {
-    const plan = planCrop({ x: 100, y: 100, width: 0, height: 0 }, PERCENT, photo, 2048);
-    expect(plan.source).toEqual({ x: 399, y: 299, width: 1, height: 1 });
-    expect(plan.output).toEqual({ width: 1, height: 1 });
+    const source = cropSource({ x: 100, y: 100, width: 0, height: 0 }, PERCENT, photo);
+    expect(source).toEqual({ x: 399, y: 299, width: 1, height: 1 });
+  });
+});
+
+describe("fitSize", () => {
+  test("brings the long edge down to its cap, keeping the shape", () => {
+    expect(fitSize({ width: 4000, height: 3000 }, { maxEdge: 2048 })).toEqual({ width: 2048, height: 1536 });
+    expect(fitSize({ width: 3000, height: 4000 }, { maxEdge: 2048 })).toEqual({ width: 1536, height: 2048 });
   });
 
-  test("shrinks the result to the long-edge cap, keeping its shape", () => {
-    const plan = planCrop(WHOLE, PERCENT, { width: 4000, height: 3000 }, 2048);
-    expect(plan.source).toEqual({ x: 0, y: 0, width: 4000, height: 3000 });
-    expect(plan.output).toEqual({ width: 2048, height: 1536 });
+  test("brings the pixels in all down to theirs", () => {
+    // A Mac's screenshot, twice the size of its 1710 x 1107 screen.
+    const size = fitSize({ width: 3420, height: 2214 }, { maxEdge: 4096, maxPixels: 4_000_000 });
+    expect(size).toEqual({ width: 2486, height: 1609 });
+    expect(size.width * size.height).toBeLessThanOrEqual(4_000_000);
   });
 
-  test("leaves a crop under the cap at its own size", () => {
-    const plan = planCrop(
-      { x: 0, y: 0, width: 25, height: 25 },
-      PERCENT,
-      { width: 4000, height: 3000 },
-      2048,
-    );
-    expect(plan.output).toEqual({ width: 1000, height: 750 });
+  test("whichever cap is the tighter one wins", () => {
+    // A long capture, 6.5 million pixels: within the pixels it would still be 4714 tall.
+    expect(fitSize({ width: 1080, height: 6000 }, { maxEdge: 4096, maxPixels: 4_000_000 })).toEqual({
+      width: 737,
+      height: 4096,
+    });
+  });
+
+  test("leaves an image at its own size when it would come out only a little smaller", () => {
+    const fit = { maxEdge: 4096, maxPixels: 4_000_000, keepFrom: 0.9 };
+    // 0.997 and 0.969 of its size: kept.
+    expect(fitSize({ width: 1344, height: 2992 }, fit)).toEqual({ width: 1344, height: 2992 });
+    expect(fitSize({ width: 2560, height: 1664 }, fit)).toEqual({ width: 2560, height: 1664 });
+    // Exactly 0.9: kept too.
+    expect(fitSize({ width: 4000, height: 1000 }, { maxEdge: 3600, keepFrom: 0.9 })).toEqual({
+      width: 4000,
+      height: 1000,
+    });
+    // 0.727: made smaller, as it would be without.
+    expect(fitSize({ width: 3420, height: 2214 }, fit)).toEqual({ width: 2486, height: 1609 });
+  });
+
+  test("never makes an image larger, and never less than a pixel either way", () => {
+    expect(fitSize({ width: 1000, height: 750 }, { maxEdge: 2048, maxPixels: 4_000_000 })).toEqual({
+      width: 1000,
+      height: 750,
+    });
+    expect(fitSize({ width: 10_000, height: 1 }, { maxEdge: 100 })).toEqual({ width: 100, height: 1 });
   });
 });
 
 describe("keepsWholeImage", () => {
   test("is true only when nothing would be cut", () => {
-    expect(keepsWholeImage(planCrop(WHOLE, PERCENT, photo, 2048), photo)).toBe(true);
+    expect(keepsWholeImage(cropSource(WHOLE, PERCENT, photo), photo)).toBe(true);
     // A fraction of a pixel short still rounds to the whole image.
-    expect(
-      keepsWholeImage(
-        planCrop({ x: 0.05, y: 0, width: 99.9, height: 100 }, PERCENT, photo, 2048),
-        photo,
-      ),
-    ).toBe(true);
-    expect(
-      keepsWholeImage(
-        planCrop({ x: 0, y: 0, width: 99, height: 100 }, PERCENT, photo, 2048),
-        photo,
-      ),
-    ).toBe(false);
+    expect(keepsWholeImage(cropSource({ x: 0.05, y: 0, width: 99.9, height: 100 }, PERCENT, photo), photo)).toBe(
+      true,
+    );
+    expect(keepsWholeImage(cropSource({ x: 0, y: 0, width: 99, height: 100 }, PERCENT, photo), photo)).toBe(false);
   });
 });
 
@@ -104,14 +111,12 @@ describe("aspectCrop", () => {
     expect(crop.height).toBe(100);
     expect(crop.width).toBeCloseTo(75);
     expect(crop.x).toBeCloseTo(12.5);
-    const { source } = planCrop(crop, PERCENT, photo, 2048);
-    expect(source).toEqual({ x: 50, y: 0, width: 300, height: 300 });
+    expect(cropSource(crop, PERCENT, photo)).toEqual({ x: 50, y: 0, width: 300, height: 300 });
   });
 
   test("a wide shape from a tall image uses its full width, centred", () => {
     const tall = { width: 900, height: 1600 };
-    const { source } = planCrop(aspectCrop(16 / 9, tall), PERCENT, tall, 2048);
-    expect(source).toEqual({ x: 0, y: 547, width: 900, height: 506 });
+    expect(cropSource(aspectCrop(16 / 9, tall), PERCENT, tall)).toEqual({ x: 0, y: 547, width: 900, height: 506 });
   });
 
   test("the image's own shape keeps all of it", () => {
