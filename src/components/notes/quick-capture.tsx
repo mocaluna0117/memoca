@@ -209,7 +209,7 @@ function Capture({
 
         draft.current?.cancel();
         // A draft left behind only comes back next time: not a failed save.
-        await clearDraft().catch(() => undefined);
+        await clearDraft(userKey).catch(() => undefined);
         if (windowed) {
           show("");
           setStatus({ kind: "saved", noteId });

@@ -33,11 +33,13 @@ test.describe("the quick note in a window of its own", () => {
     await expect(page.getByText("Ctrl + Enter で保存 ・ Esc で閉じる")).toBeVisible();
     const field = page.getByLabel("即席メモ");
     await field.fill("窓から保存\n本文");
+    // Kept as a draft while it is being written...
+    await expect.poll(() => hasDraft(page)).toBe(true);
     await field.press("Control+Enter");
     await expect(page.getByRole("status").filter({ hasText: "保存しました" })).toBeVisible();
     await expect(field).toHaveValue("");
     await expect(page).toHaveURL(/\/quick\?window=1$/);
-    // Saved, it is not a draft any more.
+    // ...and, saved, not any more.
     await expect.poll(() => hasDraft(page)).toBe(false);
 
     // No window of the app's opened this one: the note opens in a new one,

@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  ANSWER_MS,
   type MemocaShell,
+  OPENED_NOTE,
   OPEN_NOTE,
   closeQuickWindow,
   inShell,
@@ -11,10 +13,15 @@ const shell = (): MemocaShell => ({ hide: vi.fn(), openExternal: vi.fn(), platfo
 
 /** A window as these helpers see it: what it holds, and what was asked of it. */
 function windowWith(over: Partial<Window> = {}) {
+  // Messages sent to this window, as the app's window answers.
+  const inbox = new EventTarget();
   return {
     close: vi.fn(),
     opener: null,
     location: { origin: "https://memoca-app.vercel.app", assign: vi.fn() },
+    addEventListener: inbox.addEventListener.bind(inbox),
+    removeEventListener: inbox.removeEventListener.bind(inbox),
+    dispatchEvent: inbox.dispatchEvent.bind(inbox),
     ...over,
   } as unknown as Window & {
     close: ReturnType<typeof vi.fn>;
@@ -80,7 +87,12 @@ describe("openNoteInApp", () => {
     expect(here.location.assign).not.toHaveBeenCalled();
   });
 
+  /** The app's window answering, as it does once it has moved to a note. */
+  const answer = (here: Window, data: unknown, origin = "https://memoca-app.vercel.app") =>
+    here.dispatchEvent(new MessageEvent("message", { data, origin }));
+
   test("from a window the app opened, tells the app there to move to it, and brings it forward", () => {
+    vi.useFakeTimers();
     const opener = openerAt("/app");
     const here = windowWith({ opener: opener as unknown as Window, open: vi.fn() });
     openNoteInApp("abc", here);
@@ -89,10 +101,29 @@ describe("openNoteInApp", () => {
       { type: OPEN_NOTE, noteId: "abc" },
       "https://memoca-app.vercel.app",
     );
-    expect(opener.location.assign).not.toHaveBeenCalled();
     expect(opener.focus).toHaveBeenCalledOnce();
+    answer(here, { type: OPENED_NOTE, noteId: "abc" });
+    vi.advanceTimersByTime(ANSWER_MS * 2);
+    expect(opener.location.assign).not.toHaveBeenCalled();
     expect(here.open).not.toHaveBeenCalled();
     expect(here.location.assign).not.toHaveBeenCalled();
+    vi.useRealTimers();
+  });
+
+  test("an app's window that does not answer, of an earlier version say, is loaded with the note after all", () => {
+    vi.useFakeTimers();
+    const opener = openerAt("/app");
+    const here = windowWith({ opener: opener as unknown as Window, open: vi.fn() });
+    openNoteInApp("abc", here);
+    // Answers that are not its: about another note, or from another site.
+    answer(here, { type: OPENED_NOTE, noteId: "other" });
+    answer(here, { type: OPENED_NOTE, noteId: "abc" }, "https://evil.example");
+    vi.advanceTimersByTime(ANSWER_MS - 1);
+    expect(opener.location.assign).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(opener.location.assign).toHaveBeenCalledWith(path);
+    expect(here.open).not.toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
   test("a window that opened this one and has since left the app is loaded with the note", () => {

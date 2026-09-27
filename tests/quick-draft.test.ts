@@ -34,7 +34,7 @@ afterEach(async () => {
   setVisibility("visible");
   await settle();
   vi.useRealTimers();
-  await clearDraft();
+  await clearDraft(ME);
 });
 
 describe("the quick note's draft", () => {
@@ -145,6 +145,17 @@ describe("the quick note's draft", () => {
     expect(await textOf()).toBe("閉じる前");
     // A fresh one, for afterEach to put away.
     keeper = keepDraft(ME);
+  });
+
+  test("is forgotten only by the account that wrote it", async () => {
+    await setMeta(META.quickDraft, { text: "前の人の下書き", updatedAt: 0, userKey: "user-other" });
+    // An empty field here, and a save, say nothing about another account's draft.
+    keeper.update("");
+    await keeper.flush(true);
+    await clearDraft(ME);
+    expect(await textOf("user-other")).toBe("前の人の下書き");
+    await clearDraft("user-other");
+    expect(await textOf("user-other")).toBeNull();
   });
 
   test("is the account's that wrote it: another signed in on the device is not shown it", async () => {

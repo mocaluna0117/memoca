@@ -3,7 +3,7 @@ import { act } from "react";
 import { type Root, createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as Y from "yjs";
-import { resetLocalData, setMeta } from "@/lib/db";
+import { db, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { DRAFT_DELAY_MS, loadDraft } from "@/lib/quick/draft";
 import { bodyFragment } from "@/lib/sync/ydoc";
@@ -269,6 +269,24 @@ describe("the quick note's window, closing", () => {
     expect(await atClose).toMatchObject({ text: "閉じる前" });
   });
 
+  test("Esc does not put the window away until the draft is on the device", async () => {
+    await render();
+    await type("閉じる前");
+    const table = db().meta;
+    const put = table.put.bind(table);
+    let written!: () => void;
+    vi.spyOn(table, "put").mockImplementation(
+      ((row: unknown) =>
+        new Promise((resolve) => (written = () => resolve(put(row as never))))) as never,
+    );
+    await key({ key: "Escape" }, document);
+    expect(h.closed).not.toHaveBeenCalled();
+    await act(async () => written());
+    await settle();
+    expect(h.closed).toHaveBeenCalledOnce();
+    vi.restoreAllMocks();
+  });
+
   test("Esc waits for a save under way, and the window shown again does not still say saved", async () => {
     let made!: (noteId: string) => void;
     h.createNote.mockImplementation(() => new Promise((resolve) => (made = resolve)));
@@ -357,7 +375,9 @@ describe("the quick note's draft, coming back", () => {
     await act(async () => root.render(<QuickCapture />));
     await settle();
     expect(field().value).toBe("");
-    // What the last one had typed is kept as its draft, for it alone.
+    // What the last one had typed is kept as its draft, for it alone, and
+    // the next one's empty field, written in its turn, does not forget it.
+    await pause();
     expect((await loadDraft(ME))?.text).toBe("私の");
     expect(await loadDraft("user-next")).toBeNull();
   });

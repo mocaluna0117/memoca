@@ -19,12 +19,24 @@ export async function loadDraft(userKey: string): Promise<QuickDraft | null> {
   return draft && draft.userKey === userKey ? draft : null;
 }
 
-export const clearDraft = () => db().meta.delete(META.quickDraft);
+/**
+ * Forgets this account's draft. One of another account's, left on the device
+ * when it signed in, is not this one's to forget: an empty field there says
+ * nothing about it.
+ */
+export function clearDraft(userKey: string): Promise<void> {
+  const database = db();
+  return database.transaction("rw", database.meta, async () => {
+    const draft = await getMeta<Partial<QuickDraft> | null>(META.quickDraft, null);
+    if (draft && draft.userKey !== userKey) return;
+    await database.meta.delete(META.quickDraft);
+  });
+}
 
 /** Writes the draft, or forgets it once there is nothing in it. */
 function writeDraft(text: string, userKey: string): Promise<void> {
   return text.trim() === ""
-    ? clearDraft()
+    ? clearDraft(userKey)
     : setMeta(META.quickDraft, { text, updatedAt: Date.now(), userKey } satisfies QuickDraft);
 }
 

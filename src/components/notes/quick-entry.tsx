@@ -3,7 +3,12 @@
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect } from "react";
 import { useWorkspace } from "@/lib/hooks/workspace";
-import { OPEN_NOTE, type OpenNoteMessage } from "@/lib/quick/shell";
+import {
+  OPENED_NOTE,
+  OPEN_NOTE,
+  type OpenedNoteMessage,
+  type OpenNoteMessage,
+} from "@/lib/quick/shell";
 
 /** The quick note's own window, as the web app opens it: one, reused. */
 const QUICK_WINDOW = {
@@ -53,7 +58,7 @@ const typing = (target: EventTarget | null) =>
 
 /**
  * Q opens the quick note from anywhere in the app, but for while something
- * is being typed, or a dialog is open.
+ * is being typed, or a dialog or a menu is open.
  */
 export function QuickNoteShortcut() {
   const openQuickNote = useOpenQuickNote();
@@ -61,10 +66,11 @@ export function QuickNoteShortcut() {
     const onKey = (event: KeyboardEvent) => {
       if (event.key.toLowerCase() !== "q" || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.isComposing || event.repeat || typing(event.target)) return;
-      // One still on its way out after closing counts for nothing.
+      // A menu's keys are its own (Q picks an item starting with it). One still
+      // on its way out after closing counts for nothing.
       if (
         document.querySelector(
-          '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]',
+          '[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"], [role="menu"][data-state="open"]',
         )
       )
         return;
@@ -79,8 +85,9 @@ export function QuickNoteShortcut() {
 
 /**
  * Moves the app to a note the quick note's window saved and was asked to
- * open here: within the app, so the vault stays as it was. Only messages
- * from the app's own origin are heeded.
+ * open here: within the app, so the vault stays as it was, and says so, or
+ * the quick note's window loads it here after all. Only messages from the
+ * app's own origin are heeded.
  */
 export function OpenNoteFromQuickWindow() {
   const { openNote } = useWorkspace();
@@ -90,6 +97,10 @@ export function OpenNoteFromQuickWindow() {
       const data = event.data as Partial<OpenNoteMessage> | null;
       if (data?.type !== OPEN_NOTE || typeof data.noteId !== "string") return;
       openNote(data.noteId);
+      (event.source as Window | null)?.postMessage(
+        { type: OPENED_NOTE, noteId: data.noteId } satisfies OpenedNoteMessage,
+        event.origin,
+      );
     };
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);

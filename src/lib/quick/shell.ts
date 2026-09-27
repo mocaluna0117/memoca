@@ -43,13 +43,24 @@ export function closeQuickWindow(here: Window = window): void {
 export const OPEN_NOTE = "memoca:open-note";
 export type OpenNoteMessage = { type: typeof OPEN_NOTE; noteId: string };
 
+/** The app's window's answer: it has moved to the note. */
+export const OPENED_NOTE = "memoca:opened-note";
+export type OpenedNoteMessage = { type: typeof OPENED_NOTE; noteId: string };
+
+/**
+ * How long the app's window has to answer before it is loaded with the note
+ * instead: one of an earlier version of the app, open since before the quick
+ * note could ask, does not listen.
+ */
+export const ANSWER_MS = 800;
+
 /**
  * Opens a note just saved, from the quick note's window: in the browser,
  * from the shell. From a window the app opened, in the app there, told to
- * move to it rather than loaded again, which would close its vault; or, if
- * that window has left the app, loaded there. With no window of the app
- * at hand, in a new one, so this one stays the quick note. `here` as for
- * {@link closeQuickWindow}.
+ * move to it rather than loaded again, which would close its vault (loaded
+ * after all if it does not answer); or, if that window has left the app,
+ * loaded there. With no window of the app at hand, in a new one, so this
+ * one stays the quick note. `here` as for {@link closeQuickWindow}.
  */
 export function openNoteInApp(noteId: string, here: Window = window): void {
   const path = `/app?${new URLSearchParams({ n: noteId })}`;
@@ -61,6 +72,22 @@ export function openNoteInApp(noteId: string, here: Window = window): void {
   if (opener && !opener.closed) {
     try {
       if (opener.location.pathname.startsWith("/app")) {
+        const answered = (event: MessageEvent) => {
+          const data = event.data as Partial<OpenedNoteMessage> | null;
+          if (event.origin !== here.location.origin || data?.type !== OPENED_NOTE) return;
+          if (data.noteId !== noteId) return;
+          clearTimeout(unanswered);
+          here.removeEventListener("message", answered);
+        };
+        const unanswered = setTimeout(() => {
+          here.removeEventListener("message", answered);
+          try {
+            opener.location.assign(path);
+          } catch {
+            // Gone, or elsewhere since: nothing to load it in.
+          }
+        }, ANSWER_MS);
+        here.addEventListener("message", answered);
         opener.postMessage(
           { type: OPEN_NOTE, noteId } satisfies OpenNoteMessage,
           here.location.origin,

@@ -34,19 +34,26 @@ test.describe("opening the quick note on a computer", () => {
     const field = popup.getByLabel("即席メモ");
     await field.fill("サイドバーから");
     await field.press("Control+Enter");
-    await page.evaluate(() => {
-      (window as unknown as { stayed: boolean }).stayed = true;
-    });
+    for (const window_ of [page, popup]) {
+      await window_.evaluate(() => {
+        (window as unknown as { stayed: boolean }).stayed = true;
+      });
+    }
     await popup.getByRole("button", { name: "メモを開く" }).click();
 
     // In the window it was opened from, rather than in the small one...
     await expect(page).toHaveURL(/\/app\?n=/);
     await expect(page.getByLabel("メモのタイトル")).toHaveValue("サイドバーから");
     await expect(popup).toHaveURL(/\/quick\?window=1$/);
-    // ...and without loading it again, which would close its vault.
-    expect(await page.evaluate(() => (window as unknown as { stayed?: boolean }).stayed)).toBe(
-      true,
-    );
+    // ...and without loading it again, which would close its vault; nor was
+    // the small one loaded with it, once the app had answered.
+    await popup.waitForTimeout(1_000);
+    for (const window_ of [page, popup]) {
+      expect(await window_.evaluate(() => (window as unknown as { stayed?: boolean }).stayed)).toBe(
+        true,
+      );
+    }
+    await expect(popup).toHaveURL(/\/quick\?window=1$/);
   });
 
   test("from ⌘K", async ({ page, context }) => {
