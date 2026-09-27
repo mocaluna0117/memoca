@@ -1,9 +1,9 @@
 "use client";
 
-import { ConvexBetterAuthProvider } from "@convex-dev/better-auth/react";
 import { ConvexReactClient } from "convex/react";
 import { ThemeProvider } from "next-themes";
-import type { ComponentProps, ReactNode } from "react";
+import type { ReactNode } from "react";
+import { type AuthClientForConvex, ConvexWithBetterAuth } from "@/components/providers/convex-auth";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { authClient } from "@/lib/auth/client";
@@ -28,15 +28,10 @@ export function AppProviders({
   initialToken?: string | null;
 }) {
   return (
-    <ConvexBetterAuthProvider
+    <ConvexWithBetterAuth
       client={convex}
-      // The adapter types its prop against its own inferred client shape;
-      // ours differs only in plugin generics, so the cast is at the boundary.
-      authClient={
-        authClient as unknown as ComponentProps<
-          typeof ConvexBetterAuthProvider
-        >["authClient"]
-      }
+      // The client's types come from its plugins; only these two calls are used.
+      authClient={authClient as unknown as AuthClientForConvex}
       initialToken={initialToken}
     >
       <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
@@ -45,6 +40,6 @@ export function AppProviders({
           <Toaster position="top-center" richColors closeButton />
         </TooltipProvider>
       </ThemeProvider>
-    </ConvexBetterAuthProvider>
+    </ConvexWithBetterAuth>
   );
 }
