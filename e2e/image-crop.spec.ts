@@ -94,7 +94,16 @@ async function expectInReach(page: Page, dialog: Locator, handles: string[]): Pr
 
 /** The shown image is the top-left quarter of the 400 x 300 original: about 200 x 150, all red. */
 async function expectTopLeftQuarter(image: Locator): Promise<{ w: number; h: number }> {
-  await expect.poll(async () => (await natural(image)).w, { timeout: 20_000 }).toBeLessThan(400);
+  // Loaded as the trimmed one: an image still loading reads as 0 wide.
+  await expect
+    .poll(
+      async () => {
+        const { w } = await natural(image);
+        return w > 0 && w < 400;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe(true);
   const size = await natural(image);
   expect(Math.abs(size.w - 200), `width ${size.w}`).toBeLessThanOrEqual(2);
   expect(Math.abs(size.h - 150), `height ${size.h}`).toBeLessThanOrEqual(2);
