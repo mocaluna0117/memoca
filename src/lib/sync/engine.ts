@@ -13,7 +13,7 @@ import { META, deviceId as ensureDeviceId } from "@/lib/db/meta";
 import { type PullBatch, applyBatch } from "./apply";
 import { loadClock, syncClock } from "./clock";
 import { onOutboxChanged } from "./signal";
-import { applyRemote, reloadDoc, withDetachedDoc } from "./docs";
+import { applyRemote, migrateOpenDoc, reloadDoc, withDetachedDoc } from "./docs";
 import { extractText, firstLine } from "./ydoc";
 
 /** Bytes of operations to send in one push. The server accepts up to 4 MiB. */
@@ -229,6 +229,14 @@ export class SyncEngine {
         // Wrong epoch or locked vault: the body refetch will sort it out.
       }
     }
+    // With every update above in, an open note they reached is as up to date
+    // as it gets, and an old quick note among them is rewritten as opening it
+    // would have been; not after each update, as a later one may be another
+    // device's rewrite. One with a body still to fetch waits for that.
+    const fetching = new Set(needBodies);
+    for (const noteId of new Set(incoming.map((update) => update.noteId))) {
+      if (!fetching.has(noteId)) await migrateOpenDoc(noteId);
+    }
 
     for (const noteId of reload) await reloadDoc(noteId);
     if (needBodies.length > 0) {
@@ -321,6 +329,10 @@ export class SyncEngine {
 
     await reloadDoc(body.noteId);
     await this.refreshText(body.noteId, through, body.keyEpoch);
+    // An old quick note open meanwhile is rewritten as opening it would have
+    // been: only now, with how far the local copy reaches recorded, as until
+    // then it counts as behind.
+    await migrateOpenDoc(body.noteId);
   }
 
   /** Recomputes the searchable text and preview after the body changed. */

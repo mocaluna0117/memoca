@@ -3,7 +3,7 @@
 import { uuidv7 } from "uuidv7";
 import * as Y from "yjs";
 import { toArrayBuffer, toBytes } from "@/lib/bytes";
-import { db } from "@/lib/db";
+import { type BodyState, db } from "@/lib/db";
 import { vault } from "@/lib/crypto/vault";
 import { migrateOldQuickBody } from "@/lib/quick/body";
 import type { Note } from "@/lib/types";
@@ -220,6 +220,28 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
   announce(handle.noteId);
 }
 
+/**
+ * Puts the body of a quick note written before its body was shaped as
+ * BlockNote shapes it into that shape, as an edit like any other: the
+ * observer records it, and it is saved and sent, encrypted for a locked
+ * note. Once stored, the note opens in the new shape and is left alone.
+ *
+ * Two devices that both rewrite the note before either has the other's
+ * rewrite leave two copies of the body: the editor shows one, and drops the
+ * other with anything typed into it meanwhile. That takes opening the note
+ * on both while one is offline, since online a rewrite is sent within a
+ * second or so. A copy known to be behind the server is not rewritten, as
+ * what it lacks may be just such a rewrite. Nor is a locked note while the
+ * vault is closed: what could not be read is not in the document.
+ */
+function migrateIfWhole(doc: Y.Doc, note: Note | undefined, body: BodyState | undefined): void {
+  if (!note || !body || body.keyEpoch !== note.keyEpoch || body.throughSeq < note.lastUpdateSeq) {
+    return;
+  }
+  if (note.locked && !vault.isUnlocked) return;
+  migrateOldQuickBody(doc);
+}
+
 /** Documents being built from storage, shared by everyone who asks meanwhile. */
 const opening = new Map<string, Promise<Handle>>();
 
@@ -253,22 +275,9 @@ async function openHandle(noteId: string): Promise<Handle> {
   doc.on("update", observer);
   handle.detach = () => doc.off("update", observer);
 
-  // A quick note written before its body was shaped as BlockNote shapes it is
-  // rewritten in that shape before any editor gets the document, as an edit
-  // like any other: the observer records it, and it is saved and sent. A
-  // locked note's body is decrypted by now (or empty, with the vault closed),
-  // and its rewrite is saved encrypted. Once stored, the note opens in the
-  // new shape and is left alone.
-  //
-  // Two devices that both rewrite the note before either has the other's
-  // rewrite leave two copies of the body: the editor shows one, and drops the
-  // other with anything typed into it meanwhile. That takes opening the note
-  // on both while one is offline, since online a rewrite is sent within a
-  // second or so. A copy known to be behind the server is not rewritten, as
-  // what it lacks may be just such a rewrite.
-  if (note && body && body.keyEpoch === note.keyEpoch && body.throughSeq >= note.lastUpdateSeq) {
-    migrateOldQuickBody(doc);
-  }
+  // Before any editor gets the document. A body that is not here yet is
+  // rewritten once it is (migrateOpenDoc).
+  migrateIfWhole(doc, note, body);
 
   handles.set(noteId, handle);
   return handle;
@@ -348,6 +357,27 @@ export async function reloadDoc(noteId: string): Promise<void> {
     fresh.destroy();
   }
   announce(noteId);
+}
+
+/**
+ * Rewrites an open note's body as opening it would have (migrateIfWhole),
+ * for a body that reached this device only after the note was opened: on a
+ * device still fetching bodies, or one that was behind. The engine calls
+ * this once what arrived is stored, in the open document, and counted in
+ * how far this device's copy reaches.
+ *
+ * It is the open document that is looked at, not what storage holds: a
+ * rewrite made here and not saved yet is in the one and not in the other,
+ * and is not made again.
+ */
+export async function migrateOpenDoc(noteId: string): Promise<void> {
+  const handle = handles.get(noteId);
+  if (!handle) return;
+  const database = db();
+  const [note, body] = await Promise.all([database.notes.get(noteId), database.bodies.get(noteId)]);
+  // Closed meanwhile: nobody is showing it any more.
+  if (handles.get(noteId) !== handle) return;
+  migrateIfWhole(handle.doc, note, body);
 }
 
 /**
