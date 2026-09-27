@@ -48,3 +48,44 @@ export function appendParagraphs(doc: Y.Doc, lines: string[]): void {
     }
   });
 }
+
+/**
+ * The lines of a body in the shape quick notes wrote before they wrote it as
+ * BlockNote does: a bare paragraph per line straight in the body, holding
+ * nothing but its text. Null for any other body, an empty one included.
+ */
+function oldQuickLines(fragment: Y.XmlFragment): string[] | null {
+  const nodes = fragment.toArray();
+  if (nodes.length === 0) return null;
+  const lines: string[] = [];
+  for (const node of nodes) {
+    if (!(node instanceof Y.XmlElement) || node.nodeName !== "paragraph") return null;
+    let line = "";
+    for (const part of node.toArray()) {
+      if (!(part instanceof Y.XmlText)) return null;
+      for (const chunk of part.toDelta() as { insert?: unknown }[]) {
+        if (typeof chunk.insert === "string") line += chunk.insert;
+      }
+    }
+    lines.push(line);
+  }
+  return lines;
+}
+
+/**
+ * Rewrites a body in that old shape as BlockNote writes one, line for line,
+ * empty lines included. BlockNote cannot open the old shape as it is: it
+ * nests each line inside the one before, and saves that at the first
+ * keystroke. Any other body is left as it is, so a body rewritten once is
+ * never rewritten again.
+ */
+export function migrateOldQuickBody(doc: Y.Doc): void {
+  const fragment = bodyFragment(doc);
+  const lines = oldQuickLines(fragment);
+  if (!lines) return;
+  // One transaction, so that the rewrite is a single edit.
+  doc.transact(() => {
+    fragment.delete(0, fragment.length);
+    appendParagraphs(doc, lines);
+  });
+}

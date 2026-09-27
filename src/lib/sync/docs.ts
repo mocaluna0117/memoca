@@ -5,6 +5,7 @@ import * as Y from "yjs";
 import { toArrayBuffer, toBytes } from "@/lib/bytes";
 import { db } from "@/lib/db";
 import { vault } from "@/lib/crypto/vault";
+import { migrateOldQuickBody } from "@/lib/quick/body";
 import type { Note } from "@/lib/types";
 import { enqueue } from "./outbox";
 import { ORIGIN, extractText, firstLine } from "./ydoc";
@@ -202,7 +203,8 @@ const opening = new Map<string, Promise<Handle>>();
 
 async function openHandle(noteId: string): Promise<Handle> {
   const doc = new Y.Doc();
-  const note = await db().notes.get(noteId);
+  const database = db();
+  const [note, body] = await Promise.all([database.notes.get(noteId), database.bodies.get(noteId)]);
   try {
     await hydrate(noteId, note, doc);
   } catch (error) {
@@ -227,6 +229,23 @@ async function openHandle(noteId: string): Promise<Handle> {
   };
   doc.on("update", observer);
   handle.detach = () => doc.off("update", observer);
+
+  // A quick note written before its body was shaped as BlockNote shapes it is
+  // rewritten in that shape before any editor gets the document, as an edit
+  // like any other: the observer records it, and it is saved and sent. A
+  // locked note's body is decrypted by now (or empty, with the vault closed),
+  // and its rewrite is saved encrypted. Once stored, the note opens in the
+  // new shape and is left alone.
+  //
+  // Two devices that both rewrite the note before either has the other's
+  // rewrite leave two copies of the body: the editor shows one, and drops the
+  // other with anything typed into it meanwhile. That takes opening the note
+  // on both while one is offline, since online a rewrite is sent within a
+  // second or so. A copy known to be behind the server is not rewritten, as
+  // what it lacks may be just such a rewrite.
+  if (note && body && body.keyEpoch === note.keyEpoch && body.throughSeq >= note.lastUpdateSeq) {
+    migrateOldQuickBody(doc);
+  }
 
   handles.set(noteId, handle);
   return handle;
