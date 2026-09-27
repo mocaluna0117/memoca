@@ -6,6 +6,7 @@ import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { Button } from "@/components/ui/button";
 import { signInWithGoogle } from "@/lib/auth/client";
+import { forCallback } from "@/lib/auth/next";
 import { t } from "@/lib/i18n/ja";
 
 function GoogleMark() {
@@ -36,13 +37,16 @@ export function SignInCard({ next }: { next: string }) {
   const router = useRouter();
   const status = useQuery(api.users.signupStatus);
   const [busy, setBusy] = useState(false);
+  const [failed, setFailed] = useState(false);
 
   const start = async () => {
     setBusy(true);
+    setFailed(false);
     try {
-      await signInWithGoogle(next);
+      await signInWithGoogle(forCallback(next));
     } catch {
       setBusy(false);
+      setFailed(true);
       router.refresh();
     }
   };
@@ -58,6 +62,12 @@ export function SignInCard({ next }: { next: string }) {
         <GoogleMark />
         {busy ? "ログイン中…" : t.action.signIn}
       </Button>
+
+      {failed ? (
+        <p role="alert" className="text-destructive text-sm">
+          ログインを始められませんでした。もう一度お試しください。
+        </p>
+      ) : null}
 
       {status && !status.open ? (
         <p className="text-muted-foreground text-xs leading-relaxed">
