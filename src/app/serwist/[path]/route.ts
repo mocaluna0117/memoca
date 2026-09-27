@@ -19,4 +19,8 @@ export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
     additionalPrecacheEntries: [
       { url: "/offline", revision: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev" },
     ],
+    // Which build the worker is of, for a page it takes over to compare with its own.
+    esbuildOptions: {
+      define: { MEMOCA_BUILD: JSON.stringify(process.env.VERCEL_GIT_COMMIT_SHA ?? "dev") },
+    },
   });

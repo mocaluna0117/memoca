@@ -25,6 +25,9 @@ declare global {
 
 declare const self: ServiceWorkerGlobalScope;
 
+/** The build this worker is of, written in by esbuild (serwist/[path]/route.ts). */
+declare const MEMOCA_BUILD: string;
+
 /** Pages served offline from a copy of their own, whatever their query string. */
 const SHELLS = new Set(["/app", "/quick"]);
 
@@ -214,6 +217,13 @@ const serwist: Serwist = new Serwist({
 });
 
 serwist.addEventListeners();
+
+// A page taken over asks which build this is: news to it only if not its own.
+self.addEventListener("message", (event) => {
+  if ((event.data as { type?: string } | null)?.type === "BUILD") {
+    event.ports[0]?.postMessage(MEMOCA_BUILD);
+  }
+});
 
 // A new version drops the previous one's files from the precache, which a
 // shell kept before it still loads: offline it would never start. Each shell
