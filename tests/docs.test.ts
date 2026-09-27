@@ -1,8 +1,20 @@
 import "fake-indexeddb/auto";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import * as Y from "yjs";
 import { db, resetLocalData } from "@/lib/db";
-import { acquireDoc, flushAll, flushDoc, openDoc, releaseDoc, reloadDoc } from "@/lib/sync/docs";
+import { appendParagraphs } from "@/lib/quick/body";
+import {
+  acquireDoc,
+  flushAll,
+  flushDoc,
+  hasUnsavedEdits,
+  openDoc,
+  releaseDoc,
+  reloadDoc,
+} from "@/lib/sync/docs";
+import { bodyFragment, extractText } from "@/lib/sync/ydoc";
 import type { Note } from "@/lib/types";
+import { valid } from "./helpers/blocknote";
 import { zero } from "./helpers/seed";
 
 const note = (noteId: string): Note => ({
@@ -26,9 +38,49 @@ const note = (noteId: string): Note => ({
 
 const saved = () => db().updates.where("noteId").equals("n1").count();
 
+/**
+ * Makes the next update fail to be stored, as a lost connection to storage
+ * or a full disk does.
+ */
+function failNextWrite() {
+  const updates = db().updates;
+  const add = updates.add.bind(updates);
+  let failed = false;
+  vi.spyOn(updates, "add").mockImplementation(((row: never) => {
+    if (failed) return add(row);
+    failed = true;
+    return Promise.reject(new Error("UnknownError: Connection to Indexed Database server lost"));
+  }) as never);
+}
+
+/** The note as storage has it, open or not: what a reload would read. */
+async function stored(): Promise<Y.Doc> {
+  const doc = new Y.Doc();
+  for (const row of await db().updates.where("noteId").equals("n1").toArray()) {
+    Y.applyUpdate(doc, row.data);
+  }
+  return doc;
+}
+
+/** The note as another device gets it: every update sent to the server. */
+async function elsewhere(): Promise<Y.Doc> {
+  const doc = new Y.Doc();
+  for (const op of await db().outbox.where("kind").equals("update").toArray()) {
+    Y.applyUpdate(doc, new Uint8Array((op.payload as { payload: ArrayBuffer }).payload));
+  }
+  return doc;
+}
+
 beforeEach(async () => {
   await resetLocalData();
   await db().notes.put(note("n1"));
+});
+
+afterEach(async () => {
+  vi.restoreAllMocks();
+  // A test that stopped half way leaves the note open: closed, so that the
+  // next one opens it afresh.
+  while (openDoc("n1")) await releaseDoc("n1");
 });
 
 describe("one live document per note", () => {
@@ -102,6 +154,94 @@ describe("reloading an open note from storage", () => {
     await reloadDoc("n1");
     // Nothing flushes it by hand: the usual short wait does.
     await vi.waitFor(async () => expect(await saved()).toBe(1), { timeout: 3_000, interval: 50 });
+    await releaseDoc("n1");
+  });
+});
+
+describe("an edit that could not be stored", () => {
+  test("is kept, and stored with the next one, which builds on it", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    failNextWrite();
+    await expect(flushDoc("n1")).rejects.toThrow("Connection");
+    expect(hasUnsavedEdits()).toBe(true);
+
+    doc.getText("t").insert(1, "二");
+    await flushDoc("n1");
+    expect(hasUnsavedEdits()).toBe(false);
+    expect((await stored()).getText("t").toString()).toBe("一二");
+    expect((await elsewhere()).getText("t").toString()).toBe("一二");
+    await releaseDoc("n1");
+  });
+
+  test("the quick note, saved again into the note a failed save made, is stored whole", async () => {
+    // What the quick note's save does with the body, each time it is pressed.
+    const save = async (lines: string[]) => {
+      const doc = await acquireDoc("n1");
+      try {
+        const fragment = bodyFragment(doc);
+        if (fragment.length > 0) doc.transact(() => fragment.delete(0, fragment.length));
+        appendParagraphs(doc, lines);
+      } finally {
+        await releaseDoc("n1");
+      }
+    };
+    failNextWrite();
+    await expect(save(["本文"])).rejects.toThrow("Connection");
+    // Still open, holding what it could not store, for the next save to find.
+    const kept = openDoc("n1");
+    expect(kept && extractText(kept)).toBe("本文");
+
+    await save(["本文", "続き"]);
+    expect(openDoc("n1")).toBeUndefined();
+    // Read afresh, as a reload does, and as another device gets it from the server.
+    for (const doc of [await stored(), await elsewhere()]) {
+      expect(extractText(doc)).toBe("本文\n続き");
+      expect(valid(doc)).toBe(true);
+      expect(doc.store.pendingStructs).toBeNull();
+    }
+  });
+
+  test("while the note closes, is stored by the close, not lost with the document", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "閉じる前");
+    failNextWrite();
+    // The usual short wait is up and the write starts; the note closes meanwhile.
+    const writing = flushDoc("n1");
+    const closing = releaseDoc("n1");
+    await expect(writing).rejects.toThrow("Connection");
+    await closing;
+
+    expect(openDoc("n1")).toBeUndefined();
+    expect((await stored()).getText("t").toString()).toBe("閉じる前");
+  });
+
+  test("is not overtaken: an edit made while it was being written is stored with it, not before it", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    failNextWrite();
+    const first = flushDoc("n1");
+    doc.getText("t").insert(1, "二");
+    const second = flushDoc("n1");
+    await expect(first).rejects.toThrow("Connection");
+    await second;
+
+    // Nothing is written after this: were the page to go now, storage alone has both.
+    expect((await stored()).getText("t").toString()).toBe("一二");
+    await releaseDoc("n1");
+  });
+
+  test("is stored and queued for the server together, or not at all", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    vi.spyOn(db().outbox, "put").mockRejectedValueOnce(new Error("QuotaExceededError"));
+    await expect(flushDoc("n1")).rejects.toThrow("QuotaExceededError");
+    // Not stored without its place in the queue, which would keep it off the server for good.
+    expect(await saved()).toBe(0);
+
+    await flushDoc("n1");
+    expect(await saved()).toBe(1);
+    expect((await elsewhere()).getText("t").toString()).toBe("一");
     await releaseDoc("n1");
   });
 });

@@ -19,6 +19,8 @@ type Handle = {
   keyEpoch: number;
   refs: number;
   buffer: Uint8Array[];
+  /** The write under way, if one is: the next waits for it. */
+  writing: Promise<void> | null;
   timer: ReturnType<typeof setTimeout> | null;
   detach: () => void;
 };
@@ -96,16 +98,31 @@ async function hydrate(noteId: string, note: Note | undefined, doc: Y.Doc): Prom
 async function flush(handle: Handle): Promise<void> {
   if (handle.timer) clearTimeout(handle.timer);
   handle.timer = null;
+  // One write at a time, in the order the edits were made. A write that
+  // fails puts its edits back, and the next takes them along with its own:
+  // written while the first was still under way, those would be stored
+  // before the edits they build on, and could not be read without them. It
+  // also means a flush that returns has stored everything made before it,
+  // rather than leaving some to a write that may yet fail.
+  while (handle.writing) await handle.writing.catch(() => {});
   if (handle.buffer.length === 0) return;
   const merged =
     handle.buffer.length === 1 ? handle.buffer[0]! : Y.mergeUpdates(handle.buffer);
   handle.buffer = [];
-  const writing = write(handle, merged);
+  const writing = write(handle, merged).catch((error: unknown) => {
+    // Not stored: put back ahead of anything typed since, to be written with
+    // it by the next flush, whatever brings that on (the next edit, the note
+    // closing, the page being hidden). Every later edit builds on this one.
+    handle.buffer.unshift(merged);
+    throw error;
+  });
+  handle.writing = writing;
   writesInFlight.add(writing);
   try {
     await writing;
   } finally {
     writesInFlight.delete(writing);
+    handle.writing = null;
   }
 }
 
@@ -133,28 +150,33 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
     iv = sealed.iv;
   }
 
-  await database.updates.add({
-    noteId: handle.noteId,
-    seq: null,
-    opId,
-    keyEpoch: note.keyEpoch,
-    data,
-    iv,
-    pushed: 0,
-    createdAt: Date.now(),
-  });
-
-  await enqueue({
-    opId,
-    kind: "update",
-    entityId: handle.noteId,
-    payload: {
-      kind: "update",
+  // Stored and queued together, or neither: stored but never queued, an
+  // update would never reach the server, where nothing built on it could be
+  // read, and it would be stored a second time when written again.
+  await database.transaction("rw", [database.updates, database.outbox], async () => {
+    await database.updates.add({
       noteId: handle.noteId,
+      seq: null,
+      opId,
       keyEpoch: note.keyEpoch,
-      payload: toArrayBuffer(data),
-      ...(iv ? { iv: toArrayBuffer(iv) } : {}),
-    },
+      data,
+      iv,
+      pushed: 0,
+      createdAt: Date.now(),
+    });
+
+    await enqueue({
+      opId,
+      kind: "update",
+      entityId: handle.noteId,
+      payload: {
+        kind: "update",
+        noteId: handle.noteId,
+        keyEpoch: note.keyEpoch,
+        payload: toArrayBuffer(data),
+        ...(iv ? { iv: toArrayBuffer(iv) } : {}),
+      },
+    });
   });
 
   // The searchable text and the list preview both come from the document, and
@@ -218,6 +240,7 @@ async function openHandle(noteId: string): Promise<Handle> {
     keyEpoch: note?.keyEpoch ?? 0,
     refs: 0,
     buffer: [],
+    writing: null,
     timer: null,
     detach: () => {},
   };
@@ -279,6 +302,9 @@ export async function releaseDoc(noteId: string): Promise<void> {
   if (handle.refs > 0) return;
   if (handle.timer) clearTimeout(handle.timer);
   handle.timer = null;
+  // If this fails, the document stays as it is, held by nobody, with the
+  // edits it could not store still in it: whoever opens the note next gets
+  // it back, those edits included, and the next flush writes them first.
   await flush(handle);
   // Opened again while its last edits were being written: someone is using
   // it, so it stays.
