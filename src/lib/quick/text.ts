@@ -34,6 +34,13 @@ function characters(text: string): string[] {
 }
 
 /**
+ * What a share sheet or a shortcut puts in the quick note's address (the
+ * manifest's share_target), taken out once read. The service worker keeps no
+ * page loaded with any of them: Next writes the address into the page.
+ */
+export const SHARED = ["title", "text", "url"] as const;
+
+/**
  * What a share sheet or a shortcut sent, as one text, without saying
  * anything twice: the title on the first line, then the text, then the link.
  * The title is left out only where the text begins with it, as a line of its

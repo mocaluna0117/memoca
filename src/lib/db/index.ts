@@ -1,5 +1,6 @@
 import Dexie, { type Table } from "dexie";
 import type { Attachment, Folder, Note, Sealed } from "@/lib/types";
+import { forgetAccountCaches } from "./caches";
 
 /** A Yjs update waiting to be merged or sent. */
 export type LocalUpdate = {
@@ -140,8 +141,15 @@ export function db(): MemocaDb {
 /**
  * Local data is per account. Signing in as someone else on a shared browser
  * must not surface the previous person's notes.
+ *
+ * The service worker's copies of the account's pages and files are part of
+ * it, so they go here too rather than beside each caller: whatever makes the
+ * device forget an account (signing out, deleting it, another one signing
+ * in) must forget those as well, or a page with the account's token, or with
+ * what was shared into the quick note, stays readable offline.
  */
 export async function resetLocalData(): Promise<void> {
+  await forgetAccountCaches();
   const database = db();
   await database.transaction(
     "rw",

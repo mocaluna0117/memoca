@@ -12,7 +12,7 @@ import { appendParagraphs } from "@/lib/quick/body";
 import { clearDraft, keepDraft, loadDraft } from "@/lib/quick/draft";
 import { useQuickMode } from "@/lib/quick/mode";
 import { closeQuickWindow, openNoteInApp } from "@/lib/quick/shell";
-import { joinShared, splitQuickText } from "@/lib/quick/text";
+import { SHARED, joinShared, splitQuickText } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { createNote, renameNote } from "@/lib/sync/mutations";
 import { bodyFragment } from "@/lib/sync/ydoc";
@@ -25,9 +25,6 @@ type Status =
   | { kind: "restored" }
   | { kind: "appended"; before: string }
   | null;
-
-/** What a share sheet or a shortcut puts in the address, taken out once read. */
-const SHARED = ["title", "text", "url"] as const;
 
 /** Both keys the save is on, for whatever keyboard: ⌘ on a Mac, Ctrl elsewhere. */
 const SAVE_KEYS = "Meta+Enter Control+Enter";
