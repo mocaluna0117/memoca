@@ -369,6 +369,19 @@ describe("resolveAttachment and the vault", () => {
     }
   });
 
+  test("nor is one whose vault closed and opened again while it was on its way", async () => {
+    const client = server().client;
+    const again = await prepareVault("パスワード", FAST_ARGON);
+    // Open again by the time the file arrives: only the close counts.
+    await lockedFile("secret-11", () => {
+      vault.lock();
+      again.adopt();
+    });
+    const made = vi.spyOn(URL, "createObjectURL");
+    expect(await resolveAttachment(client, "secret-11")).toBeNull();
+    expect(made).not.toHaveBeenCalled();
+  });
+
   test("a file still being decrypted when the vault closes is not shown", async () => {
     const client = server().client;
     // The vault closes while the file is on its way from storage.
