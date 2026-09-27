@@ -205,13 +205,13 @@ describe("resolveAttachment and the vault", () => {
    * A locked note's file as the server holds it, sealed under the open vault,
    * and storage serving it. `onFetch` runs while it is being downloaded.
    */
-  async function lockedFile(attachmentId: string, onFetch = () => {}) {
+  async function lockedFile(attachmentId: string, onFetch = () => {}, mime = "image/webp") {
     await putNote("n-locked", true);
     const { key, wrapped } = await vault.createAttachmentKey(attachmentId);
     const body = await seal(key, new Uint8Array([1, 2, 3]), ctx.attachmentBody(attachmentId));
     const meta = await seal(
       key,
-      new TextEncoder().encode(JSON.stringify({ name: "a.webp", mime: "image/webp" })),
+      new TextEncoder().encode(JSON.stringify({ name: "a", mime })),
       ctx.attachmentMeta(attachmentId),
     );
     await db().attachments.put({
@@ -318,6 +318,57 @@ describe("resolveAttachment and the vault", () => {
     }
   });
 
+  test("the same locked file shown twice at once is decrypted once, and its URL goes with the vault", async () => {
+    const client = server().client;
+    await lockedFile("secret-5");
+    const made = vi.spyOn(URL, "createObjectURL");
+    // Both ask before either has its URL: the same image twice in a note.
+    const [a, b] = await Promise.all([
+      resolveAttachment(client, "secret-5"),
+      resolveAttachment(client, "secret-5"),
+    ]);
+    expect(a).toMatch(/^blob:/);
+    expect(b).toBe(a);
+    expect(made).toHaveBeenCalledOnce();
+
+    await vault.close("idle");
+    expect(revoked).toEqual([a]);
+  });
+
+  test("a locked file of a type that would run as a page is handed out as bytes to download", async () => {
+    const client = server().client;
+    const made = vi.spyOn(URL, "createObjectURL");
+    const typeOf = () => (made.mock.lastCall![0] as Blob).type;
+
+    await lockedFile("page-6", () => {}, "text/html");
+    await resolveAttachment(client, "page-6");
+    expect(typeOf()).toBe("application/octet-stream");
+
+    await lockedFile("drawing-7", () => {}, "image/svg+xml");
+    await resolveAttachment(client, "drawing-7");
+    expect(typeOf()).toBe("application/octet-stream");
+
+    // Waiting to go up, in plaintext on the device, it is handed out the same.
+    const page = new File(["<script>1</script>"], "a.html", { type: "text/html" });
+    await stageUpload({
+      noteId: "n-locked",
+      file: page,
+      prepared: { blob: page, mime: "text/html", width: 0, height: 0 },
+    });
+    expect(typeOf()).toBe("application/octet-stream");
+
+    // What can only be looked at keeps its type, to be shown.
+    for (const [id, type] of [
+      ["photo-8", "image/webp"],
+      ["clip-9", "video/mp4"],
+      ["paper-10", "application/pdf"],
+    ] as const) {
+      await lockedFile(id, () => {}, type);
+      await resolveAttachment(client, id);
+      expect(typeOf(), type).toBe(type);
+    }
+  });
+
   test("a file still being decrypted when the vault closes is not shown", async () => {
     const client = server().client;
     // The vault closes while the file is on its way from storage.
@@ -362,7 +413,9 @@ describe("fitsAllowance", () => {
     expect(fitsAllowance({ ...roomy, limits }, 2_001, 0, "other")).toBe(false);
     expect(fitsAllowance({ ...roomy, limits }, 501, 0, "image")).toBe(false);
     // Not reported by an older server: left to the server to decide.
-    expect(fitsAllowance({ ...roomy, limits: { maxImageBytes: 500 } }, 5_000, 0, "video")).toBe(true);
+    expect(fitsAllowance({ ...roomy, limits: { maxImageBytes: 500 } }, 5_000, 0, "video")).toBe(
+      true,
+    );
   });
 });
 
@@ -383,7 +436,10 @@ describe("flushUploads", () => {
     expect(await db().attachments.count()).toBe(1);
 
     // Once the note is through, the next pass sends the file.
-    server.handlers["attachments:reserve"] = () => ({ status: "ok", uploadUrl: "https://upload.test" });
+    server.handlers["attachments:reserve"] = () => ({
+      status: "ok",
+      uploadUrl: "https://upload.test",
+    });
     vi.stubGlobal(
       "fetch",
       vi.fn(async () => new Response(JSON.stringify({ storageId: "stored-1" }))),
@@ -408,7 +464,10 @@ describe("flushUploads", () => {
       "attachments:reserve": () => ({ status: "ok", uploadUrl: "https://upload.test" }),
     });
     // Reserved, then the upload itself does not get through.
-    vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new TypeError("network"))));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new TypeError("network"))),
+    );
     try {
       await flushUploads(server.client);
     } finally {

@@ -22,6 +22,23 @@ const objectUrls = new Map<string, string>();
 let generation = 0;
 let watching = false;
 
+/**
+ * What this tab may show a file as, straight from its URL: images, videos,
+ * sound, PDF and plain text, none of which runs a script. A locked note
+ * takes files of any type, and one of another (a web page, an SVG), opened
+ * as it is, would run as a page of this app, with the app's data and the
+ * open vault's window within its reach: it is handed out as bytes to
+ * download instead.
+ */
+const SHOWN_AS_IS =
+  /^(?:image\/(?:png|jpeg|gif|webp|avif|heic|heif|bmp)|video\/[\w.+-]+|audio\/[\w.+-]+|application\/pdf|text\/plain)(?:\s*;.*)?$/i;
+
+/** A URL for a file of this tab's, of a type safe to open (see {@link SHOWN_AS_IS}). */
+function urlFor(blob: Blob, type = blob.type): string {
+  const safe = SHOWN_AS_IS.test(type) ? type : "application/octet-stream";
+  return URL.createObjectURL(safe === blob.type ? blob : new Blob([blob], { type: safe }));
+}
+
 /** How long to wait for a file from the server before calling it unreachable. */
 const DOWNLOAD_TIMEOUT_MS = 20_000;
 
@@ -241,7 +258,7 @@ export async function stageUpload(opts: {
     seq: 0,
   });
 
-  objectUrls.set(attachmentId, URL.createObjectURL(prepared.blob));
+  objectUrls.set(attachmentId, urlFor(prepared.blob));
   return refFor(attachmentId);
 }
 
@@ -415,16 +432,32 @@ async function trimBlobCache(): Promise<void> {
   }
 }
 
+/** Files being looked up, shared by everyone who asks for one meanwhile. */
+const resolving = new Map<string, Promise<string | null>>();
+
 /**
  * Turns a `memoca://` reference into something an `<img>` or `<video>` can use.
  *
  * Locked attachments are downloaded and decrypted here, so their plaintext
- * exists only as a blob URL inside this tab.
+ * exists only as a blob URL inside this tab. One file is looked up once at a
+ * time: two lookups at once (the same image twice in a note, or the editor
+ * drawing it again) would each make a URL, of which only the last is kept,
+ * and the other would outlive the vault's close.
  */
-export async function resolveAttachment(
+export function resolveAttachment(
   client: ConvexReactClient,
   attachmentId: string,
 ): Promise<string | null> {
+  const running = resolving.get(attachmentId);
+  if (running) return running;
+  const started = lookUp(client, attachmentId).finally(() => {
+    if (resolving.get(attachmentId) === started) resolving.delete(attachmentId);
+  });
+  resolving.set(attachmentId, started);
+  return started;
+}
+
+async function lookUp(client: ConvexReactClient, attachmentId: string): Promise<string | null> {
   watchVault();
   const cached = objectUrls.get(attachmentId);
   if (cached) {
@@ -444,7 +477,7 @@ export async function resolveAttachment(
     await database.blobs.delete(attachmentId);
   } else if (local) {
     await database.blobs.update(attachmentId, { lastUsed: Date.now() });
-    const url = URL.createObjectURL(local.blob);
+    const url = urlFor(local.blob);
     objectUrls.set(attachmentId, url);
     return url;
   }
@@ -454,7 +487,7 @@ export async function resolveAttachment(
     // Waiting to go up is the only time a locked file is here in plaintext;
     // it is shown only while the vault is open, as it would be once sent.
     if (!vault.isUnlocked && (await isProtectedUpload(waiting))) return null;
-    const url = URL.createObjectURL(waiting.blob);
+    const url = urlFor(waiting.blob);
     objectUrls.set(attachmentId, url);
     return url;
   }
@@ -497,7 +530,7 @@ export async function resolveAttachment(
   // The vault closed while the file was on its way: what it would have shown
   // goes with it, rather than outliving the close as a URL.
   if (generation !== started || !vault.isUnlocked) return null;
-  const url = URL.createObjectURL(new Blob([toArrayBuffer(plain)], { type: mime }));
+  const url = urlFor(new Blob([toArrayBuffer(plain)], { type: mime }));
   objectUrls.set(attachmentId, url);
   return url;
 }

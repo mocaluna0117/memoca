@@ -31,8 +31,12 @@ import {
 } from "@/lib/media/attachments";
 import { uploadRefusal } from "@/lib/media/refusal";
 import { warmWebpEncoder } from "@/lib/media/webp-encoder";
+import { openLinkApart } from "@/lib/open-link";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
+
+/** A link clicked in a note opens apart from the app's window (see openLinkApart). */
+const LINKS = { onClick: (event: MouseEvent) => openLinkApart(event) };
 
 /**
  * Puts right the block a refused file leaves. BlockNote makes one before the
@@ -185,6 +189,7 @@ function EditorSurface({
         dictionary: blocknoteJa,
         uploadFile,
         resolveFileUrl,
+        links: LINKS,
       }),
     [doc, me?.name, uploadFile, resolveFileUrl],
   );
