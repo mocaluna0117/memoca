@@ -42,7 +42,7 @@ test.describe("signing the desktop shell in", () => {
   test("in the shell, sign-in is offered in the browser instead of with Google", async ({
     browser,
   }) => {
-    const { context, page } = await shellWindow(browser);
+    const { page } = await shellWindow(browser);
     await page.goto("/sign-in");
     await expect(page.getByRole("button", { name: "Google でログイン" })).toHaveCount(0);
     await page.getByRole("button", { name: "ブラウザでログイン" }).click();
@@ -96,7 +96,7 @@ test.describe("signing the desktop shell in", () => {
   });
 
   test("in the shell, a code of the wrong shape is turned away", async ({ browser }) => {
-    const { context, page } = await shellWindow(browser);
+    const { page } = await shellWindow(browser);
     await page.goto("/desktop/complete#token=not-a-code");
     await expect(page.getByText("コードが正しくありません")).toBeVisible();
   });
