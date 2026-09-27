@@ -59,6 +59,15 @@ export const REPLACE_BODY_LIMIT = 2000;
 export const RESERVATION_TTL_MS = 60 * 60 * 1000;
 /** Grace period before an attachment no block references is deleted. */
 export const UNREFERENCED_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * The same for a file a smaller copy of itself has replaced, whose notes
+ * show the copy: a week, rather than thirty days, for a device with edits
+ * not sent yet (offline, or a tab left open on an older copy of a note) to
+ * be heard from before the original goes.
+ */
+export const REPLACED_GRACE_MS = 7 * 24 * 60 * 60 * 1000;
+/** Files one ask about replacements may name. */
+export const MAX_REPLACED_PER_CALL = 50;
 /** Files one report may name; a note with more is simply not reported. */
 export const MAX_REFS_PER_NOTE = 500;
 /** The daily sweep deletes files only for users with at most this many notes. */

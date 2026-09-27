@@ -225,8 +225,13 @@ export default defineSchema({
     contentIv: v.optional(v.bytes()),
     width: v.union(v.number(), v.null()),
     height: v.union(v.number(), v.null()),
-    /** Set when no block references it any more; deleted 30 days later. */
+    /**
+     * Set when no block references it any more; deleted 30 days later, or a
+     * day later for a file replaced by a smaller copy of itself.
+     */
     unreferencedAt: v.union(v.number(), v.null()),
+    /** When a smaller copy took its place (a PNG written again as WebP, say). */
+    replacedAt: v.optional(v.number()),
     deletedAt: v.union(v.number(), v.null()),
     /** Reservation deadline; the hourly reaper releases anything past it. */
     expiresAt: v.union(v.number(), v.null()),

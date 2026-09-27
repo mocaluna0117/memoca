@@ -4,12 +4,13 @@ import { internalMutation, mutation, query } from "./_generated/server";
 import {
   ALLOWED_MIME,
   MAX_REFS_PER_NOTE,
+  MAX_REPLACED_PER_CALL,
   RESERVATION_TTL_MS,
   SWEEP_BATCH,
   UNREFERENCED_GRACE_MS,
 } from "./lib/constants";
 import { sealedV } from "./lib/ops";
-import { allNotesReported, isInUse, settleUse } from "./lib/refs";
+import { allNotesReported, isInUse, settleUse, unusedSince } from "./lib/refs";
 import { openSeq } from "./lib/seq";
 import { fileTombstone } from "./lib/files";
 import { getConfig, requireUser } from "./lib/user";
@@ -154,6 +155,70 @@ export const urls = query({
           : null;
     }
     return out;
+  },
+});
+
+/**
+ * Which notes use each of these files, as their devices last reported it:
+ * for replacing a file in every note that shows it.
+ */
+export const usedBy = query({
+  args: { attachmentIds: v.array(v.string()) },
+  handler: async (ctx, { attachmentIds }) => {
+    const user = await requireUser(ctx);
+    const out: Record<string, string[]> = {};
+    for (const id of attachmentIds.slice(0, MAX_REPLACED_PER_CALL)) {
+      const rows = await ctx.db
+        .query("attachmentRefs")
+        .withIndex("by_user_attachment", (q) => q.eq("userId", user._id).eq("attachmentId", id))
+        .take(MAX_REFS_PER_NOTE);
+      out[id] = [...new Set(rows.map((row) => row.noteId))];
+    }
+    return out;
+  },
+});
+
+/**
+ * Records that smaller copies have taken the place of these files in the
+ * notes that showed them (a PNG written again as WebP). Once unused, such a
+ * file is deleted by the daily sweep a week later rather than thirty days
+ * (see unusedSince), with every check the sweep makes; one that is unused
+ * already counts from now. Only the caller's own uploaded files are marked,
+ * and only where the copy named with it is stored: a copy that never
+ * reached the server has taken nobody's place.
+ */
+export const markReplaced = mutation({
+  args: { replaced: v.array(v.object({ original: v.string(), copy: v.string() })) },
+  handler: async (ctx, { replaced }) => {
+    const user = await requireUser(ctx);
+    if (replaced.length > MAX_REPLACED_PER_CALL) {
+      return { status: "rejected" as const, reason: "tooMany" };
+    }
+    const own = (attachmentId: string) =>
+      ctx.db
+        .query("attachments")
+        .withIndex("by_user_attachment", (q) => q.eq("userId", user._id).eq("attachmentId", attachmentId))
+        .unique();
+    const now = Date.now();
+    let marked = 0;
+    const seen = new Set<string>();
+    for (const { original, copy } of replaced) {
+      if (seen.has(original) || original === copy) continue;
+      seen.add(original);
+      const stored = await own(copy);
+      if (!stored || stored.status !== "committed" || stored.deletedAt !== null) continue;
+      const row = await own(original);
+      if (!row || row.status !== "committed" || row.deletedAt !== null) continue;
+      const mark = { replacedAt: row.replacedAt ?? now };
+      await ctx.db.patch("attachments", row._id, {
+        ...mark,
+        ...(row.unreferencedAt === null
+          ? {}
+          : { unreferencedAt: Math.min(row.unreferencedAt, unusedSince(mark, now)) }),
+      });
+      marked += 1;
+    }
+    return { status: "ok" as const, marked };
   },
 });
 

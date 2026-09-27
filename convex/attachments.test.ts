@@ -2,7 +2,12 @@ import { convexTest } from "convex-test";
 import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
-import { TOMBSTONE_MS, UNREFERENCED_GRACE_MS } from "./lib/constants";
+import {
+  MAX_REPLACED_PER_CALL,
+  REPLACED_GRACE_MS,
+  TOMBSTONE_MS,
+  UNREFERENCED_GRACE_MS,
+} from "./lib/constants";
 import schema from "./schema";
 
 /**
@@ -336,6 +341,194 @@ describe("the daily sweep", () => {
     });
     expect((await sweep(t, Date.now())).orphans).toBe(1);
     expect(await file(t, "abandoned")).toBeNull();
+  });
+});
+
+describe("a file a smaller copy of itself replaced", () => {
+  const HOUR = DAY / 24;
+
+  /** A PNG in note n1 and its WebP copy, stored; n1 is yet to say it shows the copy. */
+  async function copied(t: T) {
+    const userId = await seedUser(t, AUTH_A, 1_000);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "n1");
+    await storeFile(t, userId, "n1", "png", 800, { mime: "image/png", name: "image.png" });
+    await storeFile(t, userId, "n1", "webp", 100);
+    await edit(t, "n1", 2);
+    await report(as, "n1", 2, ["png"]);
+    return { userId, as };
+  }
+
+  /** n1's devices say it shows the copy now: the original goes unused, between the two times given. */
+  async function reportCopy(t: T, as: Caller, seq = 3) {
+    await edit(t, "n1", seq);
+    const before = Date.now();
+    await report(as, "n1", seq, ["webp"]);
+    return { before, after: Date.now() };
+  }
+
+  const mark = (as: Caller, replaced: { original: string; copy: string }[]) =>
+    as.mutation(api.attachments.markReplaced, { replaced });
+
+  test("is kept a week, not thirty days, once no note uses it", async () => {
+    expect(REPLACED_GRACE_MS).toBe(7 * DAY);
+    const t = setup();
+    const { userId, as } = await copied(t);
+    expect(await mark(as, [{ original: "png", copy: "webp" }])).toEqual({ status: "ok", marked: 1 });
+    // Still shown until n1 says otherwise.
+    expect((await file(t, "png"))?.unreferencedAt).toBeNull();
+    const { before, after } = await reportCopy(t, as);
+
+    expect((await sweep(t, before + REPLACED_GRACE_MS - HOUR)).deleted).toBe(0);
+    expect((await file(t, "png"))?.deletedAt).toBeNull();
+    expect((await sweep(t, after + REPLACED_GRACE_MS + HOUR)).deleted).toBe(1);
+    expect(await file(t, "png")).toMatchObject({ storageId: null, deletedAt: expect.any(Number) });
+    // The copy stays, and the original's bytes come back.
+    expect((await file(t, "webp"))?.deletedAt).toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.usedBytes).toBe(200);
+  });
+
+  test("that is unused already when marked counts from then", async () => {
+    const t = setup();
+    const { as } = await copied(t);
+    const { after } = await reportCopy(t, as);
+    const marked = Date.now();
+    await mark(as, [{ original: "png", copy: "webp" }]);
+    expect((await sweep(t, marked + REPLACED_GRACE_MS - HOUR)).deleted).toBe(0);
+    expect((await sweep(t, after + REPLACED_GRACE_MS + HOUR)).deleted).toBe(1);
+  });
+
+  test("is not marked for a copy the server does not hold", async () => {
+    const t = setup();
+    const { userId, as } = await copied(t);
+    await storeFile(t, userId, "n1", "uploading", 0, { status: "reserved", storageId: null });
+    await storeFile(t, userId, "n1", "gone", 0, { storageId: null, deletedAt: Date.now() });
+    expect(
+      await mark(as, [
+        { original: "png", copy: "uploading" },
+        { original: "png", copy: "gone" },
+        { original: "png", copy: "never-staged" },
+        { original: "png", copy: "png" },
+      ]),
+    ).toEqual({ status: "ok", marked: 0 });
+    expect((await file(t, "png"))?.replacedAt).toBeUndefined();
+    // So once unused it has the thirty days of any file.
+    const { after } = await reportCopy(t, as);
+    expect((await sweep(t, after + REPLACED_GRACE_MS + HOUR)).deleted).toBe(0);
+  });
+
+  test("is kept while a note still shows it, and with the sweep's every other check", async () => {
+    const t = setup();
+    const { as } = await copied(t);
+    // Another note shows the original too, and is yet to be rewritten.
+    await pushNote(as, "n2");
+    await edit(t, "n2", 4);
+    await report(as, "n2", 4, ["png"]);
+    await mark(as, [{ original: "png", copy: "webp" }]);
+    const { after } = await reportCopy(t, as);
+    // n1's report settles the original as still in use (n2), and it keeps its mark.
+    expect(await file(t, "png")).toMatchObject({ unreferencedAt: null, replacedAt: expect.any(Number) });
+    expect((await sweep(t, after + UNREFERENCED_GRACE_MS + DAY)).deleted).toBe(0);
+
+    // n2 moves to the copy too: a week from then, and only once every note has reported.
+    await edit(t, "n2", 5);
+    const gone = Date.now();
+    await report(as, "n2", 5, ["webp"]);
+    await pushNote(as, "n3");
+    await edit(t, "n3", 6);
+    expect(await sweep(t, gone + REPLACED_GRACE_MS + HOUR)).toMatchObject({ deleted: 0, waiting: 1 });
+    await report(as, "n3", 6, []);
+    expect((await sweep(t, gone + REPLACED_GRACE_MS + HOUR)).deleted).toBe(1);
+  });
+
+  test("used again after it had gone, it gets the thirty days of any file", async () => {
+    const t = setup();
+    const { as } = await copied(t);
+    await mark(as, [{ original: "png", copy: "webp" }]);
+    await reportCopy(t, as);
+    // Back in n1: the copy refused later, say, and the note put back to the original.
+    await edit(t, "n1", 4);
+    await report(as, "n1", 4, ["png"]);
+    expect(await file(t, "png")).toMatchObject({ unreferencedAt: null });
+    expect((await file(t, "png"))?.replacedAt).toBeUndefined();
+    const { after } = await reportCopy(t, as, 5);
+    expect((await sweep(t, after + REPLACED_GRACE_MS + HOUR)).deleted).toBe(0);
+    expect((await sweep(t, after + UNREFERENCED_GRACE_MS + HOUR)).deleted).toBe(1);
+  });
+
+  test("shows in the storage breakdown as deleted a week on", async () => {
+    const t = setup();
+    const { as } = await copied(t);
+    await mark(as, [{ original: "png", copy: "webp" }]);
+    const { before, after } = await reportCopy(t, as);
+    const usage = await as.query(api.usage.breakdown, {});
+    expect(usage.unused).toMatchObject({ count: 1, bytes: 800 });
+    expect(usage.unused.nextDeleteAt).toBeGreaterThanOrEqual(before + REPLACED_GRACE_MS);
+    expect(usage.unused.nextDeleteAt).toBeLessThanOrEqual(after + REPLACED_GRACE_MS);
+  });
+
+  test("is marked only for its owner, with a copy of theirs, and never by more than a call may name", async () => {
+    const t = setup();
+    const a = await seedUser(t, AUTH_A);
+    const b = await seedUser(t, AUTH_B);
+    await storeFile(t, b, "nb", "theirs", 100, { mime: "image/png" });
+    await storeFile(t, b, "nb", "their-copy", 10);
+    await storeFile(t, a, "na", "mine", 100, { mime: "image/png" });
+    await storeFile(t, a, "na", "copy", 10);
+    await storeFile(t, a, "na", "uploading", 0, { status: "reserved", storageId: null, mime: "image/png" });
+    const as = t.withIdentity({ subject: AUTH_A });
+    expect(
+      await mark(as, [
+        { original: "theirs", copy: "copy" },
+        { original: "mine", copy: "their-copy" },
+        { original: "uploading", copy: "copy" },
+        { original: "missing", copy: "copy" },
+      ]),
+    ).toEqual({ status: "ok", marked: 0 });
+    for (const id of ["theirs", "mine", "uploading"]) {
+      expect((await file(t, id))?.replacedAt, id).toBeUndefined();
+    }
+    const most = Array.from({ length: MAX_REPLACED_PER_CALL }, (_, i) => ({ original: `f${i}`, copy: "copy" }));
+    expect(await mark(as, most)).toMatchObject({ status: "ok" });
+    expect(await mark(as, [...most, { original: "one-more", copy: "copy" }])).toMatchObject({
+      status: "rejected",
+    });
+  });
+
+  test("a file not replaced goes on counting thirty days", async () => {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A, 1_000);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "n1");
+    await storeFile(t, userId, "n1", "kept", 100);
+    await edit(t, "n1", 2);
+    const before = Date.now();
+    await report(as, "n1", 2, []);
+    const after = Date.now();
+    // Counted from when it went, not from some time before.
+    const since = (await file(t, "kept"))!.unreferencedAt!;
+    expect(since).toBeGreaterThanOrEqual(before);
+    expect(since).toBeLessThanOrEqual(after);
+    expect((await sweep(t, after + REPLACED_GRACE_MS + DAY)).deleted).toBe(0);
+    expect((await sweep(t, after + UNREFERENCED_GRACE_MS + DAY)).deleted).toBe(1);
+  });
+});
+
+describe("which notes use a file", () => {
+  test("every note that reported it, once each, and only the asker's", async () => {
+    const t = setup();
+    const a = await seedUser(t, AUTH_A);
+    const b = await seedUser(t, AUTH_B);
+    await t.run(async (ctx) => {
+      for (const noteId of ["n1", "n2"]) {
+        await ctx.db.insert("attachmentRefs", { userId: a, noteId, attachmentId: "img" });
+      }
+      await ctx.db.insert("attachmentRefs", { userId: b, noteId: "theirs", attachmentId: "img" });
+    });
+    const used = await t
+      .withIdentity({ subject: AUTH_A })
+      .query(api.attachments.usedBy, { attachmentIds: ["img", "unused"] });
+    expect({ ...used, img: [...used.img!].sort() }).toEqual({ img: ["n1", "n2"], unused: [] });
   });
 });
 

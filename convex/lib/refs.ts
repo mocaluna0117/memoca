@@ -1,6 +1,6 @@
 import type { Id } from "../_generated/dataModel";
 import type { MutationCtx } from "../_generated/server";
-import { MAX_NOTES_FOR_SWEEP } from "./constants";
+import { MAX_NOTES_FOR_SWEEP, REPLACED_GRACE_MS, UNREFERENCED_GRACE_MS } from "./constants";
 
 /**
  * Which files are still in use.
@@ -27,6 +27,15 @@ export async function isInUse(
 }
 
 /**
+ * When a file that went unused at `now` counts as unused since, for the daily
+ * sweep: now, or for one a smaller copy replaced, far enough back that the
+ * sweep deletes it a week from now rather than thirty days.
+ */
+export function unusedSince(row: { replacedAt?: number }, now: number): number {
+  return row.replacedAt === undefined ? now : now - (UNREFERENCED_GRACE_MS - REPLACED_GRACE_MS);
+}
+
+/**
  * Marks each of these files as unused since now, or as in use again, to match
  * the reported uses. Only uploaded files are marked; one still uploading, or
  * already deleted, is left alone.
@@ -47,9 +56,13 @@ export async function settleUse(
     if (!row || row.status !== "committed" || row.deletedAt !== null) continue;
     const used = await isInUse(ctx, userId, attachmentId);
     if (used && row.unreferencedAt !== null) {
-      await ctx.db.patch("attachments", row._id, { unreferencedAt: null });
+      // In use again once it had gone: a note wants this one after all, and
+      // once none does it gets the thirty days any file does. (While still
+      // in use, a replaced file keeps its mark: its notes are yet to report
+      // that they show the copy now.)
+      await ctx.db.patch("attachments", row._id, { unreferencedAt: null, replacedAt: undefined });
     } else if (!used && row.unreferencedAt === null) {
-      await ctx.db.patch("attachments", row._id, { unreferencedAt: now });
+      await ctx.db.patch("attachments", row._id, { unreferencedAt: unusedSince(row, now) });
     }
   }
 }
