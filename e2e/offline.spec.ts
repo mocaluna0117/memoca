@@ -125,4 +125,19 @@ test.describe("offline", () => {
     await showList(page);
     await expect(page.getByText("圏外で書いた即席メモ").filter({ visible: true }).first()).toBeVisible();
   });
+
+  test("the page shown for one not kept offline comes back by itself with the network", async ({ page, context }) => {
+    await signUp(page);
+    await openApp(page);
+    await offlineReady(page);
+
+    // Never opened on this device, so not kept: the stand-in is shown instead.
+    await context.setOffline(true);
+    await page.goto("/app/trash");
+    await expect(page.getByText("この画面はまだ端末に保存されていません")).toBeVisible();
+    await expect(page.getByRole("button", { name: "もう一度読み込む" })).toBeVisible();
+
+    await Promise.all([page.waitForEvent("load"), context.setOffline(false)]);
+    await expect(page.getByRole("heading", { name: "ゴミ箱" }).filter({ visible: true }).first()).toBeVisible();
+  });
 });

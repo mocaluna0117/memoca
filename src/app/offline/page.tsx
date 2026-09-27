@@ -1,5 +1,6 @@
 import { CloudOff } from "lucide-react";
 import Link from "next/link";
+import { ReloadWhenOnline } from "@/components/shell/reload-when-online";
 import { t } from "@/lib/i18n/ja";
 
 export default function OfflinePage() {
@@ -11,6 +12,7 @@ export default function OfflinePage() {
         この画面はまだ端末に保存されていません。
         一度開いたことのあるメモは、電波がなくても読み書きできます。
       </p>
+      <ReloadWhenOnline />
       <Link href="/app" className="text-sm underline underline-offset-4">
         メモに戻る
       </Link>
