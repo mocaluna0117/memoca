@@ -135,7 +135,11 @@ test.describe("offline", () => {
     await context.setOffline(true);
     await page.goto("/app/trash");
     await expect(page.getByText("この画面はまだ端末に保存されていません")).toBeVisible();
-    await expect(page.getByRole("button", { name: "もう一度読み込む" })).toBeVisible();
+    const again = page.getByRole("button", { name: "もう一度読み込む" });
+    await expect(again).toBeVisible();
+    // Offered once the page has started, and with it what listens for the
+    // network: back before then, the network would go unnoticed.
+    await expect(again).toBeEnabled();
 
     await Promise.all([page.waitForEvent("load"), context.setOffline(false)]);
     await expect(page.getByRole("heading", { name: "ゴミ箱" }).filter({ visible: true }).first()).toBeVisible();
