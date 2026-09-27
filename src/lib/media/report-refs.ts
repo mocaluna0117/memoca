@@ -4,7 +4,7 @@ import type { ConvexReactClient } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { vault } from "@/lib/crypto/vault";
 import { db } from "@/lib/db";
-import { withDetachedDoc } from "@/lib/sync/docs";
+import { withStoredDoc } from "@/lib/sync/docs";
 import { attachmentRefs, bodyFragment } from "@/lib/sync/ydoc";
 import type { Note } from "@/lib/types";
 
@@ -70,7 +70,7 @@ export async function reportAttachmentRefs(
       if (note.locked && !vault.isUnlocked) continue;
       const read = empty
         ? { refs: [], blocks: 0 }
-        : await withDetachedDoc(note.noteId, (doc) => ({
+        : await withStoredDoc(note.noteId, (doc) => ({
             refs: attachmentRefs(doc),
             blocks: bodyFragment(doc).length,
           }));

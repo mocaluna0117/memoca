@@ -432,4 +432,27 @@ export async function withDetachedDoc<T>(
   }
 }
 
+/**
+ * The note as storage holds it, with what a document open here has on top.
+ * Not the open document alone: one open in this tab is not given what
+ * another tab of this device wrote (applyBatch takes that for this device's
+ * own echo), so it can lack a change the server has, a file put in place of
+ * another say. For telling the server what a note uses.
+ */
+export async function withStoredDoc<T>(
+  noteId: string,
+  fn: (doc: Y.Doc) => Promise<T> | T,
+): Promise<T> {
+  const doc = new Y.Doc();
+  try {
+    const note = await db().notes.get(noteId);
+    await hydrate(noteId, note, doc);
+    const live = handles.get(noteId);
+    if (live) Y.applyUpdate(doc, Y.encodeStateAsUpdate(live.doc));
+    return await fn(doc);
+  } finally {
+    doc.destroy();
+  }
+}
+
 export { toBytes };
