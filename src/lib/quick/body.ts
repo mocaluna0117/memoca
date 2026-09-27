@@ -1,5 +1,6 @@
 "use client";
 
+import { uuidv4 } from "uuidv7";
 import * as Y from "yjs";
 import { bodyFragment } from "@/lib/sync/ydoc";
 
@@ -19,6 +20,10 @@ const PARAGRAPH_PROPS = {
 export function appendParagraphs(doc: Y.Doc, lines: string[]): void {
   if (lines.length === 0) return;
   const fragment = bodyFragment(doc);
+  // Made before anything is written, so that failing to make one changes
+  // nothing. Not with crypto.randomUUID, which only a secure context has: a
+  // phone trying the app over plain http on the LAN would fail here.
+  const ids = lines.map(() => uuidv4());
   doc.transact(() => {
     let group = fragment
       .toArray()
@@ -30,10 +35,10 @@ export function appendParagraphs(doc: Y.Doc, lines: string[]): void {
       group = new Y.XmlElement("blockGroup");
       fragment.insert(fragment.length, [group]);
     }
-    for (const line of lines) {
+    for (const [at, line] of lines.entries()) {
       const container = new Y.XmlElement("blockContainer");
       group.insert(group.length, [container]);
-      container.setAttribute("id", crypto.randomUUID());
+      container.setAttribute("id", ids[at]!);
       const paragraph = new Y.XmlElement("paragraph");
       container.insert(0, [paragraph]);
       for (const [name, value] of Object.entries(PARAGRAPH_PROPS)) {
@@ -83,9 +88,12 @@ export function migrateOldQuickBody(doc: Y.Doc): void {
   const fragment = bodyFragment(doc);
   const lines = oldQuickLines(fragment);
   if (!lines) return;
-  // One transaction, so that the rewrite is a single edit.
+  const old = fragment.length;
+  // One transaction, so that the rewrite is a single edit. The new body is
+  // written before the old one goes: a rewrite that fails before it has
+  // written anything then leaves the body as it was, not emptied.
   doc.transact(() => {
-    fragment.delete(0, fragment.length);
     appendParagraphs(doc, lines);
+    fragment.delete(0, old);
   });
 }

@@ -23,6 +23,19 @@ import { editor, shape, valid } from "./helpers/blocknote";
 import { fakeConvex } from "./helpers/fake-convex";
 import { FAST_ARGON, zero } from "./helpers/seed";
 
+/** Whether making a block's id fails, as it can where the browser has nothing to make it with. */
+const ids = vi.hoisted(() => ({ fail: false }));
+vi.mock("uuidv7", async (original) => {
+  const actual = await original<typeof import("uuidv7")>();
+  return {
+    ...actual,
+    uuidv4: () => {
+      if (ids.fail) throw new TypeError("no way to make an id here");
+      return actual.uuidv4();
+    },
+  };
+});
+
 const LINES = ["一行目", "", "三行目"];
 
 const note = (): Note => ({
@@ -198,6 +211,8 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  ids.fail = false;
+  vi.restoreAllMocks();
   for (const engine of engines.splice(0)) engine.stop();
   while (opened > 0) await close();
   vault.lock();
@@ -281,6 +296,20 @@ describe("opening a quick note written before its body was shaped as BlockNote's
       expect(await rows()).toHaveLength(1);
     },
   );
+
+  test("opens it as it is when the rewrite fails, changed in nothing, and says so", async () => {
+    await keep(Y.encodeStateAsUpdate(oldBody(LINES)));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    ids.fail = true;
+    const doc = await open();
+    ids.fail = false;
+
+    expect(warn).toHaveBeenCalledOnce();
+    expect(shape(bodyFragment(doc))).toBe(shape(bodyFragment(oldBody(LINES))));
+    await flushAll();
+    expect(await rows()).toHaveLength(1);
+    expect(await db().outbox.count()).toBe(0);
+  });
 });
 
 describe("an old quick note's body that reaches this device after the note was opened", () => {

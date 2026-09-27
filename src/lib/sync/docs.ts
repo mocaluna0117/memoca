@@ -239,7 +239,14 @@ function migrateIfWhole(doc: Y.Doc, note: Note | undefined, body: BodyState | un
     return;
   }
   if (note.locked && !vault.isUnlocked) return;
-  migrateOldQuickBody(doc);
+  try {
+    migrateOldQuickBody(doc);
+  } catch (error) {
+    // The note opens as it is rather than not at all, and a body that came
+    // in is still taken in. What could fail is done before the rewrite
+    // writes anything, so the body is as it was.
+    console.warn("Could not rewrite an old quick note's body", error);
+  }
 }
 
 /** Documents being built from storage, shared by everyone who asks meanwhile. */

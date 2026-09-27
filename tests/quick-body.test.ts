@@ -33,6 +33,19 @@ describe("appendParagraphs", () => {
       expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
   });
 
+  test("makes those ids where the browser has no crypto.randomUUID, as over plain http", () => {
+    // Only a secure context has it: a phone trying the app on the LAN does not.
+    Object.defineProperty(crypto, "randomUUID", { value: undefined, configurable: true });
+    try {
+      const doc = new Y.Doc();
+      appendParagraphs(doc, ["一行目", "二行目"]);
+      expect(valid(doc)).toBe(true);
+    } finally {
+      delete (crypto as { randomUUID?: unknown }).randomUUID;
+    }
+    expect(typeof crypto.randomUUID).toBe("function");
+  });
+
   test("adds after what the body already has, in its one block group", () => {
     const doc = blocksToYDoc(editor, [{ type: "paragraph", content: "前から" }], FRAGMENT);
     appendParagraphs(doc, ["足した"]);
