@@ -31,7 +31,8 @@ function GoogleMark() {
   );
 }
 
-export function SignInCard() {
+/** Signing in with Google, to come back to `next` (a path on this site) afterwards. */
+export function SignInCard({ next }: { next: string }) {
   const router = useRouter();
   const status = useQuery(api.users.signupStatus);
   const [busy, setBusy] = useState(false);
@@ -39,7 +40,7 @@ export function SignInCard() {
   const start = async () => {
     setBusy(true);
     try {
-      await signInWithGoogle("/app");
+      await signInWithGoogle(next);
     } catch {
       setBusy(false);
       router.refresh();

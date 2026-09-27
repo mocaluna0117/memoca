@@ -1,5 +1,5 @@
-import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
+import { SignInRedirect } from "@/components/auth/sign-in-redirect";
 import { SyncProvider } from "@/components/providers/sync-provider";
 import { AccountGate } from "@/components/shell/gate";
 import { isAuthenticated } from "@/lib/auth/server";
@@ -11,7 +11,9 @@ import { isAuthenticated } from "@/lib/auth/server";
  * again and closing the other.
  */
 export default async function WorkspaceLayout({ children }: { children: ReactNode }) {
-  if (!(await isAuthenticated())) redirect("/sign-in");
+  // Not signed in: off to sign in, and back here after, with nothing else
+  // started on the way (the account gate would wait for an account forever).
+  if (!(await isAuthenticated())) return <SignInRedirect />;
   return (
     <SyncProvider>
       <AccountGate>{children}</AccountGate>
