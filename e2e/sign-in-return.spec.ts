@@ -27,6 +27,29 @@ test.describe("signing in from the quick note", () => {
     await expect(page.getByRole("button", { name: "Google でログイン" })).toBeVisible();
   });
 
+  test("is a redirect the service worker cannot mistake for the page", async ({ page }) => {
+    // A page that sent onward from the browser would be kept as the offline copy.
+    for (const address of ["/quick?text=abc", "/app"]) {
+      const response = await page.request.get(address, { maxRedirects: 0 });
+      expect(response.status(), address).toBe(307);
+      const next = new URL(response.headers().location!, "http://localhost").searchParams.get(
+        "next",
+      );
+      expect(next, address).toBe(address);
+    }
+  });
+
+  test("the way back is the address itself, whatever the browser claims it to be", async ({
+    page,
+  }) => {
+    const response = await page.request.get("/app", {
+      maxRedirects: 0,
+      headers: { "x-memoca-asked-for": "//evil.example/steal" },
+    });
+    const next = new URL(response.headers().location!, "http://localhost").searchParams.get("next");
+    expect(next).toBe("/app");
+  });
+
   test("a way back that leads off the site is not followed", async ({ page }) => {
     await page.goto(`/sign-in?${new URLSearchParams({ next: "//evil.example/steal" })}`);
     expect(await askedToComeBackTo(page)).toMatchObject({ callbackURL: "/app" });

@@ -1,6 +1,12 @@
 /** Where sign-in leads when it was not started from anywhere in particular. */
 export const HOME = "/app";
 
+/**
+ * The request header src/proxy.ts puts the asked-for address in (path and
+ * query), for the workspace layout, which has no other way of knowing it.
+ */
+export const ASKED_FOR = "x-memoca-asked-for";
+
 /** An address that is not really a base of ours, to read a path against. */
 const PROBE = "https://probe.invalid";
 

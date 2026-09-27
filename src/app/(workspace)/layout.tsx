@@ -1,7 +1,9 @@
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
-import { SignInRedirect } from "@/components/auth/sign-in-redirect";
 import { SyncProvider } from "@/components/providers/sync-provider";
 import { AccountGate } from "@/components/shell/gate";
+import { ASKED_FOR, HOME, safeNext, signInReturningTo } from "@/lib/auth/next";
 import { isAuthenticated } from "@/lib/auth/server";
 
 /**
@@ -11,9 +13,12 @@ import { isAuthenticated } from "@/lib/auth/server";
  * again and closing the other.
  */
 export default async function WorkspaceLayout({ children }: { children: ReactNode }) {
-  // Not signed in: off to sign in, and back here after, with nothing else
-  // started on the way (the account gate would wait for an account forever).
-  if (!(await isAuthenticated())) return <SignInRedirect />;
+  if (!(await isAuthenticated())) {
+    // Off to sign in, and back to the address asked for, what a share put in
+    // it included, after.
+    const asked = (await headers()).get(ASKED_FOR) ?? undefined;
+    redirect(signInReturningTo(safeNext(asked) ?? HOME));
+  }
   return (
     <SyncProvider>
       <AccountGate>{children}</AccountGate>
