@@ -20,8 +20,15 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
-    { name: "mobile", use: { ...devices["Pixel 7"] } },
+    { name: "desktop", use: { ...devices["Desktop Chrome"] }, testIgnore: /quick-window/ },
+    { name: "mobile", use: { ...devices["Pixel 7"] }, testIgnore: /quick-window/ },
+    // The quick note in a small window of its own, as the desktop shell and
+    // the web app's own window show it.
+    {
+      name: "window",
+      use: { ...devices["Desktop Chrome"], viewport: { width: 380, height: 460 } },
+      testMatch: /quick-window/,
+    },
   ],
   webServer: process.env.E2E_BASE_URL
     ? undefined

@@ -1,5 +1,10 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { editor, signUp } from "./helpers";
+import { readTable } from "./local-db";
+
+/** Whether this device holds a draft of the quick note. */
+const hasDraft = async (page: Page) =>
+  (await readTable<{ key: string }>(page, "meta")).some((row) => row.key === "quickDraft");
 
 test.describe("the quick note", () => {
   test("a short first line becomes the title, and only the rest the body", async ({ page }) => {
@@ -31,6 +36,23 @@ test.describe("the quick note", () => {
     await expect(editor(page).locator('[data-content-type="paragraph"]').first()).toHaveText(
       thought,
     );
+  });
+
+  test("what is being written is kept as a draft until it is saved", async ({ page }) => {
+    await signUp(page);
+    await page.goto("/quick");
+    await page.getByLabel("即席メモ").fill("書きかけの考え");
+    // Away and back, as when another app is opened in between.
+    await page.getByRole("button", { name: "戻る" }).click();
+    await expect(page).toHaveURL(/\/app$/);
+    await page.goto("/quick");
+    await expect(page.getByLabel("即席メモ")).toHaveValue("書きかけの考え");
+
+    await page.getByRole("button", { name: "保存" }).click();
+    await expect(page).toHaveURL(/\/app\?n=/);
+    await expect.poll(() => hasDraft(page)).toBe(false);
+    await page.goto("/quick");
+    await expect(page.getByLabel("即席メモ")).toHaveValue("");
   });
 
   test("what a share sheet sends arrives once: the title on its line, the link below", async ({

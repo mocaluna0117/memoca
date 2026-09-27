@@ -26,6 +26,8 @@ export const META = {
   unlockJob: "unlockJob",
   /** Copies of other notes' files the server refused, and what they copied. */
   refusedCopies: "refusedCopies",
+  /** What was being written in the quick note, until it is saved. */
+  quickDraft: "quickDraft",
 } as const;
 
 /**
