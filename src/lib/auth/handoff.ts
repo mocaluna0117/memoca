@@ -4,7 +4,8 @@
  * browser at /desktop/sign-in with a state of its own making; the browser
  * signs in, and /desktop/handoff gives the shell a one-time token through
  * memoca://auth, state and all; the shell checks the state, and its window
- * exchanges the token at /desktop/complete for a session of its own.
+ * exchanges the token at /desktop/complete for the browser's session. Off in
+ * production until D1 gives the shell a session of its own (convex/auth.ts).
  */
 
 /** The scheme the desktop shell answers to. */

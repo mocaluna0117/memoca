@@ -15,6 +15,17 @@ const siteUrl = process.env.SITE_URL ?? "http://localhost:3000";
  */
 const allowPasswordAuth = process.env.ALLOW_PASSWORD_AUTH === "true";
 
+/**
+ * Signing the desktop shell in (docs/STORAGE-AND-DESKTOP.md, D0) is off
+ * unless the deployment opts in, as development and the end-to-end tests do,
+ * until the desktop app itself exists. The token it hands over is exchanged
+ * for the browser's own session, not one of its own, and nothing ties it to
+ * the shell that asked: a page persuading someone to pass the code on would
+ * sign another in as them. Before production turns it on, D1 gives the
+ * shell a session of its own, bound to a secret only the shell holds.
+ */
+export const allowDesktopSignIn = () => process.env.ALLOW_DESKTOP_SIGN_IN === "true";
+
 export const authComponent = createClient<DataModel>(components.betterAuth);
 
 /**
@@ -48,8 +59,8 @@ export const createAuth = (ctx: GenericCtx<DataModel>) =>
       convex({ authConfig }),
       // Signing the desktop shell in: Google turns away a sign-in inside an
       // app's own window, so it is done in the browser, and the session is
-      // handed over as a token the shell's window exchanges for its own. Good
-      // for one exchange, for three minutes, and kept only as a hash.
-      oneTimeToken({ expiresIn: 3, storeToken: "hashed" }),
+      // handed over as a token the shell's window exchanges. Good for one
+      // exchange, for three minutes, and kept only as a hash.
+      ...(allowDesktopSignIn() ? [oneTimeToken({ expiresIn: 3, storeToken: "hashed" })] : []),
     ],
   });

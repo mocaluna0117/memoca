@@ -7,7 +7,7 @@ import { isAuthenticated } from "@/lib/auth/server";
 
 export const metadata: Metadata = { title: "デスクトップ版に戻る" };
 
-/** In the browser, signed in: give the desktop shell a session of its own. */
+/** In the browser, signed in: hand this browser's session over to the desktop shell. */
 export default async function DesktopHandoffPage({ searchParams }: PageProps<"/desktop/handoff">) {
   const { state } = await searchParams;
   if (!isHandoffState(state)) {
