@@ -4,7 +4,8 @@ import type { ReactNode } from "react";
 import { SyncProvider } from "@/components/providers/sync-provider";
 import { AccountGate } from "@/components/shell/gate";
 import { ASKED_FOR, HOME, safeNext, signInReturningTo } from "@/lib/auth/next";
-import { isAuthenticated } from "@/lib/auth/server";
+import { getToken, isAuthenticated } from "@/lib/auth/server";
+import { tokenSubject } from "@/lib/auth/subject";
 
 /**
  * Everything that needs the account: the notes (/app) and the quick note
@@ -20,7 +21,8 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
     redirect(signInReturningTo(safeNext(asked) ?? HOME));
   }
   return (
-    <SyncProvider>
+    // Who is signed in, for the device's data to be shown only to its owner.
+    <SyncProvider signedInAs={tokenSubject(await getToken())}>
       <AccountGate>{children}</AccountGate>
     </SyncProvider>
   );

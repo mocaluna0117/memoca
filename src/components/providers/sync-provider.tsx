@@ -79,7 +79,14 @@ const IDLE: SyncStatus = {
  * no network would hang on the server query and the app would show a spinner
  * over data it already has.
  */
-export function SyncProvider({ children }: { children: ReactNode }) {
+export function SyncProvider({
+  signedInAs = null,
+  children,
+}: {
+  /** The account signed in, as the page's token says (see tokenSubject). */
+  signedInAs?: string | null;
+  children: ReactNode;
+}) {
   const client = useConvex();
   const remote = useQuery(api.users.me);
   const [status, setStatus] = useState<SyncStatus>(IDLE);
@@ -90,18 +97,39 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   /** The engine whose bodies have been fetched ahead, so they are fetched once. */
   const prefetchedRef = useRef<SyncEngine | null>(null);
 
-  const cached = useLiveQuery(
-    async () => (await getMeta<ServerProfile | null>(META.profile, null)) ?? null,
+  // What the device holds of an account: its profile, and whose data it is.
+  const local = useLiveQuery(
+    async () => ({
+      profile: (await getMeta<ServerProfile | null>(META.profile, null)) ?? null,
+      owner: await getMeta<string | null>(META.userKey, null),
+    }),
     [],
     undefined,
   );
 
-  // Keep the on-device copy in step whenever the server answers.
+  // The profile kept here is that of the last account to sync on this
+  // device. Someone else signing in on the same browser (the last one's
+  // session having run out, rather than been signed out of) is neither shown
+  // it nor has sync started on that account's data while the server has yet
+  // to answer: only the account signed in has its own profile read from here.
+  const cached =
+    local === undefined
+      ? undefined
+      : local.profile && (!signedInAs || local.profile.userKey === signedInAs)
+        ? local.profile
+        : null;
+
+  // Keep the on-device copy in step whenever the server answers, once the
+  // data here is that account's: the engine wipes another's first, profile
+  // and all, and a copy written before would go with it.
+  const owner = local?.owner;
   useEffect(() => {
-    if (remote) void setMeta(META.profile, remote);
-  }, [remote]);
+    if (remote && (owner === null || owner === remote.userKey)) void setMeta(META.profile, remote);
+  }, [remote, owner]);
 
   const me = remote ?? cached ?? null;
+  /** The device's data is this account's (or there is none): it may be shown. */
+  const ours = me !== null && owner !== undefined && (owner === null || owner === me.userKey);
 
   const missing = remote === null && cached === null;
   useEffect(() => {
@@ -162,13 +190,15 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     if (autoLockMinutes) vault.setAutoLockMinutes(autoLockMinutes);
   }, [autoLockMinutes]);
 
-  const gate: SyncContextValue["gate"] = me
+  const gate: SyncContextValue["gate"] = ours
     ? "ready"
-    : provision === "closed"
-      ? "closed"
-      : provision === "badInvite"
-        ? "badInvite"
-        : "loading";
+    : me
+      ? "loading"
+      : provision === "closed"
+        ? "closed"
+        : provision === "badInvite"
+          ? "badInvite"
+          : "loading";
 
   const value = useMemo<SyncContextValue>(
     () => ({
