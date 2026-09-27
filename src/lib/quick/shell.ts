@@ -39,12 +39,20 @@ export function closeQuickWindow(here: Window = window): void {
   else here.close();
 }
 
+/** The message a quick note's window sends the app's window that opened it. */
+export const OPEN_NOTE = "memoca:open-note";
+export type OpenNoteMessage = { type: typeof OPEN_NOTE; noteId: string };
+
 /**
- * Opens a page of the app from the quick note's window: in the browser, from
- * the shell; in the window that opened this one, where there is one; else
- * here, in place of the quick note. `here` as for {@link closeQuickWindow}.
+ * Opens a note just saved, from the quick note's window: in the browser,
+ * from the shell. From a window the app opened, in the app there, told to
+ * move to it rather than loaded again, which would close its vault; or, if
+ * that window has left the app, loaded there. With no window of the app
+ * at hand, in a new one, so this one stays the quick note. `here` as for
+ * {@link closeQuickWindow}.
  */
-export function openInApp(path: string, here: Window = window): void {
+export function openNoteInApp(noteId: string, here: Window = window): void {
+  const path = `/app?${new URLSearchParams({ n: noteId })}`;
   if (here.memocaShell) {
     here.memocaShell.openExternal(new URL(path, here.location.origin).href);
     return;
@@ -52,12 +60,19 @@ export function openInApp(path: string, here: Window = window): void {
   const opener = here.opener as Window | null;
   if (opener && !opener.closed) {
     try {
-      opener.location.assign(path);
+      if (opener.location.pathname.startsWith("/app")) {
+        opener.postMessage(
+          { type: OPEN_NOTE, noteId } satisfies OpenNoteMessage,
+          here.location.origin,
+        );
+      } else {
+        opener.location.assign(path);
+      }
       opener.focus();
       return;
     } catch {
-      // Opened from another site after all: not ours to steer.
+      // Another site's window after all: not ours to steer.
     }
   }
-  here.location.assign(path);
+  if (!here.open(path, "_blank")) here.location.assign(path);
 }

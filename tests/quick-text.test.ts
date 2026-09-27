@@ -33,6 +33,11 @@ describe("joinShared", () => {
     expect(joinShared({ title: "記事", text: "記事まとめ" })).toBe("記事\n記事まとめ");
   });
 
+  test("a link already there as a word of a line, or as the title, is not added again", () => {
+    expect(joinShared({ text: `記事\n${link}`, url: link })).toBe(`記事\n${link}`);
+    expect(joinShared({ title: link, url: link })).toBe(link);
+  });
+
   test("leaves out what is missing or blank", () => {
     expect(joinShared({ title: null, text: "  メモ  ", url: undefined })).toBe("メモ");
     expect(joinShared({ title: " ", text: "" })).toBe("");
@@ -78,6 +83,9 @@ describe("splitQuickText", () => {
     // The flag is two code points: over the limit without the segmenter's help.
     expect(splitQuickText(`${"あ".repeat(TITLE_LIMIT - 1)}🇯🇵`).title).toBe("");
     expect(splitQuickText("あ".repeat(TITLE_LIMIT)).title).toBe("あ".repeat(TITLE_LIMIT));
+    // An emoji outside the basic plane is one code point, though two UTF-16 units.
+    const smile = `${"あ".repeat(TITLE_LIMIT - 1)}😀`;
+    expect(splitQuickText(smile).title).toBe(smile);
   });
 
   test("a note that begins with a link keeps it in the body, and is named after its site", () => {
@@ -92,10 +100,17 @@ describe("splitQuickText", () => {
   test("a list keeps its first item: no title is taken from it", () => {
     for (const list of [
       "・牛乳\n・卵",
+      "• 牛乳",
+      "● 牛乳",
       "- milk\n- eggs",
+      "* milk",
+      "+ milk",
       "1. 開く\n2. 閉じる",
+      "1) 開く",
+      "10. 開く",
       "①準備\n②本番",
       "☐ 洗濯",
+      "✓ 済み",
     ]) {
       expect(splitQuickText(list), list).toEqual({ title: "", body: list.split("\n") });
     }
@@ -104,6 +119,26 @@ describe("splitQuickText", () => {
   test("a line that only looks like a list at a glance is still a title", () => {
     expect(splitQuickText("3.14 は円周率").title).toBe("3.14 は円周率");
     expect(splitQuickText("-5度の朝").title).toBe("-5度の朝");
+    // A mark inside the line, not at its start.
+    expect(splitQuickText("山田・佐藤さんと打ち合わせ").title).toBe("山田・佐藤さんと打ち合わせ");
+    expect(splitQuickText("A案 - B案").title).toBe("A案 - B案");
+  });
+
+  test("a link written into a sentence ends where the sentence takes over", () => {
+    // Ending at the site's name, where what follows would otherwise become part of it.
+    expect(splitQuickText("これ（https://example.com）を読む").title).toBe("example.com");
+    expect(splitQuickText("「https://www.example.jp」を参照。").title).toBe("example.jp");
+    expect(splitQuickText("見て https://example.com.").title).toBe("example.com");
+    expect(splitQuickText("ここ→https://example.com、あとで").title).toBe("example.com");
+  });
+
+  test("a first line too long to be a title takes the site of a link further down", () => {
+    const long = "う".repeat(TITLE_LIMIT + 1);
+    const link = "https://www.example.com/a";
+    expect(splitQuickText(`${long}\n\n${link}`)).toEqual({
+      title: "example.com",
+      body: [long, "", link],
+    });
   });
 
   test("nothing but blanks is nothing", () => {

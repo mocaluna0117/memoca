@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
 import { editor, signUp } from "./helpers";
+import { onScreen } from "./image-helpers";
 import { readTable } from "./local-db";
 
 /** Whether this device holds a draft of the quick note. */
@@ -53,6 +54,22 @@ test.describe("the quick note", () => {
     await expect.poll(() => hasDraft(page)).toBe(false);
     await page.goto("/quick");
     await expect(page.getByLabel("即席メモ")).toHaveValue("");
+  });
+
+  test("however much is written, the header stays at the top as the page scrolls", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await page.goto("/quick");
+    await page
+      .getByLabel("即席メモ")
+      .fill(Array.from({ length: 60 }, (_, line) => `${line + 1} 行目`).join("\n"));
+    // A page grows with what is written, and scrolls as a whole, to its end...
+    await page.evaluate(() => window.scrollTo(0, document.scrollingElement!.scrollHeight));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+    // ...with the header, and its save button, still in view.
+    const save = page.getByRole("button", { name: "保存" });
+    expect(onScreen(page, (await save.boundingBox())!)).toBe(true);
   });
 
   test("what a share sheet sends arrives once: the title on its line, the link below", async ({

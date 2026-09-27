@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { type MemocaShell, closeQuickWindow, inShell, openInApp } from "@/lib/quick/shell";
+import {
+  type MemocaShell,
+  OPEN_NOTE,
+  closeQuickWindow,
+  inShell,
+  openNoteInApp,
+} from "@/lib/quick/shell";
 
 const shell = (): MemocaShell => ({ hide: vi.fn(), openExternal: vi.fn(), platform: "macos" });
 
@@ -12,6 +18,7 @@ function windowWith(over: Partial<Window> = {}) {
     ...over,
   } as unknown as Window & {
     close: ReturnType<typeof vi.fn>;
+    open: ReturnType<typeof vi.fn>;
     location: { assign: ReturnType<typeof vi.fn> };
   };
 }
@@ -49,47 +56,94 @@ describe("closeQuickWindow", () => {
   });
 });
 
-describe("openInApp", () => {
-  test("from the shell, opens the page in the default browser, in full", () => {
-    const here = windowWith({ memocaShell: shell() });
-    openInApp("/app?n=abc", here);
+describe("openNoteInApp", () => {
+  const path = "/app?n=abc";
+
+  /** A window of the app's that opened this one, showing `pathname`. */
+  function openerAt(pathname: string, over: Record<string, unknown> = {}) {
+    return {
+      closed: false,
+      focus: vi.fn(),
+      postMessage: vi.fn(),
+      location: { pathname, assign: vi.fn() },
+      ...over,
+    };
+  }
+
+  test("from the shell, opens the note in the default browser, in full", () => {
+    const here = windowWith({ memocaShell: shell(), open: vi.fn() });
+    openNoteInApp("abc", here);
     expect(here.memocaShell!.openExternal).toHaveBeenCalledWith(
       "https://memoca-app.vercel.app/app?n=abc",
     );
+    expect(here.open).not.toHaveBeenCalled();
     expect(here.location.assign).not.toHaveBeenCalled();
   });
 
-  test("from a window the app opened, opens it there, and brings that window forward", () => {
-    const opener = { closed: false, focus: vi.fn(), location: { assign: vi.fn() } };
-    const here = windowWith({ opener: opener as unknown as Window });
-    openInApp("/app?n=abc", here);
-    expect(opener.location.assign).toHaveBeenCalledWith("/app?n=abc");
+  test("from a window the app opened, tells the app there to move to it, and brings it forward", () => {
+    const opener = openerAt("/app");
+    const here = windowWith({ opener: opener as unknown as Window, open: vi.fn() });
+    openNoteInApp("abc", here);
+    // Told, not loaded again: a reload would lock its vault.
+    expect(opener.postMessage).toHaveBeenCalledWith(
+      { type: OPEN_NOTE, noteId: "abc" },
+      "https://memoca-app.vercel.app",
+    );
+    expect(opener.location.assign).not.toHaveBeenCalled();
     expect(opener.focus).toHaveBeenCalledOnce();
+    expect(here.open).not.toHaveBeenCalled();
     expect(here.location.assign).not.toHaveBeenCalled();
   });
 
-  test("with no window to open it in, or one that is closed or not ours, opens it here", () => {
-    const alone = windowWith();
-    openInApp("/app?n=abc", alone);
-    expect(alone.location.assign).toHaveBeenCalledWith("/app?n=abc");
+  test("a window that opened this one and has since left the app is loaded with the note", () => {
+    const opener = openerAt("/settings");
+    const here = windowWith({ opener: opener as unknown as Window, open: vi.fn() });
+    openNoteInApp("abc", here);
+    expect(opener.location.assign).toHaveBeenCalledWith(path);
+    expect(opener.postMessage).not.toHaveBeenCalled();
+    expect(opener.focus).toHaveBeenCalledOnce();
+    expect(here.open).not.toHaveBeenCalled();
+  });
 
-    const gone = { closed: true, focus: vi.fn(), location: { assign: vi.fn() } };
-    const closed = windowWith({ opener: gone as unknown as Window });
-    openInApp("/app?n=abc", closed);
+  test("with no window of the app's at hand, opens a new one, and this one stays the quick note", () => {
+    const alone = windowWith({ open: vi.fn(() => ({}) as Window) });
+    openNoteInApp("abc", alone);
+    expect(alone.open).toHaveBeenCalledWith(path, "_blank");
+    expect(alone.location.assign).not.toHaveBeenCalled();
+
+    const gone = openerAt("/app", { closed: true });
+    const closed = windowWith({
+      opener: gone as unknown as Window,
+      open: vi.fn(() => ({}) as Window),
+    });
+    openNoteInApp("abc", closed);
+    expect(gone.postMessage).not.toHaveBeenCalled();
     expect(gone.location.assign).not.toHaveBeenCalled();
-    expect(closed.location.assign).toHaveBeenCalledWith("/app?n=abc");
+    expect(closed.open).toHaveBeenCalledWith(path, "_blank");
 
+    // Another site's window: reading where it is throws, and it is left alone.
     const foreign = {
       closed: false,
       focus: vi.fn(),
-      location: {
-        assign: () => {
-          throw new DOMException("Blocked a frame with origin", "SecurityError");
-        },
+      postMessage: vi.fn(),
+      get location(): never {
+        throw new DOMException("Blocked a frame with origin", "SecurityError");
       },
     };
-    const elsewhere = windowWith({ opener: foreign as unknown as Window });
-    openInApp("/app?n=abc", elsewhere);
-    expect(elsewhere.location.assign).toHaveBeenCalledWith("/app?n=abc");
+    const elsewhere = windowWith({
+      opener: foreign as unknown as Window,
+      open: vi.fn(() => ({}) as Window),
+    });
+    openNoteInApp("abc", elsewhere);
+    expect(foreign.postMessage).not.toHaveBeenCalled();
+    expect(foreign.focus).not.toHaveBeenCalled();
+    expect(elsewhere.open).toHaveBeenCalledWith(path, "_blank");
+  });
+
+  test("a new window the browser will not open: the note opens here instead", () => {
+    const blocked = windowWith({ open: vi.fn(() => null) });
+    openNoteInApp("abc", blocked);
+    expect(blocked.open).toHaveBeenCalledOnce();
+    expect(blocked.location.assign).toHaveBeenCalledWith(path);
   });
 });

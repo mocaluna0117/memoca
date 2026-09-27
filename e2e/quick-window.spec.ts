@@ -1,8 +1,13 @@
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import { openApp, signUp } from "./helpers";
 import { onScreen } from "./image-helpers";
+import { readTable } from "./local-db";
 
 const WINDOW = "popup,width=380,height=460";
+
+/** Whether this device holds a draft of the quick note. */
+const hasDraft = async (page: Page) =>
+  (await readTable<{ key: string }>(page, "meta")).some((row) => row.key === "quickDraft");
 
 test.describe("the quick note in a window of its own", () => {
   test("however much is written, the header and its save button stay in view", async ({ page }) => {
@@ -19,7 +24,10 @@ test.describe("the quick note in a window of its own", () => {
     ).toBe(true);
   });
 
-  test("Ctrl + Enter saves it, and the window stays, emptied, saying so", async ({ page }) => {
+  test("Ctrl + Enter saves it, and the window stays, emptied, saying so", async ({
+    page,
+    context,
+  }) => {
     await signUp(page);
     await page.goto("/quick?window=1");
     await expect(page.getByText("Ctrl + Enter で保存 ・ Esc で閉じる")).toBeVisible();
@@ -29,11 +37,17 @@ test.describe("the quick note in a window of its own", () => {
     await expect(page.getByRole("status").filter({ hasText: "保存しました" })).toBeVisible();
     await expect(field).toHaveValue("");
     await expect(page).toHaveURL(/\/quick\?window=1$/);
+    // Saved, it is not a draft any more.
+    await expect.poll(() => hasDraft(page)).toBe(false);
 
-    // No window opened this one, so the note opens here.
-    await page.getByRole("button", { name: "エディタで開く" }).click();
-    await expect(page).toHaveURL(/\/app\?n=/);
-    await expect(page.getByLabel("メモのタイトル")).toHaveValue("窓から保存");
+    // No window of the app's opened this one: the note opens in a new one,
+    // and this one stays the quick note.
+    const opened = context.waitForEvent("page");
+    await page.getByRole("button", { name: "メモを開く" }).click();
+    const app = await opened;
+    await expect(app).toHaveURL(/\/app\?n=/);
+    await expect(app.getByLabel("メモのタイトル")).toHaveValue("窓から保存");
+    await expect(page).toHaveURL(/\/quick\?window=1$/);
   });
 
   test("Esc puts away a window the app opened, and its draft is there when it opens again", async ({

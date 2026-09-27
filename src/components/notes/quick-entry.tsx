@@ -2,6 +2,8 @@
 
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect } from "react";
+import { useWorkspace } from "@/lib/hooks/workspace";
+import { OPEN_NOTE, type OpenNoteMessage } from "@/lib/quick/shell";
 
 /** The quick note's own window, as the web app opens it: one, reused. */
 const QUICK_WINDOW = {
@@ -72,5 +74,25 @@ export function QuickNoteShortcut() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [openQuickNote]);
+  return null;
+}
+
+/**
+ * Moves the app to a note the quick note's window saved and was asked to
+ * open here: within the app, so the vault stays as it was. Only messages
+ * from the app's own origin are heeded.
+ */
+export function OpenNoteFromQuickWindow() {
+  const { openNote } = useWorkspace();
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      const data = event.data as Partial<OpenNoteMessage> | null;
+      if (data?.type !== OPEN_NOTE || typeof data.noteId !== "string") return;
+      openNote(data.noteId);
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, [openNote]);
   return null;
 }
