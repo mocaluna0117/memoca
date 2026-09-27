@@ -33,6 +33,7 @@ import {
   copiesLockedFile,
   revertCrop,
 } from "@/lib/media/apply-crop";
+import { FileDownloadButton } from "@/components/editor/file-download-button";
 import { idFromRef, isLockedFile } from "@/lib/media/attachments";
 import type { CroppedImage } from "@/lib/media/compress";
 import { tooLargeMessage } from "@/lib/media/refusal";
@@ -289,9 +290,14 @@ export function ToolbarOnImageTap() {
   return null;
 }
 
-/** BlockNote's formatting toolbar, with トリミング next to the replace button. */
+/**
+ * BlockNote's formatting toolbar, with トリミング next to the replace button,
+ * and a download button of the app's own (see FileDownloadButton).
+ */
 export function MemocaFormattingToolbar() {
-  const items = getFormattingToolbarItems();
+  const items = getFormattingToolbarItems().map((item) =>
+    item.key === "fileDownloadButton" ? <FileDownloadButton key="fileDownloadButton" /> : item,
+  );
   const at = items.findIndex((item) => item.key === "replaceFileButton");
   items.splice(at + 1, 0, <ImageCropButton key="imageCropButton" />);
   return <FormattingToolbar>{items}</FormattingToolbar>;

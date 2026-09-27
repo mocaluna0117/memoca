@@ -37,3 +37,24 @@ export async function readTable<T = Record<string, unknown>>(
     );
   }, table) as Promise<T[]>;
 }
+
+/** Empties one of the app's IndexedDB tables, as a device that never had its rows would be. */
+export async function clearTable(page: Page, table: string): Promise<void> {
+  await page.evaluate(async (name) => {
+    const databases = await indexedDB.databases();
+    const found = databases.find((entry) => entry.name?.startsWith("memoca"));
+    if (!found?.name) return;
+    const opened = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(found.name!);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const transaction = opened.transaction(name, "readwrite");
+      transaction.objectStore(name).clear();
+      transaction.oncomplete = () => resolve();
+      transaction.onerror = () => reject(transaction.error);
+    });
+    opened.close();
+  }, table);
+}

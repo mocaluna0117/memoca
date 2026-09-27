@@ -1,35 +1,8 @@
 diff --git a/dist/blocknote-react.js b/dist/blocknote-react.js
-index 8e2ad6909f6d9a2e76de8a7630f0696e87d62e84..8aeba6a67c743954f615566a13907a9571e6afcc 100644
+index 8e2ad6909f6d9a2e76de8a7630f0696e87d62e84..027e19959857b50d7578f95cdbd38e8b195fd587 100644
 --- a/dist/blocknote-react.js
 +++ b/dist/blocknote-react.js
-@@ -1615,6 +1615,17 @@ function tr(e, t) {
- 	} catch {}
- 	return "#";
- }
-+/**
-+* Memoca: opens a file the editor shows. One of this tab's own (a blob: URL,
-+* a locked note's file decrypted here) is saved under its name, never opened
-+* as a page of the app; any other opens in a window with no hold on this one.
-+*/
-+function memocaOpenFile(e, t) {
-+	if (e.startsWith("blob:")) {
-+		let n = document.createElement("a");
-+		n.href = e, n.download = t || "", n.rel = "noopener", document.body.append(n), n.click(), n.remove();
-+	} else window.open(e, "_blank", "noopener,noreferrer");
-+}
- //#endregion
- //#region src/components/FormattingToolbar/DefaultButtons/FileDownloadButton.tsx
- var nr = () => {
-@@ -1627,7 +1638,7 @@ var nr = () => {
- 			if (G(n, e, n.type, { url: "string" })) return n;
- 		}
- 	}), o = T(() => {
--		a !== void 0 && (i.focus(), i.resolveFileUrl ? i.resolveFileUrl(a.props.url).then((e) => window.open(tr(e, window.location.href))) : window.open(tr(a.props.url, window.location.href)));
-+		a !== void 0 && (i.focus(), i.resolveFileUrl ? i.resolveFileUrl(a.props.url).then((e) => memocaOpenFile(tr(e, window.location.href), a.props.name)) : memocaOpenFile(tr(a.props.url, window.location.href), a.props.name));
- 	}, [a, i]);
- 	return a === void 0 ? null : /* @__PURE__ */ Y(r.FormattingToolbar.Button, {
- 		className: "bn-button",
-@@ -1860,7 +1871,7 @@ var nr = () => {
+@@ -1860,7 +1860,7 @@ var nr = () => {
  		label: r.link_toolbar.open.tooltip,
  		isSelected: !1,
  		onClick: () => {
@@ -38,7 +11,7 @@ index 8e2ad6909f6d9a2e76de8a7630f0696e87d62e84..8aeba6a67c743954f615566a13907a95
  		},
  		icon: /* @__PURE__ */ Y(Pt, {})
  	});
-@@ -3773,6 +3784,9 @@ var Ii = (t) => {
+@@ -3773,6 +3773,9 @@ var Ii = (t) => {
  	}
  }), Gi = (e) => {
  	let [t, n] = j(void 0), [r, i] = j(e.block.props.previewWidth), [a, o] = j(!1), s = A(null);
@@ -64,44 +37,6 @@ index 210bd6f6983df04ebebb79f9ecf29f184df0d2fa..f5dc5f1e3335fb2a5edb41146e1e3071
    const [hovered, setHovered] = useState<boolean>(false);
  
    const ref = useRef<HTMLDivElement>(null);
-diff --git a/src/components/FormattingToolbar/DefaultButtons/FileDownloadButton.tsx b/src/components/FormattingToolbar/DefaultButtons/FileDownloadButton.tsx
-index ad561568b5c6192e88f0efee3a1d3e1829a9d2e1..179b8085f0410b41da88b86e8a9bb359f1a573ad 100644
---- a/src/components/FormattingToolbar/DefaultButtons/FileDownloadButton.tsx
-+++ b/src/components/FormattingToolbar/DefaultButtons/FileDownloadButton.tsx
-@@ -52,14 +52,27 @@ export const FileDownloadButton = () => {
-     if (block !== undefined) {
-       editor.focus();
- 
-+      // Memoca: see memocaOpenFile in dist/blocknote-react.js. A file of this
-+      // tab's own (blob:) is saved under its name, never opened as a page of
-+      // the app; any other opens in a window with no hold on this one.
-+      const open = (url: string) => {
-+        const href = sanitizeUrl(url, window.location.href);
-+        if (href.startsWith("blob:")) {
-+          const link = document.createElement("a");
-+          link.href = href;
-+          link.download = (block.props as { name?: string }).name || "";
-+          link.rel = "noopener";
-+          document.body.append(link);
-+          link.click();
-+          link.remove();
-+        } else {
-+          window.open(href, "_blank", "noopener,noreferrer");
-+        }
-+      };
-       if (!editor.resolveFileUrl) {
--        window.open(sanitizeUrl(block.props.url, window.location.href));
-+        open(block.props.url);
-       } else {
--        void editor
--          .resolveFileUrl(block.props.url)
--          .then((downloadUrl) =>
--            window.open(sanitizeUrl(downloadUrl, window.location.href)),
--          );
-+        void editor.resolveFileUrl(block.props.url).then(open);
-       }
-     }
-   }, [block, editor]);
 diff --git a/src/components/LinkToolbar/DefaultButtons/OpenLinkButton.tsx b/src/components/LinkToolbar/DefaultButtons/OpenLinkButton.tsx
 index e1f43fe8efa19f6bd6236693bdcfde4282cc94cb..825658a0c94e0c946b49fd7ecd415dc5bf451f69 100644
 --- a/src/components/LinkToolbar/DefaultButtons/OpenLinkButton.tsx

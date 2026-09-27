@@ -12,6 +12,7 @@ import type { Attachment } from "@/lib/types";
 import { enqueue } from "@/lib/sync/outbox";
 import { type PreparedImage, UnsupportedImageError, categoryOf, prepareImage } from "./compress";
 import { purgeMediaCache } from "./media-cache";
+import { shownType } from "./shown-type";
 
 import { refFor } from "./ref";
 
@@ -23,20 +24,9 @@ const objectUrls = new Map<string, string>();
 let generation = 0;
 let watching = false;
 
-/**
- * What this tab may show a file as, straight from its URL: images, videos,
- * sound, PDF and plain text, none of which runs a script. A locked note
- * takes files of any type, and one of another (a web page, an SVG), opened
- * as it is, would run as a page of this app, with the app's data and the
- * open vault's window within its reach: it is handed out as bytes to
- * download instead.
- */
-const SHOWN_AS_IS =
-  /^(?:image\/(?:png|jpeg|gif|webp|avif|heic|heif|bmp)|video\/[\w.+-]+|audio\/[\w.+-]+|application\/pdf|text\/plain)(?:\s*;.*)?$/i;
-
-/** A URL for a file of this tab's, of a type safe to open (see {@link SHOWN_AS_IS}). */
+/** A URL for a file of this tab's, of a type safe to open (see {@link shownType}). */
 function urlFor(blob: Blob, type = blob.type): string {
-  const safe = SHOWN_AS_IS.test(type) ? type : "application/octet-stream";
+  const safe = shownType(type);
   return URL.createObjectURL(safe === blob.type ? blob : new Blob([blob], { type: safe }));
 }
 
