@@ -404,3 +404,62 @@ describe("the quick note's status line", () => {
     expect(host.textContent).toContain("Enter で保存");
   });
 });
+
+describe("the quick note as a page on a phone", () => {
+  type Viewport = EventTarget & { height: number; offsetTop: number; scale: number };
+  let viewport: Viewport;
+
+  beforeEach(() => {
+    viewport = Object.assign(new EventTarget(), { height: 800, offsetTop: 0, scale: 1 });
+    Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true });
+    Object.defineProperty(document.documentElement, "clientHeight", {
+      value: 800,
+      configurable: true,
+    });
+  });
+
+  afterEach(() => {
+    Object.defineProperty(window, "visualViewport", { value: undefined, configurable: true });
+  });
+
+  /** A keyboard comes up, or goes, and iOS pans what is seen to the caret. */
+  const move = (change: Partial<Viewport>) =>
+    act(async () => {
+      Object.assign(viewport, change);
+      viewport.dispatchEvent(new Event("resize"));
+      viewport.dispatchEvent(new Event("scroll"));
+    });
+
+  test("keeps the line tapped on in sight as iOS pans to it, and leaves the text be as it pans back", async () => {
+    await render("");
+    await type("行\n".repeat(200));
+    field().focus();
+    field().scrollTop = 300;
+    await move({ height: 420, offsetTop: 270 });
+    expect(field().scrollTop).toBe(570);
+    await move({ height: 800, offsetTop: 0 });
+    expect(field().scrollTop).toBe(570);
+  });
+
+  test("does not scroll a field that does not have the focus", async () => {
+    await render("");
+    await type("行\n".repeat(200));
+    field().blur();
+    field().scrollTop = 300;
+    await move({ height: 420, offsetTop: 270 });
+    expect(field().scrollTop).toBe(300);
+  });
+
+  test("writes at 16px at every width, which iOS does not zoom in on", async () => {
+    await render("");
+    expect(field().className).toContain("md:text-base");
+    expect(field().className).not.toContain("md:text-sm");
+  });
+
+  test("clears the home indicator, but not with a keyboard over it", async () => {
+    await render("");
+    expect(field().style.paddingBottom).toContain("safe-area-inset-bottom");
+    await move({ height: 420 });
+    expect(field().style.paddingBottom).toBe("");
+  });
+});

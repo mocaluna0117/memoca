@@ -56,20 +56,60 @@ test.describe("the quick note", () => {
     await expect(page.getByLabel("即席メモ")).toHaveValue("");
   });
 
-  test("however much is written, the header stays at the top as the page scrolls", async ({
+  test("however much is written, and wherever a keyboard leaves the page, the save button stays in sight", async ({
     page,
   }) => {
+    // The browser's visual viewport, to be moved as a phone's keyboard moves it.
+    await page.addInitScript(() => {
+      const viewport = Object.assign(new EventTarget(), { height: 0, offsetTop: 0, scale: 1 });
+      Object.defineProperty(window, "visualViewport", { value: viewport, configurable: true });
+      (window as unknown as { seen: typeof viewport }).seen = viewport;
+    });
+    const move = (height: number, offsetTop: number) =>
+      page.evaluate(
+        ([height, offsetTop]) => {
+          const viewport = (window as unknown as { seen: EventTarget & object }).seen;
+          Object.assign(viewport, { height, offsetTop });
+          viewport.dispatchEvent(new Event("resize"));
+          viewport.dispatchEvent(new Event("scroll"));
+        },
+        [height, offsetTop],
+      );
+    const { height } = page.viewportSize()!;
+
     await signUp(page);
     await page.goto("/quick");
+    await move(height, 0);
     await page
       .getByLabel("即席メモ")
       .fill(Array.from({ length: 60 }, (_, line) => `${line + 1} 行目`).join("\n"));
-    // A page grows with what is written, and scrolls as a whole, to its end...
-    await page.evaluate(() => window.scrollTo(0, document.scrollingElement!.scrollHeight));
-    await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
-    // ...with the header, and its save button, still in view.
     const save = page.getByRole("button", { name: "保存" });
     expect(onScreen(page, (await save.boundingBox())!)).toBe(true);
+    // What is written scrolls inside the field; the page itself does not.
+    expect(
+      await page.evaluate(() => document.scrollingElement!.scrollHeight <= window.innerHeight),
+    ).toBe(true);
+
+    // A keyboard takes the lower half, and iOS pans down to the caret: the
+    // page follows what can be seen, its header at the top of it.
+    const seen = { top: Math.round(height / 3), height: Math.round(height / 2) };
+    await move(seen.height, seen.top);
+    const main = (await page.locator("main").boundingBox())!;
+    expect(Math.abs(main.y - seen.top)).toBeLessThanOrEqual(1);
+    expect(Math.abs(main.height - seen.height)).toBeLessThanOrEqual(1);
+    const button = (await save.boundingBox())!;
+    expect(button.y).toBeGreaterThanOrEqual(seen.top);
+    expect(button.y + button.height).toBeLessThanOrEqual(seen.top + seen.height);
+
+    // The caret going down a line: iOS pans on, the keyboard as it was.
+    await move(seen.height, seen.top + 40);
+    expect(
+      Math.abs((await page.locator("main").boundingBox())!.y - (seen.top + 40)),
+    ).toBeLessThanOrEqual(1);
+    // What is written stays inside what is seen, and the page itself never scrolls.
+    const field = (await page.getByLabel("即席メモ").boundingBox())!;
+    expect(field.y + field.height).toBeLessThanOrEqual(seen.top + 40 + seen.height + 1);
+    expect(await page.evaluate(() => window.scrollY)).toBe(0);
   });
 
   test("what a share sheet sends arrives once: the title on its line, the link below", async ({
