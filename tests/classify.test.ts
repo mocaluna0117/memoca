@@ -98,9 +98,9 @@ describe("ENCODING", () => {
     expect(fitSize({ width: 1080, height: 20_000 }, ENCODING.screen.fit)).toEqual({ width: 442, height: 8192 });
   });
 
-  test("writes a photo as before: 2048 on its long edge, at 0.82", () => {
+  test("writes a photo 2048 on its long edge, at 0.75", () => {
     expect(fitSize({ width: 4284, height: 5712 }, ENCODING.photo.fit)).toEqual({ width: 1536, height: 2048 });
-    expect(ENCODING.photo.quality).toBe(0.82);
+    expect(ENCODING.photo.quality).toBe(0.75);
   });
 
   test("writes a screen at a lower quality than a photo: it is kept larger instead", () => {

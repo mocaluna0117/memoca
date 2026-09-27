@@ -18,8 +18,12 @@ export type ImageKind = "photo" | "screen";
 
 /** How each kind is written: the most it may be, and its WebP quality (0 to 1). */
 export const ENCODING: Record<ImageKind, { fit: Fit; quality: number }> = {
-  /** 2048 on its long edge: more than a phone or a note shows, a fraction of what a camera takes. */
-  photo: { fit: { maxEdge: 2048 }, quality: 0.82 },
+  /**
+   * 2048 on its long edge: more than a phone or a note shows, a fraction of
+   * what a camera takes. Quality 75 came to a quarter less than 82 for 19
+   * photos, and looked the same (SSIM at the width shown, 0.971 to 0.976).
+   */
+  photo: { fit: { maxEdge: 2048 }, quality: 0.75 },
   /**
    * At its own size up to 4 million pixels, which every iPhone's screen
    * (the largest 1320 × 2868) fits, and a little over, where it would come

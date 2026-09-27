@@ -131,7 +131,7 @@ describe("cropImage", () => {
       kept: { x: 0, y: 0, width: 200, height: 150 },
     });
     expect(result.blob.type).toBe("image/webp");
-    expect(asked).toEqual([{ type: "image/webp", quality: 0.82 }]);
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.75 }]);
     expect(scanned).toBe(0);
   });
 
@@ -179,7 +179,7 @@ describe("cropImage", () => {
     ]);
     // Grain there: a photo, brought down to 2048 as photos are.
     expect(result).toMatchObject({ width: 2048, height: 1365 });
-    expect(asked).toEqual([{ type: "image/webp", quality: 0.82 }]);
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.75 }]);
   });
 
   test("a trimmed screenshot larger than 4 million pixels is brought within them", async () => {
@@ -246,8 +246,8 @@ describe("prepareImage", () => {
     // 2048 wide came to 6144 bytes; 1600 wide, a step lower, to 4800.
     expect(result).toMatchObject({ mime: "image/webp", width: 1600, height: 1200 });
     expect(asked.map((call) => call.type)).toEqual(["image/webp", "image/webp"]);
-    expect(asked[0]!.quality).toBeCloseTo(0.82);
-    expect(asked[1]!.quality).toBeCloseTo(0.72);
+    expect(asked[0]!.quality).toBeCloseTo(0.75);
+    expect(asked[1]!.quality).toBeCloseTo(0.65);
   });
 
   test("stops at the smallest step, for the caller to refuse what is still too large", async () => {
@@ -257,7 +257,7 @@ describe("prepareImage", () => {
     expect(result).toMatchObject({ width: 1280, height: 960 });
     expect(result.blob.size).toBe(3_840);
     expect(asked).toHaveLength(3);
-    expect(asked[2]!.quality).toBeCloseTo(0.62);
+    expect(asked[2]!.quality).toBeCloseTo(0.55);
   });
 
   test("where WebP cannot be written, the fallback's quality steps down too", async () => {
@@ -291,10 +291,10 @@ describe("prepareImage", () => {
     expect(await prepareImage(file("image/png", 1_000_000))).toMatchObject({ width: 2486, height: 1609 });
   });
 
-  test("a photo is brought down to 2048 on its long edge and written at 0.82, as before", async () => {
+  test("a photo is brought down to 2048 on its long edge and written at 0.75", async () => {
     browser.size = { width: 4284, height: 5712 };
     expect(await prepareImage(file("image/jpeg", 3_000_000))).toMatchObject({ width: 1536, height: 2048 });
-    expect(asked).toEqual([{ type: "image/webp", quality: 0.82 }]);
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.75 }]);
   });
 
   test("is judged once, from a copy of about 65,000 pixels, whatever its size", async () => {
@@ -318,7 +318,7 @@ describe("prepareImage", () => {
     const reads: unknown[] = [];
     const result = await prepareImage(file("image/png", 300_000), { onRead: (read) => reads.push(read) });
     expect(result).toMatchObject({ width: 945, height: 2048 });
-    expect(asked).toEqual([{ type: "image/webp", quality: 0.82 }]);
+    expect(asked).toEqual([{ type: "image/webp", quality: 0.75 }]);
     expect(reads).toEqual([expect.objectContaining({ kind: "photo", flat: null })]);
   });
 
@@ -512,9 +512,9 @@ describe("where the canvas cannot write WebP, a worker does", () => {
     workerBytes = 6_000;
     await prepareImage(file("image/jpeg", 20_000), { maxBytes: 5_000 });
     expect(sent.map(({ width, height, quality }) => ({ width, height, quality }))).toEqual([
-      { width: 2048, height: 1536, quality: 82 },
-      { width: 1600, height: 1200, quality: 72 },
-      { width: 1280, height: 960, quality: 62 },
+      { width: 2048, height: 1536, quality: 75 },
+      { width: 1600, height: 1200, quality: 65 },
+      { width: 1280, height: 960, quality: 55 },
     ]);
   });
 
