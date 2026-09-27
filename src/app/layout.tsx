@@ -37,7 +37,9 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="bg-background text-foreground flex min-h-full flex-col overscroll-y-none">
-        <SerwistProvider swUrl="/serwist/sw.js" cacheOnNavigation>
+        {/* Not reloaded when the network returns: sync picks up by itself, and a
+            reload would throw away what was being typed, a draft included. */}
+        <SerwistProvider swUrl="/serwist/sw.js" cacheOnNavigation reloadOnOnline={false}>
           <AppProviders initialToken={initialToken}>{children}</AppProviders>
         </SerwistProvider>
       </body>

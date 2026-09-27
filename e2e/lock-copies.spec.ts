@@ -120,8 +120,8 @@ test.describe("an image copied into a locked note", () => {
       h: 300,
     });
     await awayFromImage(page);
-    // Back online the service worker reloads the page, which closes the vault.
-    await Promise.all([page.waitForEvent("load"), context.setOffline(false)]);
+    // Back online, and the app opened afresh, which closes the vault.
+    await context.setOffline(false);
     await openApp(page);
 
     // Pasted into an ordinary note that is then locked: the lock makes the

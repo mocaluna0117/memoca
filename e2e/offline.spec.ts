@@ -57,8 +57,8 @@ test.describe("offline", () => {
     const noteId = new URL(page.url()).searchParams.get("n")!;
     await pasteImage(page);
     await expect.poll(() => natural(noteImages(page).first()), { timeout: 30_000 }).toEqual({ w: 400, h: 300 });
-    // Saved on this device first: the page reloads as the network returns,
-    // and an edit still waiting its half second would not survive that.
+    // Saved on this device first, so what goes up once the network returns
+    // is the note and its file, not an edit still waiting its half second.
     await expect
       .poll(async () =>
         (await readTable<{ noteId: string }>(page, "updates")).filter((row) => row.noteId === noteId).length,
@@ -67,9 +67,8 @@ test.describe("offline", () => {
 
     // Back online, the note and its file both go up. (Which the server hears
     // of first depends on the connection; tests/attachments.test.ts covers a
-    // file arriving before its note.) The service worker reloads the page as
-    // the network returns.
-    await Promise.all([page.waitForEvent("load"), context.setOffline(false)]);
+    // file arriving before its note.)
+    await context.setOffline(false);
     await uploadsDrained(page);
     await waitForSynced(page);
     await expect

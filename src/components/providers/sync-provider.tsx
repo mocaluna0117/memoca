@@ -2,6 +2,7 @@
 
 import { useConvex, useQuery } from "convex/react";
 import { useLiveQuery } from "dexie-react-hooks";
+import { usePathname } from "next/navigation";
 import {
   createContext,
   type ReactNode,
@@ -84,6 +85,10 @@ export function SyncProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<SyncStatus>(IDLE);
   const [provision, setProvision] = useState<Provision>("pending");
   const engineRef = useRef<SyncEngine | null>(null);
+  /** The running engine, once it has started. */
+  const startedRef = useRef<Promise<SyncEngine> | null>(null);
+  /** The engine whose bodies have been fetched ahead, so they are fetched once. */
+  const prefetchedRef = useRef<SyncEngine | null>(null);
 
   const cached = useLiveQuery(
     async () => (await getMeta<ServerProfile | null>(META.profile, null)) ?? null,
@@ -124,7 +129,7 @@ export function SyncProvider({ children }: { children: ReactNode }) {
     const next = new SyncEngine(client);
     engineRef.current = next;
     const unsubscribe = next.subscribe(setStatus);
-    void next.start(userKey).then(() => next.prefetchBodies());
+    startedRef.current = next.start(userKey).then(() => next);
     return () => {
       unsubscribe();
       next.stop();
@@ -134,6 +139,23 @@ export function SyncProvider({ children }: { children: ReactNode }) {
       vault.lock();
     };
   }, [client, userKey]);
+
+  // Bodies are fetched ahead only where they are read: the quick note,
+  // opened to jot one line down, has no use for them.
+  const inNotes = usePathname().startsWith("/app");
+  useEffect(() => {
+    const started = startedRef.current;
+    if (!inNotes || !started) return;
+    let current = true;
+    void started.then((engine) => {
+      if (!current || engine !== engineRef.current || prefetchedRef.current === engine) return;
+      prefetchedRef.current = engine;
+      void engine.prefetchBodies();
+    });
+    return () => {
+      current = false;
+    };
+  }, [inNotes, userKey]);
 
   const autoLockMinutes = me?.settings.autoLockMinutes;
   useEffect(() => {
