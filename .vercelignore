@@ -8,4 +8,6 @@ playwright-report
 blob-report
 playwright/.cache
 # The desktop app (docs/DESKTOP.md) is built on GitHub, not with the site.
-desktop
+# Only the top-level folder: src/app/desktop and src/components/desktop are
+# the site's own.
+/desktop
