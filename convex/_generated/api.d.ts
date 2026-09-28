@@ -14,6 +14,7 @@ import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as http from "../http.js";
 import type * as lib_constants from "../lib/constants.js";
+import type * as lib_desktopSignIn from "../lib/desktopSignIn.js";
 import type * as lib_files from "../lib/files.js";
 import type * as lib_hlc from "../lib/hlc.js";
 import type * as lib_ops from "../lib/ops.js";
@@ -40,6 +41,7 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   http: typeof http;
   "lib/constants": typeof lib_constants;
+  "lib/desktopSignIn": typeof lib_desktopSignIn;
   "lib/files": typeof lib_files;
   "lib/hlc": typeof lib_hlc;
   "lib/ops": typeof lib_ops;

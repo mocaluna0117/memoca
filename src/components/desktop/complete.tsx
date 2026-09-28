@@ -3,68 +3,78 @@
 import { useEffect, useState } from "react";
 import { HandoffProblem } from "@/components/desktop/problem";
 import { authClient } from "@/lib/auth/client";
-import { tokenFromFragment } from "@/lib/auth/handoff";
-import { useClientValue } from "@/lib/hooks/use-client-value";
+import { isHandoffCode, isHandoffVerifier } from "@/lib/auth/handoff";
 
-/** Tokens being exchanged: each one once, however often the page's effect runs. */
+type Handoff = { code: string; verifier: string };
+
+/** What the shell hands this page: asked for once, however often the page's effect runs. */
+let taking: Promise<Handoff | null> | null = null;
+
+function take(): Promise<Handoff | null> {
+  taking ??= Promise.resolve(window.memocaShell?.takeSignIn?.() ?? null).then(
+    (given) =>
+      given && isHandoffCode(given.code) && isHandoffVerifier(given.verifier) ? given : null,
+    () => null,
+  );
+  return taking;
+}
+
+/** Codes being taken: each one once. */
 const exchanges = new Map<string, Promise<boolean>>();
 
-function exchange(token: string): Promise<boolean> {
-  let running = exchanges.get(token);
+function exchange({ code, verifier }: Handoff): Promise<boolean> {
+  let running = exchanges.get(code);
   if (!running) {
-    running = authClient.oneTimeToken.verify({ token }).then(
-      ({ error }) => !error,
-      () => false,
-    );
-    exchanges.set(token, running);
+    running = authClient
+      .$fetch("/desktop/exchange", { method: "POST", body: { code, verifier } })
+      .then(
+        ({ error }) => !error,
+        () => false,
+      );
+    exchanges.set(code, running);
   }
   return running;
 }
 
 /**
- * In the desktop shell's window: exchanges the token in the address's
- * fragment for a session, and opens the quick note in its place, which
- * takes the address with the token out of the window's history too. Turned
- * down, the token goes from the address all the same.
+ * In the desktop shell's window: takes the code the shell hands over, with
+ * the verifier it holds, for a session of the window's own, and opens the
+ * quick note in this page's place. Given nothing (the page opened by
+ * anything but the shell), there is nothing to take.
  */
 export function Complete() {
-  // Unknown until the page runs in the window: the server never sees it.
-  const token = useClientValue<string | null | undefined>(
-    () => tokenFromFragment(window.location.hash),
-    undefined,
-  );
-  const [failed, setFailed] = useState(false);
+  const [problem, setProblem] = useState<"failed" | "nothing" | null>(null);
 
   useEffect(() => {
-    if (!token) return;
     let current = true;
-    void exchange(token).then((signedIn) => {
+    void take().then(async (handoff) => {
       if (!current) return;
-      if (signedIn) {
-        window.location.replace("/quick?window=1");
-      } else {
-        setFailed(true);
-        // The page reads the address again as it shows this: failed comes first.
-        window.history.replaceState(null, "", window.location.pathname);
+      if (!handoff) {
+        setProblem("nothing");
+        return;
       }
+      const signedIn = await exchange(handoff);
+      if (!current) return;
+      if (signedIn) window.location.replace("/quick?window=1");
+      else setProblem("failed");
     });
     return () => {
       current = false;
     };
-  }, [token]);
+  }, []);
 
-  if (failed) {
+  if (problem === "failed") {
     return (
-      <HandoffProblem>
+      <HandoffProblem inShell>
         ログインできませんでした。コードの期限（3
-        分）が切れたか、もう使われています。デスクトップ版から、もう一度ログインを始めてください。
+        分）が切れたか、もう使われたか、このデスクトップ版で始めたログインのコードではありません。もう一度ログインしてください。
       </HandoffProblem>
     );
   }
-  if (token === null) {
+  if (problem === "nothing") {
     return (
-      <HandoffProblem>
-        コードが正しくありません。ブラウザに表示されたコードを、もう一度貼り付けてください。
+      <HandoffProblem inShell>
+        続けるログインがありません。「ブラウザでログイン」から始めてください。
       </HandoffProblem>
     );
   }

@@ -13,6 +13,7 @@ import { YomiSetting } from "@/components/search/yomi-setting";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
 import { ConvertImages } from "@/components/settings/convert-images";
+import { SignOutElsewhere } from "@/components/settings/sign-out-elsewhere";
 import { StorageBreakdown } from "@/components/settings/storage-breakdown";
 import {
   AlertDialog,
@@ -206,6 +207,7 @@ export default function SettingsPage() {
               アカウントを削除
             </Button>
           </div>
+          <SignOutElsewhere />
         </Section>
       </div>
 

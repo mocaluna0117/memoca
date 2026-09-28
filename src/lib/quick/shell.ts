@@ -7,8 +7,19 @@ export type MemocaShell = {
   hide(): void;
   /** Opens a link in the default browser: the shell's window is the quick note's alone. */
   openExternal(url: string): void;
-  /** Starts signing in through the default browser (see D0). */
-  beginSignIn?(): void;
+  /**
+   * Starts signing in through the default browser (src/lib/auth/handoff.ts),
+   * with the few letters the browser will show for it.
+   */
+  beginSignIn?(): Promise<string>;
+  /**
+   * Signs in with a code pasted from the browser: the shell sends the window
+   * to take it, with its verifier, for the sign-in it started ("ok"), or
+   * turns it away if it started none, or that one was too long ago.
+   */
+  completeSignIn?(code: string): Promise<"ok" | "not-started">;
+  /** What /desktop/complete takes, handed over once, just after the shell sends the window there. */
+  takeSignIn?(): Promise<{ code: string; verifier: string } | null>;
   platform: "macos" | "windows";
 };
 

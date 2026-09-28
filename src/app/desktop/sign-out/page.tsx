@@ -1,20 +1,17 @@
 import type { Metadata } from "next";
 import { headers } from "next/headers";
-import { Complete } from "@/components/desktop/complete";
+import { SignOut } from "@/components/desktop/sign-out";
 import { HandoffProblem } from "@/components/desktop/problem";
 import { shellAgent } from "@/lib/auth/handoff";
 
-export const metadata: Metadata = { title: "ログイン" };
+export const metadata: Metadata = { title: "ログアウト" };
 
-/**
- * In the desktop shell's window: take the code the shell hands over for a
- * session. Nowhere else: a browser has no shell to hand it one.
- */
-export default async function DesktopCompletePage() {
+/** In the desktop shell's window, from its menu: signs the window out. */
+export default async function DesktopSignOutPage() {
   if (!shellAgent((await headers()).get("user-agent"))) {
     return (
       <HandoffProblem>この画面は、デスクトップ版の Memoca の中でだけ使えます。</HandoffProblem>
     );
   }
-  return <Complete />;
+  return <SignOut />;
 }

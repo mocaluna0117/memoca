@@ -1,10 +1,10 @@
 import { createClient, type GenericCtx } from "@convex-dev/better-auth";
 import { convex } from "@convex-dev/better-auth/plugins";
 import { betterAuth } from "better-auth/minimal";
-import { oneTimeToken } from "better-auth/plugins/one-time-token";
 import { components } from "./_generated/api";
 import type { DataModel } from "./_generated/dataModel";
 import authConfig from "./auth.config";
+import { desktopSignIn } from "./lib/desktopSignIn";
 
 const siteUrl = process.env.SITE_URL ?? "http://localhost:3000";
 
@@ -16,13 +16,8 @@ const siteUrl = process.env.SITE_URL ?? "http://localhost:3000";
 const allowPasswordAuth = process.env.ALLOW_PASSWORD_AUTH === "true";
 
 /**
- * Signing the desktop shell in (docs/STORAGE-AND-DESKTOP.md, D0) is off
- * unless the deployment opts in, as development and the end-to-end tests do,
- * until the desktop app itself exists. The token it hands over is exchanged
- * for the browser's own session, not one of its own, and nothing ties it to
- * the shell that asked: a page persuading someone to pass the code on would
- * sign another in as them. Before production turns it on, D1 gives the
- * shell a session of its own, bound to a secret only the shell holds.
+ * Signing the desktop shell in (docs/STORAGE-AND-DESKTOP.md, D1, and
+ * lib/desktopSignIn.ts) is off unless the deployment opts in.
  */
 export const allowDesktopSignIn = () => process.env.ALLOW_DESKTOP_SIGN_IN === "true";
 
@@ -55,12 +50,5 @@ export const createAuth = (ctx: GenericCtx<DataModel>) =>
       // purged separately by users.deleteAccount before this runs.
       deleteUser: { enabled: true },
     },
-    plugins: [
-      convex({ authConfig }),
-      // Signing the desktop shell in: Google turns away a sign-in inside an
-      // app's own window, so it is done in the browser, and the session is
-      // handed over as a token the shell's window exchanges. Good for one
-      // exchange, for three minutes, and kept only as a hash.
-      ...(allowDesktopSignIn() ? [oneTimeToken({ expiresIn: 3, storeToken: "hashed" })] : []),
-    ],
+    plugins: [convex({ authConfig }), ...(allowDesktopSignIn() ? [desktopSignIn()] : [])],
   });

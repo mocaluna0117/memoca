@@ -11,15 +11,17 @@ afterEach(() => {
 });
 
 describe("signing the desktop shell in", () => {
-  test("is off unless the deployment turns it on, which production does not", () => {
+  test("is off unless the deployment turns it on", () => {
     vi.stubEnv("ALLOW_DESKTOP_SIGN_IN", "");
-    expect(plugin("one-time-token")).toBeUndefined();
+    expect(plugin("memoca-desktop-sign-in")).toBeUndefined();
     vi.stubEnv("ALLOW_DESKTOP_SIGN_IN", "1");
-    expect(plugin("one-time-token")).toBeUndefined();
+    expect(plugin("memoca-desktop-sign-in")).toBeUndefined();
+    vi.stubEnv("ALLOW_DESKTOP_SIGN_IN", "true");
+    expect(plugin("memoca-desktop-sign-in")).toBeDefined();
   });
 
-  test("where it is on, a token is good for three minutes, and kept only as a hash", () => {
+  test("hands the browser's own session to nobody: the one-time token plugin is gone", () => {
     vi.stubEnv("ALLOW_DESKTOP_SIGN_IN", "true");
-    expect(plugin("one-time-token")?.options).toMatchObject({ expiresIn: 3, storeToken: "hashed" });
+    expect(plugin("one-time-token")).toBeUndefined();
   });
 });

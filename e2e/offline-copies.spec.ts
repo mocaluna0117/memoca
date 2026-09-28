@@ -210,7 +210,7 @@ test.describe("what the device keeps for offline use", () => {
       ).put("/kuromoji/e2e.dat.gz", new Response("a dictionary"));
     });
 
-    await page.getByRole("button", { name: "ログアウト" }).click();
+    await page.getByRole("button", { name: "ログアウト", exact: true }).click();
     await page.waitForURL((url) => url.pathname === "/");
 
     const left = await keptPages(page);
