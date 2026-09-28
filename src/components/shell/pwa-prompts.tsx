@@ -4,13 +4,11 @@ import { Download } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { PAGE_BUILD } from "@/lib/build";
 import { flushAll } from "@/lib/sync/docs";
 
 /** How often a page left open looks for a new version of the app. */
 export const UPDATE_CHECK_MS = 30 * 60 * 1000;
-
-/** This page's build, written into its scripts as they were built (next.config.ts). */
-const PAGE_BUILD = process.env.MEMOCA_BUILD ?? "dev";
 
 /** The offer's toast: one at a time, put away when the workspace is left. */
 const OFFER = "new-version";

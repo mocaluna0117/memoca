@@ -6,6 +6,7 @@ import * as Y from "yjs";
 import { db, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { DRAFT_DELAY_MS, loadDraft } from "@/lib/quick/draft";
+import { SHELL_HIDDEN } from "@/lib/quick/shell";
 import { bodyFragment } from "@/lib/sync/ydoc";
 
 const ME = "user-me";
@@ -24,6 +25,7 @@ const h = vi.hoisted(() => ({
   opened: vi.fn(),
   acquire: vi.fn(),
   release: vi.fn(),
+  newBuild: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: h.replace, push: h.push }),
@@ -32,6 +34,7 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/components/providers/sync-provider", () => ({ useSync: () => ({ me: h.me }) }));
 vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote, renameNote: h.renameNote }));
 vi.mock("@/lib/sync/docs", () => ({ acquireDoc: h.acquire, releaseDoc: h.release }));
+vi.mock("@/lib/build", () => ({ newBuildOut: h.newBuild }));
 vi.mock("@/lib/quick/shell", async (original) => ({
   ...(await original<typeof import("@/lib/quick/shell")>()),
   closeQuickWindow: h.closed,
@@ -123,6 +126,7 @@ beforeEach(async () => {
     return docs.get(noteId);
   });
   h.release.mockReset().mockResolvedValue(undefined);
+  h.newBuild.mockReset().mockResolvedValue(false);
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -133,6 +137,7 @@ afterEach(async () => {
   host.remove();
   await settle();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 describe("the quick note, saving", () => {
@@ -317,6 +322,91 @@ describe("the quick note's window, closing", () => {
     await type("ページ");
     await key({ key: "Escape" }, document);
     expect(h.closed).not.toHaveBeenCalled();
+  });
+});
+
+describe("the quick note's window, put away by the desktop shell", () => {
+  /** The shell puts the window away (desktop/src-tauri/src/window.rs), keeping it loaded. */
+  const putAway = async () => {
+    await act(async () => {
+      window.dispatchEvent(new Event(SHELL_HIDDEN));
+    });
+    await settle();
+  };
+
+  test("keeps what is written, and then loads a new version of the site out of sight", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    // Asked only once the draft is on the device.
+    h.newBuild.mockImplementation(async () => {
+      expect(await loadDraft(ME)).toMatchObject({ text: "書きかけ" });
+      return true;
+    });
+    await render();
+    await type("書きかけ");
+    await putAway();
+    expect(h.newBuild).toHaveBeenCalledOnce();
+    expect(reload).toHaveBeenCalledOnce();
+    vi.restoreAllMocks();
+  });
+
+  test("put away while a save is under way, waits for it before loading anew", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    h.newBuild.mockResolvedValue(true);
+    let made!: (id: string) => void;
+    h.createNote.mockImplementation(() => new Promise((resolve) => (made = resolve)));
+    await render();
+    await type("保存中");
+    await key({ key: "Enter", metaKey: true });
+    await putAway();
+    expect(reload).not.toHaveBeenCalled();
+    await act(async () => made("note-1"));
+    await settle();
+    expect(reload).toHaveBeenCalledOnce();
+    vi.restoreAllMocks();
+  });
+
+  test("brought out again while the server is asked, is not loaded anew under the person typing", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    vi.spyOn(document, "hasFocus").mockReturnValue(true);
+    h.newBuild.mockResolvedValue(true);
+    await render();
+    await putAway();
+    expect(h.newBuild).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  test("with no new version, is left as it is", async () => {
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    await render();
+    await type("書きかけ");
+    await putAway();
+    expect(h.newBuild).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    expect(field().value).toBe("書きかけ");
+  });
+
+  test("as a page, is not the shell's to put away", async () => {
+    await render("");
+    await putAway();
+    expect(h.newBuild).not.toHaveBeenCalled();
+  });
+
+  test("the window is moved by its header, which a page has not", async () => {
+    await render();
+    const header = host.querySelector("header")!;
+    expect(header.hasAttribute("data-tauri-drag-region")).toBe(true);
+    expect(header.querySelector("h1")!.hasAttribute("data-tauri-drag-region")).toBe(true);
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await render("");
+    expect(host.querySelector("header")!.hasAttribute("data-tauri-drag-region")).toBe(false);
   });
 });
 

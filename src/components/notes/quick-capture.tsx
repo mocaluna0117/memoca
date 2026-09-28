@@ -6,13 +6,14 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { newBuildOut } from "@/lib/build";
 import { t } from "@/lib/i18n/ja";
 import { useVisibleArea } from "@/lib/hooks/use-visible-area";
 import { useModKeyLabel } from "@/lib/platform";
 import { appendParagraphs } from "@/lib/quick/body";
 import { clearDraft, keepDraft, loadDraft } from "@/lib/quick/draft";
 import { useQuickMode } from "@/lib/quick/mode";
-import { closeQuickWindow, openNoteInApp } from "@/lib/quick/shell";
+import { SHELL_HIDDEN, closeQuickWindow, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, joinShared, splitQuickText } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { createNote, renameNote } from "@/lib/sync/mutations";
@@ -188,6 +189,23 @@ function Capture({
 
   useEffect(() => {
     if (!windowed) return;
+    // Put away by the desktop shell, which keeps the window loaded: what is
+    // written is kept, and a new version of the site is loaded out of sight
+    // (nothing else would ever load this page again).
+    const hidden = async () => {
+      await inFlight.current;
+      await draft.current?.flush(true);
+      setStatus(null);
+      // Out again by the time the server says (and maybe being typed in):
+      // left for the next time it is put away.
+      if ((await newBuildOut()) && !document.hasFocus()) window.location.reload();
+    };
+    window.addEventListener(SHELL_HIDDEN, hidden);
+    return () => window.removeEventListener(SHELL_HIDDEN, hidden);
+  }, [windowed]);
+
+  useEffect(() => {
+    if (!windowed) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || composing(event)) return;
       event.preventDefault();
@@ -304,7 +322,11 @@ function Capture({
       }}
     >
       <div className="border-b bg-background">
-        <header className="flex items-center gap-2 px-2 py-2">
+        {/* The desktop shell's window has no title bar: it is moved by this. */}
+        <header
+          className="flex items-center gap-2 px-2 py-2"
+          data-tauri-drag-region={windowed || undefined}
+        >
           {windowed ? null : (
             <Button
               variant="ghost"
@@ -315,7 +337,12 @@ function Capture({
               <ArrowLeft className="size-5" aria-hidden />
             </Button>
           )}
-          <h1 className={cn("flex-1 text-sm font-medium", windowed && "pl-2")}>{t.nav.quick}</h1>
+          <h1
+            className={cn("flex-1 text-sm font-medium", windowed && "pl-2 select-none")}
+            data-tauri-drag-region={windowed || undefined}
+          >
+            {t.nav.quick}
+          </h1>
           <Button
             size="sm"
             onClick={save}

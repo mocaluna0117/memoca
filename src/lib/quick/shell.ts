@@ -29,6 +29,12 @@ declare global {
   }
 }
 
+/**
+ * What the shell tells the page as it puts the window away, keeping it
+ * loaded (desktop/src-tauri/src/window.rs).
+ */
+export const SHELL_HIDDEN = "memoca-shell-hidden";
+
 /** The user agent the shell gives its window, ahead of the page's script. */
 const SHELL_AGENT = /\bMemocaShell\//;
 
