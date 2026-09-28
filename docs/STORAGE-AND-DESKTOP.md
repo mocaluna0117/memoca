@@ -23,7 +23,8 @@
 | Q6 | パソコンの Web アプリから即席メモを開く | 済み（2026-09-27）。下の「Q6 の実装で決めたこと」 |
 | D0 | デスクトップ版のための Web 側の下地（殻のログイン） | 済み（2026-09-27）。本番ではまだ無効。下の「D0 の実装で決めたこと」 |
 | — | 第 2 段と D0 のレビュー（2 回、Opus 3 人ずつ） | 済み（2026-09-27）。下の「第 2 段のレビューで直したこと」と「第 2 段と D0 の 2 回目のレビューで直したこと」 |
-| D1〜D3 | デスクトップ版 | 未着手。D1 の前に、下の「D1 でやること（レビューから）」 |
+| D1 | Mac 版（Tauri）と、殻のログインの作り直し | 済み（2026-09-28）。本番でも殻のログインを有効にした。下の「D1 の実装で決めたこと」。使い方は [`DESKTOP.md`](DESKTOP.md) |
+| D2〜D3 | Windows 版、自動起動と自動更新、即席メモに画像 | 未着手 |
 
 ### S1 の実装で決めたこと（2026-09-26）
 
@@ -262,6 +263,8 @@ Q4〜D0 と、1 回目のレビューで直したもの（Opus 3 人：安全、
 
 ### D0 の実装で決めたこと（2026-09-27）
 
+（D0 の時点の記録。殻のログインは D1 で作り直した。いまの仕組みは下の「D1 の実装で決めたこと」。）
+
 - **殻のログインは、いつものブラウザで行う**：Google は、アプリ自身の窓の中でのログインを断るため。
   1. 殻の窓のログイン画面（UA に `MemocaShell/` があるとき）は、「ブラウザでログイン」と「コードを貼り付け」を出す。Google のボタンは出さない。
   2. 「ブラウザでログイン」を押すと、殻が 32 バイトの `state` を作り、ブラウザで `/desktop/sign-in?state=` を開く（殻の側は D1 で作る）。
@@ -284,15 +287,46 @@ Q4〜D0 と、1 回目のレビューで直したもの（Opus 3 人：安全、
   - ログインしていないブラウザは先にログインへ送られ、ログインのあとで戻り先が引き継がれること。形の違う `state` は断ること。
   - Service Worker が、どの画面も保存しないこと。
 - **D1 に回したこと**：リポジトリの除外設定（`desktop/` を型チェック・lint・Vercel のビルドから外す）。`desktop/` のフォルダを作るときに行う。
-- **D1 でやること（レビューから）**：本番で殻のログインを有効にする前に、次を済ませる。
+- **D1 でやること（レビューから）**：本番で殻のログインを有効にする前に、次を済ませる（D1 で済ませた）。
   - 殻に専用のセッションを作る（交換のときに新しいセッションを作る。ワンタイムトークンのプラグインではできないので、`convex/auth.ts` に小さな独自のエンドポイントを置く）。
   - トークンを、頼んだ殻に結び付ける：殻だけが持つ秘密（verifier）のハッシュ（challenge）を `/desktop/sign-in` に渡し、交換のときに秘密と照らし合わせる（RFC 8252 の PKCE と同じ考え）。コードを人に渡しても、殻の外では使えないようにするため。
   - 画面のコードは既定で隠す。出すときは、デスクトップ版の貼り付け欄以外に入れないこと、誰にも教えないことを添える。貼り付けも、待っている `state` と合わないコードは断る。
   - `state` は 1 回きりで期限付きにする。`/desktop/complete` へは殻自身の deep link の処理からだけ移り、殻の窓はアプリのオリジンの外へ移らない。
   - 未登録の `memoca://` へ移ると画面をエラーに置き換えるブラウザ（Firefox、おそらく macOS の Safari）でもコードが見えるよう、コードを先に出し、殻は明示のリンクで開く。
   - 最後に、本番の Convex に `ALLOW_DESKTOP_SIGN_IN=true` を入れる。
-- **D1 でやること（3 回目のレビューから）**：殻が隠して生かしておく即席メモの窓は、新しい版を知らない（新しい版の案内は、Web アプリのメモの画面にしか出さない）。窓を隠したとき（下書きは保存済み）に新しい版が来ていれば、黙って読み込み直す。12 時間以上たった窓は、出すときに読み込み直す（D2 の予定）。
+- **D1 でやること（3 回目のレビューから）**（D1 で済ませた）：殻が隠して生かしておく即席メモの窓は、新しい版を知らない（新しい版の案内は、Web アプリのメモの画面にしか出さない）。窓を隠したとき（下書きは保存済み）に新しい版が来ていれば、黙って読み込み直す。12 時間以上たった窓は、出すときに読み込み直す（D2 の予定）。
 - サーバー（Convex の認証設定）を変える前に、本番のデータを `~/memoca-backups/memoca-2026-09-27-1358-before-one-time-token.zip` に保存した。
+
+### 実機での確認のあとで直したこと（2026-09-28）
+
+- **iPhone で PDF を保存すると、題名が「memoca-app.vercel.app」になっていた**：ダウンロードボタンは、ロックしたメモのファイル（この端末で復号したもの）をページとして開いていた。いまは自前のボタンで、ファイルを取ってきて名前を付けて保存する。iPhone と iPad では共有シートに渡す（名前が出て、「ファイル」に保存できる）。取ってくるのに時間がかかって、押してから 5 秒（WebKit の決まり）を過ぎたときは、「ファイルの準備ができました ・ 共有」を出し、もう一度押してもらう。サーバーにある読めるファイルも、タブで開かずに名前を付けて保存する。名前の拡張子は中身に合わせる（PNG で貼って WebP で保存した写真は `.webp`）。
+  - レビュー（Opus 3 人）で直したこと：ほかのサイトから貼った画像が `text/html` を返すと、アプリと同じオリジンのページとして動くファイルになり得た。取ってきたものは、そのまま見せてよい種類（画像・動画・音声・PDF・テキスト）以外はただのデータとして保存する。ほかのサイトへは Cookie と Referer を送らない。開くのは http(s) とこのタブのファイルだけ（`javascript:` や `data:`、まだ届いていない `memoca://` は開かない）。二度押しは受け流す。アイコンは BlockNote のものに合わせた。
+- **CI が 9 月 17 日から一度も動いていなかった**：`pnpm/action-setup` に `version: 10` を書いていて、`package.json` の `packageManager` と食い違うと断られていた（型チェック・lint・単体テストが GitHub では走っていなかった）。`version` を外した。D1 のレビューで見つかった。動くようになると、型チェックがビルドの前に走るため、Next がビルドで書く `PageProps` などがなかった。`pnpm typecheck` は先に `next typegen` で書かせる。
+
+### D1 の実装で決めたこと（2026-09-28）
+
+- **殻のログイン（D0 から作り直し）**：殻が専用のセッションを持ち、コードは頼んだ殻にだけ使える。
+  1. 殻が `state` と、殻だけが持つ秘密 `verifier` を作り、ブラウザで `/desktop/sign-in?state=&challenge=`（`challenge` は `verifier` の SHA-256）を開く。殻の窓とブラウザのページの両方に、`challenge` から作った確認用の文字（例 `1A2B-3C4D`）を出す。
+  2. ブラウザは、ログインするアカウント（メールアドレス）と、殻がそのアカウントのメモを読み書きできるようになることを出す。「デスクトップ版にログインする」を押すと、サーバーの独自のエンドポイント（`convex/lib/desktopSignIn.ts`、Better Auth のプラグイン）が、その `challenge` 用のコードを作る（3 分、1 回きり、ハッシュで保存）。この 10 分以内にログインしたブラウザでだけ作れる。それより前なら、先に Google のログインをもう一度通る。
+  3. 「デスクトップ版の Memoca を開く」（`memoca://auth?code=&state=`）で殻に戻る。コードは頼まれたときだけ見せ、「コードを貼り付け」の欄以外に入れない、人に教えないと添える。
+  4. 殻は `state` が待っているものか（10 分以内）を確かめ、窓を `/desktop/complete` に移し、そのページにコードと `verifier` を直接渡す（`take_sign_in`、1 回、60 秒以内）。ページはそれで交換し、サーバーは `verifier` のハッシュが `challenge` と合うときだけ、殻の新しいセッションを作る。合わなくてもコードは消える。
+  - コードと `verifier` は URL に載らない（D0 はフラグメントで渡していた）。`/desktop/complete` をほかから開いても、渡されるものがないので何も起きない。
+  - 交換は Memoca のページからだけ受け付ける（Origin を確かめる）。Cookie のない要求は Better Auth が出どころを見ないため、ほかのサイトから、ログアウトしたブラウザを任意のアカウントにログインさせられた（レビューで見つかった）。窓が前のセッションを持っていれば、それは消す。
+  - 貼り付けたコードは、殻が始めたログインにだけ使う。打ち間違えても、始めたログインは残り、正しいコードを貼り直せる。リンクで戻ったときは、そのログインを終える。
+  - 殻のログアウトはメニューの「ログアウト」（`/desktop/sign-out`、殻の中でだけ）。ほかの端末からは、設定の「ほかの端末をすべてログアウト」で終わらせられる（Better Auth の `revokeOtherSessions`）。
+- **Mac 版（`desktop/`、Tauri 2.12）**：メニューバーのアプリ（Dock に出ない、`LSUIElement`）。窓は 1 つ（420×360、枠なし、常に最前面、全デスクトップ、最小化なし）で、起動時に読み込んで隠す。初めての起動だけ窓を出す（ログインのため）。
+  - 呼び出し：⌘⇧M（`settings.json` で変更、起動時に読む）、メニューバーのアイコンのクリック（アイコンの下に出す）、ホットコーナー（既定なし）。ほかをクリックすると隠れ、キーボードは前のアプリに戻す。ピン留めで隠さない。ピン留めして動かした窓は、呼んでも動かさない。
+  - 窓に出すのは `/quick`・`/sign-in`・`/desktop/complete`・`/desktop/sign-out` だけ。ほかの Memoca のページとほかのサイトは、いつものブラウザで開く（新しい窓を開くリンクも）。⌘W は隠すだけ。⌘Q は効かない（終了はメニューから）。⌘C・⌘V などのために「編集」メニューを置く。
+  - 窓を隠すと、ページに知らせる。ページは下書きを保存してから、新しい版が出ていれば（`/api/build` がページと違うビルドを答えれば）読み込み直す。保存の途中なら待ち、そのあいだに窓が出し直されたら読み込み直さない。
+  - 画面とポインタの位置は、すべてポイントで計算する（`src/screen.rs`）。Tauri はポインタを主画面の倍率で、画面は画面ごとの倍率で、ピクセルにして渡す。混ぜると、Retina ではホットコーナーが左上でしか効かず、画面が 2 つあると違う画面に出ていた（レビューで見つかった）。
+  - 設定ファイルは、メニューで変えるときに読み直してから書く（手で書いたホットキーを消さない）。読めないファイルには書かない。
+  - ページが殻に頼めるのは、窓を動かすことと 5 つのコマンドだけ（`capabilities/quick.json`、本番のオリジンのみ）。
+  - 署名は ad-hoc だけ（`signingIdentity: "-"`）。Apple シリコンでは署名のないアプリは開けないため。
+- **配布**：`desktop-v*` のタグで GitHub Actions が universal の `.dmg` を作り、下書きのリリースに置く。`desktop/` だけの変更は Vercel を動かさない（`vercel.json` の `ignoreCommand`。前回デプロイしたコミットとの差で判断）。
+  - `.vercelignore` に最初 `desktop` と書き、`src/app/desktop` と `src/components/desktop` まで Vercel に送られず、デプロイが 1 回失敗した（本番は前の版のまま）。`/desktop` に直した。
+- **本番**：Convex の変更の前に `~/memoca-backups/memoca-2026-09-28-0900-before-desktop-sign-in.zip` に保存した。デプロイを確かめてから、本番の Convex に `ALLOW_DESKTOP_SIGN_IN=true` を入れた（2026-09-28）。止めるときは、この変数を消す。
+- **テスト**：Rust の単体テスト（位置の計算、ホットコーナー、ログインの `state`・コード・リンクの読み取り、設定ファイル）、Convex のテスト（コードの期限・1 回きり・`verifier`・Origin・新しいセッション・前のセッションの削除・10 分）、E2E（偽の殻で、確認用の文字、貼り付け、1 回きり、ほかの殻のコード、殻の窓に収まること、ログアウト）。
+- **実機で確かめること**（自動化できない）：上の「検証」の Tauri の項目に加え、Gatekeeper の手順、ホットコーナーを 4 隅で、外部画面、フルスクリーンのアプリの上に出るか（出ないかもしれない。`FullScreenAuxiliary` を付けていない）、隠したあと前のアプリで打てるか。
 
 ## 背景
 
@@ -388,17 +422,17 @@ Q4〜D0 と、1 回目のレビューで直したもの（Opus 3 人：安全、
 Mac / Windows                              Vercel（Next）                 Convex
 ┌────────────────────────┐  ホットキー／トレイ／隅  ┌──────────────────┐   ┌────────┐
 │ Memoca.app（Tauri v2）  │ ── 表示／非表示 ──▶ │ /quick（window）   │◀─▶│ 同期・認証 │
-│  常駐、窓は隠して先読み   │  本番 URL を読み込む   │ /sign-in（殻用）    │   │ +oneTime │
-│  IPC は hide/openExternal│                      │ /desktop/complete │   │  Token  │
-│  /beginSignIn の 3 つ    └──┐                   └──────────────────┘   └────────┘
-└────────────────────────┘   │ システムのブラウザ：/desktop/sign-in?state → Google → /desktop/handoff
-                             └── memoca://auth?token&state ◀── oneTimeToken.generate
+│  常駐、窓は隠して先読み   │  本番 URL を読み込む   │ /sign-in（殻用）    │   │ +/desktop│
+│  IPC は 5 つ（D1 の節） │                      │ /desktop/complete │   │ /code・  │
+│  state と verifier を持つ └──┐                   └──────────────────┘   │ exchange │
+└────────────────────────┘   │ システムのブラウザ：/desktop/sign-in?state&challenge → Google → /desktop/handoff
+                             └── memoca://auth?code&state ◀── /desktop/code（challenge 用）
 ```
 
 - 窓：`quick` 1 つ、420×360（最小 320×240）、枠なし（ヘッダーが `data-tauri-drag-region`）、常に最前面、起動時は非表示で先読み、タスクバーに出さない、全ワークスペースで表示。UA に `MemocaShell/<ver> (macos|windows)` を付け、初期化スクリプトで `window.memocaShell` を注入。
 - 表示：ホットキー → カーソルのある画面の上中央、トレイのクリック → トレイの近く、ホットコーナー → その隅。フォーカスが外れたら隠す（トレイの「ピン留め」で無効化）。Esc と × は `hide`。
-- 認証：`convex/auth.ts` に `oneTimeToken({storeToken:"hashed", expiresIn:3})`、`src/lib/auth/client.ts` に `oneTimeTokenClient()`。殻の `beginSignIn` は 32 バイトの `state` を作ってブラウザで `/desktop/sign-in?state=` を開く → Google → `/desktop/handoff` が `generate()` して `memoca://auth?token=&state=` へ → 殻が `state` を確かめて窓を `/desktop/complete#token=` に移す（実装ではフラグメントで渡し、トークンは 3 分で切れる）→ `verify()` で Cookie が入り `/quick` へ。`tauri dev` では deep link が効かないので「コードを貼り付け」の予備を残す。窓は Google のドメインへの遷移をブロックしてブラウザで開く。
-- 権限：capability は `quick` 窓と `https://memoca-app.vercel.app/*` に限定し、`core:event:allow-listen/unlisten`、`core:window:allow-start-dragging`、自前の 3 コマンドだけ。プラグイン（global-shortcut、positioner、autostart、updater、deep-link、single-instance、opener）は Rust からのみ使う。`open_external` は本番オリジン配下だけ許可。
+- 認証：D1 の節のとおり（当初は `oneTimeToken` プラグインでブラウザのセッションを渡す計画だったが、殻の専用のセッションと、殻だけが持つ秘密に結び付けたコードに作り直した）。`tauri dev` では deep link が効かないので「コードを貼り付け」の予備を残す。窓は Memoca の決まったページ以外への遷移を止めてブラウザで開く。
+- 権限：capability は `quick` 窓と `https://memoca-app.vercel.app/*` に限定し、`core:window:allow-start-dragging` と自前の 5 コマンドだけ。プラグイン（global-shortcut、deep-link、single-instance、opener。D2 で autostart、updater）は Rust からのみ使う。`open_external` は本番オリジン配下だけ許可。
 - 金庫：殻は `/app` を開かない（「エディタで開く」は既定のブラウザ）。即席メモは Inbox 行きで金庫が不要。もし金庫の画面が出ても、この窓にはパスキーの記録がないのでパスワードが先に出る（署名なしでは Touch ID は使えない）。
 - 置き場：`desktop/`（`package.json`、`pnpm-lock.yaml`、`src-tauri/`）を**独立パッケージ**として置く（pnpm workspace にはしない）。`tsconfig.json` の exclude、`eslint.config.mjs` の ignores、`.vercelignore`、`.gitignore`（`desktop/src-tauri/target`、`gen`）、`.prettierignore` に追加。`vercel.json` に `ignoreCommand` で desktop のみの変更は Web をデプロイしない。
 - 配布：署名なし。Mac は初回だけ「システム設定 → プライバシーとセキュリティ → このまま開く」（macOS 15 以降は右クリック→開くが使えない）、Windows は SmartScreen で「実行」。手順は新規 `docs/DESKTOP.md`（README からリンク）。
@@ -408,8 +442,8 @@ Mac / Windows                              Vercel（Next）                 Conv
 | # | 内容 | 目安 |
 |---|---|---|
 | D0 | Web 側の下地：`src/lib/shell/native.ts`（UA 判定）、`sign-in/page.tsx` で殻用カード（「ブラウザでログイン」＋コード貼り付け）、`/desktop/sign-in`・`/desktop/handoff`・`/desktop/complete`（`robots: noindex`）、`oneTimeToken` の配線、リポジトリの除外設定。バックアップを先に。 | 1 日 |
-| D1 | Mac 版：Rust 環境（`rustup`）、`desktop/` の Tauri プロジェクト、窓・トレイ（日本語メニュー：即席メモを開く／ピン留め／ホットコーナー▸なし・4 隅／ブラウザで Memoca を開く／再読み込み／バージョン／終了）・ホットキー（既定 ⌘⇧M、`settings.json` で変更）・ホットコーナー（100 ms ごとにカーソルを監視、隅 2 px に 300 ms とどまる、離れるまで再発火しない、既定オフ）・single-instance・deep-link・opener、3 コマンドと capability、遷移ガード、blur で隠す＋ピン留め、`.github/workflows/desktop.yml`（`desktop-v*` タグで macOS ビルド、下書きリリースに `.dmg`）。 | 4〜6 日 |
-| D2 | Windows 版（NSIS、WebView2 のブートストラップ、Ctrl 表示、Alt-Tab から隠す）、ログイン時起動（`--hidden`）、自動更新（更新鍵、6 時間ごと）、窓の位置とサイズの記憶、12 時間以上たった窓を表示時に再読み込み、`docs/DESKTOP.md`。Windows 機か VM で確認。 | 3〜4 日 |
+| D1 | Mac 版：Rust 環境（`rustup`）、`desktop/` の Tauri プロジェクト、窓・トレイ（日本語メニュー：即席メモを開く／ピン留め／ホットコーナー▸なし・4 隅／ブラウザで Memoca を開く／再読み込み／バージョン／終了）・ホットキー（既定 ⌘⇧M、`settings.json` で変更）・ホットコーナー（100 ms ごとにカーソルを監視、隅 2 px に 300 ms とどまる、離れるまで再発火しない、既定オフ）・single-instance・deep-link・opener、5 コマンドと capability、遷移ガード、blur で隠す＋ピン留め、`.github/workflows/desktop.yml`（`desktop-v*` タグで macOS ビルド、下書きリリースに `.dmg`）。 | 4〜6 日 |
+| D2 | Windows 版（NSIS、WebView2 のブートストラップ、Ctrl 表示、Alt-Tab から隠す）、ログイン時起動（`--hidden`）、自動更新（更新鍵、6 時間ごと）、窓の位置とサイズの記憶、12 時間以上たった窓を表示時に再読み込み、`docs/DESKTOP.md` に Windows の手順。Windows 機か VM で確認。 | 3〜4 日 |
 | D3 | 即席メモに画像（テキスト欄に `image/*` の貼り付け・ドロップを受け、サムネイル付きの一覧に持ち、保存時に `stageUpload` → `appendParagraphs`（`src/lib/quick/body.ts`）に画像ブロックを足して書く。`flushUploads` の `unknownNote` を `lockMismatch` と同じく再試行に。HEIC は不可と表示。BlockNote は載せない：保存前に `noteId` が要る、起動が重い、WKWebView の contenteditable は未検証）。Apple Developer Program に入る場合のみ：Developer ID 署名＋公証、Associated Domains と `public/.well-known/apple-app-site-association` でパスキー。 | 3〜5 日 |
 
 ---
@@ -418,7 +452,7 @@ Mac / Windows                              Vercel（Next）                 Conv
 
 - **単体（vitest）**：S1 `rewriteRefInDoc`・`stageLockedCopy`（`tests/apply-crop.test.ts` の fixture を流用）、S3 判定 1 回・上限・容量チェック（`tests/compress.test.ts` のスタブ）、S4 `FakeWorker` で transfer・タイムアウト・`unavailable`、版の一致、S5 分類と `fitScale` と段階の上限、Q1 の各モジュール、D0 の UA 判定と `state` の検証。
 - **Convex（convex-test）**：S2 `foreignPlaintext`、S6 内訳・トゥームストーン・再計算。
-- **E2E（Playwright）**：S1 `pasteHtml` で A の画像を B に貼る → `{noteId: B, locked: true}` の行と `blobs` が空（`image-crop.spec.ts` の流れ）、S3/S4 `pasteImage` → `mime: image/webp` でサイズが縮む、第 2 段の `quick.spec` と `quick-window.spec`、D0 の `e2e/desktop-sign-in.spec.ts`（殻の UA を付けた窓と、偽の `window.memocaShell` で `hide`/`openExternal` の呼び出しを記録、`/desktop/complete#token=` の往復。専用の Playwright プロジェクトは作らず、desktop プロジェクトの中で窓を作る）。実行は `pnpm build && pnpm start`、`E2E_BASE_URL=http://localhost:3000`、Convex の変更後は `npx convex dev --once`。
+- **E2E（Playwright）**：S1 `pasteHtml` で A の画像を B に貼る → `{noteId: B, locked: true}` の行と `blobs` が空（`image-crop.spec.ts` の流れ）、S3/S4 `pasteImage` → `mime: image/webp` でサイズが縮む、第 2 段の `quick.spec` と `quick-window.spec`、D0 の `e2e/desktop-sign-in.spec.ts`（殻の UA を付けた窓と、偽の `window.memocaShell` で `hide`/`openExternal` の呼び出しを記録、D1 で殻がページにコードを渡す形に。専用の Playwright プロジェクトは作らず、desktop プロジェクトの中で窓を作る）。実行は `pnpm build && pnpm start`、`E2E_BASE_URL=http://localhost:3000`、Convex の変更後は `npx convex dev --once`。
 - **実機（自動化できない）**：iPhone と Mac の Safari で診断欄を使い、スクショ・写真・HEIC・10 MB の PNG の圧縮時間とサイズを記録して `ENCODING` を決める。Tauri：起動して何も出ない → ホットキーで出て入力欄にフォーカス → 保存で Inbox に入る → blur で隠れる → ログアウト状態から「ブラウザでログイン」で戻る（ビルド版）→ 2 回目の起動は既存の窓を出す → スリープ復帰後の再読み込み。Windows は SmartScreen、WebView2、Ctrl 表示、自動更新。
 - **本番**：Convex を変えるコミット（S2・S6・D0）の前に `npx convex export --prod`。デプロイ後は `gh api repos/mocaluna0117/memoca/commits/<sha>/status` と、`/serwist/sw.js` の一覧から本番チャンクを取って文言で確認。
 
