@@ -4,3 +4,4 @@ pnpm-lock.yaml
 convex/_generated
 public
 *.md
+desktop

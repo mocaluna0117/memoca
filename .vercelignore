@@ -7,3 +7,5 @@ test-results
 playwright-report
 blob-report
 playwright/.cache
+# The desktop app (docs/DESKTOP.md) is built on GitHub, not with the site.
+desktop

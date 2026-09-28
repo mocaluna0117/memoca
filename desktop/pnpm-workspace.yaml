@@ -1,0 +1,3 @@
+# The desktop app is a package of its own, installed apart from the web app
+# at the repository's root (docs/DESKTOP.md).
+packages: []

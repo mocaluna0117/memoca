@@ -1,0 +1,70 @@
+name: Desktop
+
+# The Mac app (docs/DESKTOP.md), built on a tag such as desktop-v0.1.0 into a
+# draft release with its .dmg, for the owner to look over and publish. Run
+# by hand, it builds and keeps the .dmg as an artifact of the run instead.
+# Not signed: see docs/DESKTOP.md for opening it the first time.
+
+on:
+  push:
+    tags: ["desktop-v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: Build the Mac app
+    runs-on: macos-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+
+      # The version is the root package.json's packageManager; naming one
+      # here as well stops the step.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      # One app for Apple silicon and Intel Macs alike.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Test
+        working-directory: desktop/src-tauri
+        run: cargo test
+
+      - name: Build, and draft a release for a tag
+        id: build
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tauriScript: pnpm tauri
+          args: --target universal-apple-darwin
+          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          releaseName: Memoca デスクトップ版 ${{ github.ref_name }}
+          releaseBody: 署名なしの Mac 版です。初めて開くときの手順は docs/DESKTOP.md を見てください。
+          releaseDraft: true
+
+      - name: Keep the .dmg of a run by hand
+        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Memoca-macos
+          path: desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
