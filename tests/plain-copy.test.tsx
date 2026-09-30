@@ -1,6 +1,7 @@
 import { BlockNoteEditor } from "@blocknote/core";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
+import { TextSelection } from "prosemirror-state";
 import { afterEach, expect, test, vi } from "vitest";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 
@@ -135,4 +136,50 @@ test("an editor not shown yet: a copy elsewhere is left alone, and nothing break
   window.removeEventListener("error", onError);
   act(() => root.unmount());
   expect(errors.map(String)).toEqual([]);
+});
+
+test("a toggle's line all selected: copied with what is inside it, for every app, and the selection kept", async () => {
+  const { editor, view } = await setup();
+  editor.replaceBlocks(editor.document, [
+    {
+      type: "toggleListItem",
+      content: "箱",
+      children: [{ type: "paragraph", content: "中身" }],
+    },
+    { type: "paragraph", content: "後" },
+  ]);
+  const toggle = editor.document[0]!;
+  editor.setTextCursorPosition(toggle, "start");
+  const start = view.state.selection.from;
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, start, start + 1)));
+  const before = view.state.selection.toJSON();
+  const { data, event } = clip("copy", view.dom);
+  expect(event.defaultPrevented).toBe(true);
+  expect(data.get("text/plain")).toBe("箱\n  中身");
+  expect(data.get("text/html")).toContain("中身");
+  expect(data.get("blocknote/html")).toContain("中身");
+  expect(data.get("blocknote/html")).toContain("toggleListItem");
+  expect(view.state.selection.toJSON()).toEqual(before);
+
+  // A cut takes it all, and leaves nothing of it behind.
+  const cut = clip("cut", view.dom);
+  expect(cut.event.defaultPrevented).toBe(true);
+  expect(cut.data.get("text/plain")).toBe("箱\n  中身");
+  expect(editor.document.map((block) => block.type)).toEqual(["paragraph"]);
+  expect(JSON.stringify(editor.document)).not.toContain("中身");
+});
+
+test("an open toggle's line: copied as selected", async () => {
+  const { editor, view } = await setup();
+  editor.replaceBlocks(editor.document, [
+    { type: "toggleListItem", content: "箱", children: [{ type: "paragraph", content: "中身" }] },
+  ]);
+  const toggle = editor.document[0]!;
+  const wrapper = view.dom.querySelector(".bn-toggle-wrapper")!;
+  wrapper.setAttribute("data-show-children", "true");
+  editor.setTextCursorPosition(toggle, "start");
+  const start = view.state.selection.from;
+  view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, start, start + 1)));
+  const { data } = clip("copy", view.dom);
+  expect(data.get("text/plain")).toBe("箱");
 });

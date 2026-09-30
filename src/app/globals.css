@@ -150,3 +150,16 @@
 .bn-formatting-toolbar {
   max-width: calc(100vw - 0.5rem);
 }
+
+/* An empty, open toggle's "add a block" button, lit while a block dragged
+   over its line would go into it (src/components/editor/toggles.ts): the
+   drop cursor alone, under the line, looks as it does for a drop after it. */
+.memoca-toggle-drop {
+  position: absolute;
+  z-index: 50;
+  pointer-events: none;
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  border-radius: calc(var(--radius) - 2px);
+  background-color: color-mix(in oklab, var(--primary) 8%, transparent);
+}

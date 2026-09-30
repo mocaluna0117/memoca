@@ -1,8 +1,15 @@
 "use client";
 
 import type { BlockNoteEditor } from "@blocknote/core";
+import { TextSelection } from "prosemirror-state";
 import { useEffect } from "react";
-import { plainTextOf } from "@/lib/plain-text";
+import { clipboardFor, copyRange, cutRange, isOpenOnScreen } from "@/components/editor/toggles";
+import { plainTextBetween, plainTextOf } from "@/lib/plain-text";
+
+/** Windows' plain-text apps want CRLF, which the browser adds to a copy of
+ *  its own but not to one a page writes. */
+const forThisSystem = (text: string) =>
+  /Windows/.test(navigator.userAgent) ? text.replace(/\n/g, "\r\n") : text;
 
 /**
  * Copying or cutting from a note gives apps that take plain text the text as
@@ -14,8 +21,12 @@ import { plainTextOf } from "@/lib/plain-text";
  * which for a cut takes the selection away, and written after it (on the way
  * back up), over what it wrote. Listened for on the document: the editor's
  * view is made after this component's first render, and may be made again.
+ *
+ * A copy or cut of all of a closed toggle's line takes what is hidden inside
+ * it too (see copyRange in toggles.ts): written here in full, BlockNote's
+ * HTML included, and kept from the editor, which would take the line alone.
  */
-export function usePlainTextCopy(editor: Pick<BlockNoteEditor, "domElement" | "prosemirrorView">) {
+export function usePlainTextCopy(editor: BlockNoteEditor) {
   useEffect(() => {
     let text: string | null = null;
     // The editor's element, where it is shown: none before it is, or after
@@ -40,16 +51,33 @@ export function usePlainTextCopy(editor: Pick<BlockNoteEditor, "domElement" | "p
       ).domObserver;
       observer?.forceFlush?.();
       observer?.flush?.();
-      const { selection } = view.state;
-      if (!selection.empty) text = plainTextOf(view.state.doc, selection);
+      const { selection, doc } = view.state;
+      if (selection.empty) return;
+      const toggle =
+        selection instanceof TextSelection
+          ? copyRange(doc, selection.from, selection.to, (block) => isOpenOnScreen(view, block))
+          : null;
+      const clipboard = (event as ClipboardEvent).clipboardData;
+      if (toggle && clipboard) {
+        const { clipboardHTML, externalHTML } = clipboardFor(editor, view, toggle);
+        clipboard.clearData();
+        clipboard.setData("blocknote/html", clipboardHTML);
+        clipboard.setData("text/html", externalHTML);
+        clipboard.setData(
+          "text/plain",
+          forThisSystem(plainTextBetween(doc, toggle.from, toggle.to)),
+        );
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.type === "cut" && view.editable) view.dispatch(cutRange(view.state, toggle));
+        return;
+      }
+      text = plainTextOf(doc, selection);
     };
     const write = (event: ClipboardEvent) => {
       // The editor wrote the clipboard (and so stopped the browser's own copy).
       if (text && event.defaultPrevented) {
-        // Windows' plain-text apps want CRLF, which the browser adds to a copy
-        // of its own but not to one a page writes.
-        const lines = /Windows/.test(navigator.userAgent) ? text.replace(/\n/g, "\r\n") : text;
-        event.clipboardData?.setData("text/plain", lines);
+        event.clipboardData?.setData("text/plain", forThisSystem(text));
       }
       text = null;
     };
