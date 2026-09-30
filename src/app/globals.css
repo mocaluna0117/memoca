@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+/* BlockNote's shadcn components are styled with Tailwind classes of their
+   own: without reading them, the ones this app uses nowhere else are never
+   made (the item picked in the / menu by the arrow keys was never coloured). */
+@source "../../node_modules/@blocknote/shadcn/dist";
 
 @custom-variant dark (&:is(.dark *));
 
