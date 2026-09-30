@@ -1,7 +1,7 @@
 import { BlockNoteEditor } from "@blocknote/core";
 import { act, createElement } from "react";
 import { createRoot } from "react-dom/client";
-import { TextSelection } from "prosemirror-state";
+import { NodeSelection, TextSelection } from "prosemirror-state";
 import { afterEach, expect, test, vi } from "vitest";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 
@@ -182,4 +182,18 @@ test("an open toggle's line: copied as selected", async () => {
   view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, start, start + 1)));
   const { data } = clip("copy", view.dom);
   expect(data.get("text/plain")).toBe("箱");
+});
+
+test("an image alone gives apps that take plain text nothing, not Markdown for it", async () => {
+  const { editor, view } = await setup();
+  editor.replaceBlocks(editor.document, [
+    { type: "paragraph", content: "上" },
+    { type: "image", props: { url: "memoca://att/0190", name: "写真.png" } },
+  ]);
+  const group = view.state.doc.firstChild!;
+  const imagePos = 1 + group.child(0).nodeSize;
+  view.dispatch(view.state.tr.setSelection(NodeSelection.create(view.state.doc, imagePos)));
+  const { data } = clip("copy", view.dom);
+  expect(data.get("text/html")).toContain("<img");
+  expect(data.get("text/plain")).toBe("");
 });

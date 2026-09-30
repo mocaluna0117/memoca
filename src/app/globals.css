@@ -163,3 +163,18 @@
   border-radius: calc(var(--radius) - 2px);
   background-color: color-mix(in oklab, var(--primary) 8%, transparent);
 }
+
+/* An image or a file a selection of text runs over, shown as selected as
+   BlockNote shows one selected on its own (src/components/editor/select-media.ts). */
+.bn-block-content.memoca-selected-media > * {
+  position: relative;
+}
+.bn-block-content.memoca-selected-media > *::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 4px;
+  background-color: rgba(100, 160, 255, 0.08);
+  box-shadow: inset 0 0 0 4px rgba(100, 160, 255, 0.3);
+  pointer-events: none;
+}

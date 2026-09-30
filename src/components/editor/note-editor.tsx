@@ -36,6 +36,7 @@ import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { dragHandle } from "@/components/editor/drag-handle";
+import { selectMedia } from "@/components/editor/select-media";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
 
@@ -194,7 +195,7 @@ function EditorSurface({
         uploadFile,
         resolveFileUrl,
         links: LINKS,
-        extensions: [japaneseLists, toggles(), dragHandle],
+        extensions: [japaneseLists, toggles(), dragHandle, selectMedia()],
         dropCursor: { hooks: { computeDropPosition } },
       }),
     [doc, me?.name, uploadFile, resolveFileUrl],

@@ -76,7 +76,8 @@ export function usePlainTextCopy(editor: BlockNoteEditor) {
     };
     const write = (event: ClipboardEvent) => {
       // The editor wrote the clipboard (and so stopped the browser's own copy).
-      if (text && event.defaultPrevented) {
+      // Empty too: an image alone gives no text, where BlockNote wrote Markdown for it.
+      if (text !== null && event.defaultPrevented) {
         event.clipboardData?.setData("text/plain", forThisSystem(text));
       }
       text = null;
