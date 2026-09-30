@@ -43,7 +43,7 @@ type BlockType =
  * The editor's own drag handle appears on hover, which a finger never
  * produces, so on a phone there is otherwise no way to change a block's type,
  * move it or delete it. This bar sits above the keyboard and acts on whichever
- * block the cursor is in.
+ * block the cursor is in (a type, on all those selected).
  */
 export function MobileBlockToolbar() {
   const editor = useBlockNoteEditor();
@@ -59,12 +59,21 @@ export function MobileBlockToolbar() {
   const currentType = block.type as BlockType;
   const currentLevel = (block.props as { level?: number } | undefined)?.level;
 
+  // Every block selected with text (not an image or a table), as the
+  // toolbar's type select does: a list written as lines, selected, becomes
+  // a list at once. The first says whether it is already that type.
   const setType = (type: BlockType, level?: 1 | 2) => {
     const same = currentType === type && (level === undefined || currentLevel === level);
-    editor.updateBlock(block, {
-      type: same ? "paragraph" : type,
-      ...(level !== undefined && !same ? { props: { level } } : {}),
-    } as Parameters<typeof editor.updateBlock>[1]);
+    editor.transact(() => {
+      for (const each of selected) {
+        const spec = (editor.schema.blockSchema as Record<string, { content: string }>)[each.type];
+        if (spec?.content !== "inline") continue;
+        editor.updateBlock(each, {
+          type: same ? "paragraph" : type,
+          ...(level !== undefined && !same ? { props: { level } } : {}),
+        } as Parameters<typeof editor.updateBlock>[1]);
+      }
+    });
     editor.focus();
   };
 
@@ -192,7 +201,7 @@ export function MobileBlockToolbar() {
   // placed against, so the bar would leave the keyboard.
   return (
     <div
-      className="bg-background/95 supports-[backdrop-filter]:bg-background/80 fixed inset-x-0 z-40 border-t backdrop-blur in-data-[drawer]:hidden md:hidden"
+      className="fixed inset-x-0 z-40 border-t bg-background/95 backdrop-blur in-data-[drawer]:hidden supports-[backdrop-filter]:bg-background/80 md:hidden"
       style={{ bottom: inset }}
       role="toolbar"
       aria-label="ブロックの操作"
