@@ -19,6 +19,62 @@ export function useVaultUnlocked(): boolean {
 export const LOCKED_LABEL = "ロックされたメモ";
 const LOCKED_FOLDER_LABEL = "ロックされたフォルダ";
 
+/** A locked note's title, decrypted: the vault has to be open. */
+async function decryptTitle(note: Note): Promise<string> {
+  const noteKey = await vault.noteKey(note.noteId, note.keyEpoch, note.wrappedKey!);
+  const plain = await open(
+    noteKey,
+    new Uint8Array(note.titleSealed!.ct),
+    new Uint8Array(note.titleSealed!.iv),
+    ctx.noteTitle(note.noteId, note.keyEpoch),
+  );
+  return new TextDecoder().decode(plain);
+}
+
+/**
+ * The titles of a list's locked notes, decrypted while the vault is open,
+ * by note: for ordering the list by name, which each row's own title
+ * ({@link useNoteTitle}) comes too late for. Only when `enabled`; a note's
+ * title that cannot be read is missing, and so is every one with the vault
+ * closed. Held by this list only, and gone with it.
+ */
+export function useLockedTitles(notes: Note[], enabled: boolean): ReadonlyMap<string, string> {
+  const unlocked = useVaultUnlocked();
+  const [titles, setTitles] = useState<ReadonlyMap<string, string>>(new Map());
+  const wanted = enabled && unlocked;
+  // What to decrypt: each locked note's title, as it now is.
+  const sealed = wanted
+    ? notes.filter((note) => note.locked && note.wrappedKey && note.titleSealed)
+    : [];
+  const keys = sealed.map((note) => `${note.noteId}:${note.keyEpoch}:${note.ts.title.t}`).join(" ");
+
+  useEffect(() => {
+    if (!wanted) return;
+    let cancelled = false;
+    void (async () => {
+      const found = new Map<string, string>();
+      for (const note of sealed) {
+        try {
+          found.set(note.noteId, await decryptTitle(note));
+        } catch {
+          // The vault closed, or the title is unreadable: left out.
+        }
+      }
+      if (!cancelled) setTitles(found);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // `keys` stands for the notes it reads: the list object itself changes
+    // with every unrelated live-query emission.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [keys, wanted]);
+
+  return wanted ? titles : EMPTY_TITLES;
+}
+
+const EMPTY_TITLES: ReadonlyMap<string, string> = new Map();
+
 /**
  * A note's title, decrypted only while the vault is open.
  *
@@ -32,23 +88,15 @@ export function useNoteTitle(note: Note | null | undefined): string {
   const [decrypted, setDecrypted] = useState<{ key: string; value: string } | null>(null);
 
   const key = note ? `${note.noteId}:${note.keyEpoch}:${note.ts.title.t}` : "";
-  const needsDecrypt = Boolean(
-    note?.locked && unlocked && note.wrappedKey && note.titleSealed,
-  );
+  const needsDecrypt = Boolean(note?.locked && unlocked && note.wrappedKey && note.titleSealed);
 
   useEffect(() => {
     if (!needsDecrypt || !note) return;
     let cancelled = false;
     void (async () => {
       try {
-        const noteKey = await vault.noteKey(note.noteId, note.keyEpoch, note.wrappedKey!);
-        const plain = await open(
-          noteKey,
-          new Uint8Array(note.titleSealed!.ct),
-          new Uint8Array(note.titleSealed!.iv),
-          ctx.noteTitle(note.noteId, note.keyEpoch),
-        );
-        if (!cancelled) setDecrypted({ key, value: new TextDecoder().decode(plain) });
+        const value = await decryptTitle(note);
+        if (!cancelled) setDecrypted({ key, value });
       } catch {
         // Leave the placeholder in place; the vault may have closed mid-flight.
       }

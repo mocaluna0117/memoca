@@ -58,3 +58,38 @@ export async function clearTable(page: Page, table: string): Promise<void> {
     opened.close();
   }, table);
 }
+
+/**
+ * Changes a row of one of the app's IndexedDB tables in place, as a sync
+ * from elsewhere might have left it. The page shows it once reloaded: the
+ * app's own live queries do not see a change made around them.
+ */
+export async function patchRow(
+  page: Page,
+  table: string,
+  key: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  await page.evaluate(
+    async ({ name, key, patch }) => {
+      const databases = await indexedDB.databases();
+      const found = databases.find((entry) => entry.name?.startsWith("memoca"));
+      if (!found?.name) return;
+      const opened = await new Promise<IDBDatabase>((resolve, reject) => {
+        const request = indexedDB.open(found.name!);
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const transaction = opened.transaction(name, "readwrite");
+        const store = transaction.objectStore(name);
+        const read = store.get(key);
+        read.onsuccess = () => store.put({ ...read.result, ...patch });
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => reject(transaction.error);
+      });
+      opened.close();
+    },
+    { name: table, key, patch },
+  );
+}

@@ -22,16 +22,33 @@ async function now(): Promise<{ ts: Stamp; device: string }> {
 
 const zero = (d: string): Stamp => ({ t: 0, d });
 
+/** A key after every sibling's: where a folder made in a folder, or moved into one, goes. */
+async function siblingKeyAfterLast(
+  kind: "folders" | "notes",
+  parent: string | null,
+): Promise<string> {
+  return between((await siblingKeys(kind, parent)).at(-1) ?? null, null);
+}
+
 /**
+ * A key before every sibling's: where a note made in a folder, or moved into
+ * one, goes when its notes are placed by hand, as the newest go first when
+ * they are ordered by time.
+ */
+async function siblingKeyBeforeFirst(parent: string | null): Promise<string> {
+  const first = (await siblingKeys("notes", parent))[0];
+  return between(null, first ?? null);
+}
+
+/**
+ * The sort keys of a folder's (or the top level's) live rows, in order.
+ *
  * IndexedDB cannot index null, so top-level rows are found with a scan rather
  * than through the parent index. At a personal note-taking scale that is a
  * handful of rows, and it avoids inventing a magic "root" parent id that every
  * other query would then have to know about.
  */
-async function siblingKeyAfterLast(
-  kind: "folders" | "notes",
-  parent: string | null,
-): Promise<string> {
+async function siblingKeys(kind: "folders" | "notes", parent: string | null): Promise<string[]> {
   const database = db();
   const rows =
     kind === "folders"
@@ -41,11 +58,10 @@ async function siblingKeyAfterLast(
       : parent === null
         ? await database.notes.filter((n) => n.folderId === null).toArray()
         : await database.notes.where("folderId").equals(parent).toArray();
-  const keys = rows
+  return rows
     .filter((r) => r.deletedAt === null && !r.purged)
     .map((r) => r.sortKey)
     .sort();
-  return between(keys.at(-1) ?? null, null);
 }
 
 /* -------------------------------------------------------------- folders */
@@ -225,7 +241,7 @@ export async function createNote(opts: {
   // No folder chosen means Inbox. Null survives only on a device that has not
   // received its Inbox yet, and adoptFolderlessNotes files it once it has.
   const folderId = opts.folderId ?? (await inboxFolderId());
-  const sortKey = await siblingKeyAfterLast("notes", folderId);
+  const sortKey = await siblingKeyBeforeFirst(folderId);
   const kind = opts.kind ?? "note";
   const title = opts.title ?? "";
 
@@ -406,7 +422,7 @@ export async function moveNote(
   const target = folderId ?? (await inboxFolderId());
   if (note.folderId === target && sortKey === undefined) return;
   const { ts } = await now();
-  const key = sortKey ?? (await siblingKeyAfterLast("notes", target));
+  const key = sortKey ?? (await siblingKeyBeforeFirst(target));
 
   await database.notes.update(noteId, {
     folderId: target,

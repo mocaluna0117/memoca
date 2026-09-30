@@ -1,3 +1,4 @@
+import { orderNotes } from "@/lib/note-order";
 import type { Folder, FolderNode, Note } from "@/lib/types";
 import { sortByKey } from "@/lib/sortkey";
 
@@ -129,10 +130,7 @@ export function visibleNotes(notes: Note[], trashedFolders: Set<string>): Note[]
 }
 
 export function sortNotes(notes: Note[]): Note[] {
-  return [...notes].sort((a, b) => {
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
-    return b.updatedAt - a.updatedAt;
-  });
+  return orderNotes(notes, "updated");
 }
 
 /** Refuses a drag that would put a folder inside its own subtree. */
