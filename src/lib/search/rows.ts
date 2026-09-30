@@ -65,6 +65,7 @@ export function searchScope(
       locked: false,
       updatedAt: note.updatedAt,
       reading: own?.reading ?? null,
+      preview: note.preview,
     });
   }
   return { rows, locked };

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { TITLE_LIMIT, joinShared, splitQuickText } from "@/lib/quick/text";
+import { joinShared, quickLines } from "@/lib/quick/text";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -44,104 +44,36 @@ describe("joinShared", () => {
   });
 });
 
-describe("splitQuickText", () => {
-  test("a short first line is the title, and not in the body as well", () => {
-    expect(splitQuickText("買い物\n牛乳\n卵")).toEqual({ title: "買い物", body: ["牛乳", "卵"] });
-    expect(splitQuickText("牛乳を買う")).toEqual({ title: "牛乳を買う", body: [] });
+describe("quickLines", () => {
+  test("all of what is typed goes in the body, the first line too", () => {
+    expect(quickLines("買い物\n牛乳\n卵")).toEqual(["買い物", "牛乳", "卵"]);
+    expect(quickLines("牛乳を買う")).toEqual(["牛乳を買う"]);
+    expect(quickLines("https://www.nikkei.com/article/DGXZQO123/")).toEqual([
+      "https://www.nikkei.com/article/DGXZQO123/",
+    ]);
   });
 
-  test("blank lines around the whole, and after the title, are dropped; those inside are kept", () => {
-    expect(splitQuickText("\n\n  予定  \n\n\n月曜\n\n火曜\n\n")).toEqual({
-      title: "予定",
-      body: ["月曜", "", "火曜"],
-    });
+  test("blank lines around the whole are dropped; those inside are kept", () => {
+    expect(quickLines("\n\n  予定  \n\n\n月曜\n\n火曜\n\n")).toEqual([
+      "  予定  ",
+      "",
+      "",
+      "月曜",
+      "",
+      "火曜",
+    ]);
   });
 
-  test("a body line keeps its indent, and Windows line ends read as any other", () => {
-    expect(splitQuickText("手順\r\n  a. 開く\r\n  b. 閉じる")).toEqual({
-      title: "手順",
-      body: ["  a. 開く", "  b. 閉じる"],
-    });
-  });
-
-  test("a first line of up to 30 characters is the title; a longer one stays whole in the body", () => {
-    const fits = "あ".repeat(TITLE_LIMIT);
-    expect(splitQuickText(`${fits}\n本文`)).toEqual({ title: fits, body: ["本文"] });
-    const long = "い".repeat(TITLE_LIMIT + 1);
-    expect(splitQuickText(`${long}\n本文`)).toEqual({ title: "", body: [long, "本文"] });
-  });
-
-  test("characters are counted as they are seen: a family or a flag is one", () => {
-    // 30 as seen, though the family alone is 5 code points and 8 UTF-16 units.
-    const fits = `${"あ".repeat(TITLE_LIMIT - 1)}👨‍👩‍👧`;
-    expect(splitQuickText(fits)).toEqual({ title: fits, body: [] });
-    expect(splitQuickText(`${"あ".repeat(TITLE_LIMIT)}🇯🇵`).title).toBe("");
-  });
-
-  test("where characters cannot be told apart as seen, code points are counted instead", () => {
-    vi.stubGlobal("Intl", { ...Intl, Segmenter: undefined });
-    // The flag is two code points: over the limit without the segmenter's help.
-    expect(splitQuickText(`${"あ".repeat(TITLE_LIMIT - 1)}🇯🇵`).title).toBe("");
-    expect(splitQuickText("あ".repeat(TITLE_LIMIT)).title).toBe("あ".repeat(TITLE_LIMIT));
-    // An emoji outside the basic plane is one code point, though two UTF-16 units.
-    const smile = `${"あ".repeat(TITLE_LIMIT - 1)}😀`;
-    expect(splitQuickText(smile).title).toBe(smile);
-  });
-
-  test("a note that begins with a link keeps it in the body, and is named after its site", () => {
-    const link = "https://www.nikkei.com/article/DGXZQO123/";
-    expect(splitQuickText(link)).toEqual({ title: "nikkei.com", body: [link] });
-    expect(splitQuickText(`https://x.com/a/status/1\nあとで読む`)).toEqual({
-      title: "x.com",
-      body: ["https://x.com/a/status/1", "あとで読む"],
-    });
-  });
-
-  test("a list keeps its first item: no title is taken from it", () => {
-    for (const list of [
-      "・牛乳\n・卵",
-      "• 牛乳",
-      "● 牛乳",
-      "- milk\n- eggs",
-      "* milk",
-      "+ milk",
-      "1. 開く\n2. 閉じる",
-      "1) 開く",
-      "10. 開く",
-      "①準備\n②本番",
-      "☐ 洗濯",
-      "✓ 済み",
-    ]) {
-      expect(splitQuickText(list), list).toEqual({ title: "", body: list.split("\n") });
-    }
-  });
-
-  test("a line that only looks like a list at a glance is still a title", () => {
-    expect(splitQuickText("3.14 は円周率").title).toBe("3.14 は円周率");
-    expect(splitQuickText("-5度の朝").title).toBe("-5度の朝");
-    // A mark inside the line, not at its start.
-    expect(splitQuickText("山田・佐藤さんと打ち合わせ").title).toBe("山田・佐藤さんと打ち合わせ");
-    expect(splitQuickText("A案 - B案").title).toBe("A案 - B案");
-  });
-
-  test("a link written into a sentence ends where the sentence takes over", () => {
-    // Ending at the site's name, where what follows would otherwise become part of it.
-    expect(splitQuickText("これ（https://example.com）を読む").title).toBe("example.com");
-    expect(splitQuickText("「https://www.example.jp」を参照。").title).toBe("example.jp");
-    expect(splitQuickText("見て https://example.com.").title).toBe("example.com");
-    expect(splitQuickText("ここ→https://example.com、あとで").title).toBe("example.com");
-  });
-
-  test("a first line too long to be a title takes the site of a link further down", () => {
-    const long = "う".repeat(TITLE_LIMIT + 1);
-    const link = "https://www.example.com/a";
-    expect(splitQuickText(`${long}\n\n${link}`)).toEqual({
-      title: "example.com",
-      body: [long, "", link],
-    });
+  test("a line keeps its indent, and Windows line ends read as any other", () => {
+    expect(quickLines("手順\r\n  a. 開く\r\n  b. 閉じる")).toEqual([
+      "手順",
+      "  a. 開く",
+      "  b. 閉じる",
+    ]);
   });
 
   test("nothing but blanks is nothing", () => {
-    expect(splitQuickText(" \n \n")).toEqual({ title: "", body: [] });
+    expect(quickLines(" \n \n")).toEqual([]);
+    expect(quickLines("")).toEqual([]);
   });
 });

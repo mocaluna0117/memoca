@@ -20,7 +20,6 @@ const h = vi.hoisted(() => ({
   replace: vi.fn(),
   push: vi.fn(),
   createNote: vi.fn(),
-  renameNote: vi.fn(),
   closed: vi.fn(),
   opened: vi.fn(),
   acquire: vi.fn(),
@@ -32,7 +31,7 @@ vi.mock("next/navigation", () => ({
   useSearchParams: () => h.params,
 }));
 vi.mock("@/components/providers/sync-provider", () => ({ useSync: () => ({ me: h.me }) }));
-vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote, renameNote: h.renameNote }));
+vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote }));
 vi.mock("@/lib/sync/docs", () => ({ acquireDoc: h.acquire, releaseDoc: h.release }));
 vi.mock("@/lib/build", () => ({ newBuildOut: h.newBuild }));
 vi.mock("@/lib/quick/shell", async (original) => ({
@@ -115,7 +114,6 @@ beforeEach(async () => {
   h.me = { userKey: ME, inboxFolderId: "inbox-1" };
   let made = 0;
   h.createNote.mockReset().mockImplementation(async () => `note-${(made += 1)}`);
-  h.renameNote.mockReset().mockResolvedValue(undefined);
   h.closed.mockReset();
   h.opened.mockReset();
   h.replace.mockReset();
@@ -141,16 +139,16 @@ afterEach(async () => {
 });
 
 describe("the quick note, saving", () => {
-  test("a save lands in Inbox, the first line its title and the rest its body", async () => {
+  test("a save lands in Inbox, with no title and all of it in the body", async () => {
     await render();
     await type("買い物\n牛乳\n卵");
     await key({ key: "Enter", ctrlKey: true });
     expect(h.createNote).toHaveBeenCalledWith({
       folderId: "inbox-1",
-      title: "買い物",
+      title: "",
       kind: "quick",
     });
-    expect(bodyOf("note-1")).toEqual(["牛乳", "卵"]);
+    expect(bodyOf("note-1")).toEqual(["買い物", "牛乳", "卵"]);
     expect(h.release).toHaveBeenCalledWith("note-1");
   });
 
@@ -221,28 +219,27 @@ describe("the quick note, saving", () => {
   test("a save whose body could not be written finishes the same note when tried again", async () => {
     h.acquire.mockRejectedValueOnce(new Error("idb"));
     await render();
-    await type("題\n本文");
+    await type("一行目\n本文");
     await key({ key: "Enter", ctrlKey: true });
     expect(status()).toContain("保存できませんでした");
 
-    await type("直した題\n本文\n続き");
+    await type("直した一行目\n本文\n続き");
     await key({ key: "Enter", ctrlKey: true });
     expect(h.createNote).toHaveBeenCalledOnce();
-    expect(h.renameNote).toHaveBeenCalledWith("note-1", "直した題");
-    expect(bodyOf("note-1")).toEqual(["本文", "続き"]);
+    expect(bodyOf("note-1")).toEqual(["直した一行目", "本文", "続き"]);
     expect(status()).toContain("保存しました");
   });
 
   test("a body half written by a save that failed is written over, not added to", async () => {
     h.release.mockRejectedValueOnce(new Error("idb"));
     await render();
-    await type("題\n一行目");
+    await type("一行目\n二行目");
     await key({ key: "Enter", ctrlKey: true });
     expect(status()).toContain("保存できませんでした");
 
     await key({ key: "Enter", ctrlKey: true });
     expect(h.createNote).toHaveBeenCalledOnce();
-    expect(bodyOf("note-1")).toEqual(["一行目"]);
+    expect(bodyOf("note-1")).toEqual(["一行目", "二行目"]);
   });
 
   test("while a save is under way the text is not changed under it", async () => {

@@ -9,6 +9,7 @@ import { useFolder, useNotes } from "@/lib/hooks/data";
 import { useFolderName, useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { renameNote } from "@/lib/sync/mutations";
 import { useLockActions } from "@/components/vault/use-lock-actions";
+import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
 import type { Note } from "@/lib/types";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
@@ -50,6 +51,8 @@ function NoteRow({
 }) {
   const title = useNoteTitle(note);
   const unlocked = useVaultUnlocked();
+  // With no title, its first line stands in for one, and is not said again below.
+  const name = noteName(title, note.locked ? null : note.preview);
   // A locked note's title is unreadable until the vault is open, and there is
   // nothing to edit in a placeholder.
   const renamable = !note.locked || unlocked;
@@ -64,7 +67,13 @@ function NoteRow({
     <span className="text-muted-foreground flex items-center gap-2 text-xs">
       <span className="shrink-0">{relativeDate(note.updatedAt)}</span>
       <span className="truncate">
-        {note.locked ? (unlocked ? "ロック中" : t.empty.lockedHint) : (note.preview ?? "")}
+        {note.locked
+          ? unlocked
+            ? "ロック中"
+            : t.empty.lockedHint
+          : name.standIn
+            ? ""
+            : (note.preview ?? "")}
       </span>
     </span>
   );
@@ -79,7 +88,7 @@ function NoteRow({
           <InlineRename
             initialValue={title}
             label="メモ名"
-            placeholder="無題のメモ"
+            placeholder={name.text}
             className="-my-0.5 h-6 font-medium"
             onSubmit={(value) => renameNote(note.noteId, value)}
             onDone={(byKeyboard) => onEndRename(note.noteId, byKeyboard)}
@@ -119,15 +128,18 @@ function NoteRow({
         selected ? "bg-accent" : "hover:bg-accent/50",
       )}
     >
-      <span className="flex items-center gap-1.5">
+      <span className="flex min-w-0 items-center gap-1.5">
         {icons}
-        <span className="truncate text-sm font-medium">{title || "無題のメモ"}</span>
+        <span
+          className={cn("min-w-0 truncate text-sm", name.standIn ? STAND_IN_CLASS : "font-medium")}
+        >
+          {name.text}
+        </span>
       </span>
       {details}
     </button>
   );
 }
-
 
 export function NoteList({
   folderId,
@@ -171,6 +183,7 @@ export function NoteList({
     if (!(key in targets)) return false;
     const target = targets[key];
     if (target) {
+
       list.current
         ?.querySelector<HTMLElement>(`[data-note-row="${target.noteId}"]`)
         ?.focus();
@@ -212,7 +225,12 @@ export function NoteList({
           </Button>
         </div>
       ) : (
-        <ScrollArea data-scroll="list" className="min-h-0 flex-1">
+        <ScrollArea
+          data-scroll="list"
+          // Radix lays the rows out in a table, as wide as the widest: made a
+          // block, a long name is cut short with … rather than widening the list.
+          className="min-h-0 flex-1 [&_[data-slot=scroll-area-viewport]>div]:!block"
+        >
           <p id={hintId} className="sr-only">
             上下の矢印キーで移動、Enter でタイトルを変更、スペースで開きます。
           </p>

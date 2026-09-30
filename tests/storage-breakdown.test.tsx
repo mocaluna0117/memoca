@@ -204,4 +204,32 @@ describe("the storage breakdown", () => {
     expect(button("old.webp")).toBeUndefined();
     expect(text()).toContain("どのメモにも使われていません");
   });
+
+  test("a note with no title is named by its first line, and one with no text either as 無題のメモ", async () => {
+    await db().notes.bulkPut([
+      note("quick", { title: "", preview: "牛乳を買う" }),
+      note("empty", { title: "", preview: null }),
+    ]);
+    const file = {
+      bytes: 1_000,
+      kind: "image" as const,
+      mime: "image/webp",
+      locked: false,
+      width: 10,
+      height: 10,
+      trashed: false,
+      unused: false,
+    };
+    answer = () =>
+      breakdown({
+        largest: [
+          { ...file, attachmentId: "a", noteId: "quick", name: "a.webp", usedBy: ["quick"] },
+          { ...file, attachmentId: "b", noteId: "empty", name: "b.webp", usedBy: ["empty"] },
+        ],
+      });
+    await render();
+    expect(button("a.webp").textContent).toContain("「牛乳を買う」");
+    expect(button("b.webp").textContent).toContain("無題のメモ");
+    expect(button("b.webp").textContent).not.toContain("「");
+  });
 });

@@ -26,6 +26,7 @@ import { lockedSearchNote } from "@/lib/search/rows";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { createFolder } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
+import { NoteName } from "@/components/search/note-name";
 
 /**
  * Search and the common actions behind one shortcut.
@@ -89,9 +90,9 @@ export function CommandPalette() {
                     onSelect={() => run(() => navigate({ noteId: hit.noteId }))}
                   >
                     {hit.locked ? <Lock className="size-4 opacity-70" aria-hidden /> : null}
-                    <span className="truncate">{hit.title || "無題のメモ"}</span>
+                    <NoteName hit={hit} className="min-w-0 flex-1 truncate" />
                     {hit.folderName ? (
-                      <span className="ml-auto truncate text-xs text-muted-foreground">
+                      <span className="ml-auto max-w-[40%] shrink-0 truncate text-xs text-muted-foreground">
                         {hit.folderName}
                       </span>
                     ) : null}

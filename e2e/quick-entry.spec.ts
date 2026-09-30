@@ -43,7 +43,8 @@ test.describe("opening the quick note on a computer", () => {
 
     // In the window it was opened from, rather than in the small one...
     await expect(page).toHaveURL(/\/app\?n=/);
-    await expect(page.getByLabel("メモのタイトル")).toHaveValue("サイドバーから");
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("");
+    await expect(editor(page)).toContainText("サイドバーから");
     await expect(popup).toHaveURL(/\/quick\?window=1$/);
     // ...and without loading it again, which would close its vault; nor was
     // the small one loaded with it, once the app had answered.

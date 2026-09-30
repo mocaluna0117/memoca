@@ -20,6 +20,7 @@ import {
 } from "@/lib/media/relock-copies";
 import { reloadDoc, withDetachedDoc } from "@/lib/sync/docs";
 import { extractText, firstLine } from "@/lib/sync/ydoc";
+import { noteName } from "@/lib/note-name";
 
 export type LockOutcome =
   /**
@@ -124,9 +125,14 @@ async function lockOnce(
 
     const { state: merged, used } = await withDetachedDoc(noteId, (doc) => withSwaps(doc, copies.swaps));
     const snapshot = await seal(key, merged, ctx.yjsSnapshot(noteId, epoch));
+    // A note with no title (a quick note, say) is named by its first line,
+    // which cannot be read once it is locked: that line becomes its title,
+    // sealed with it, so it is still told apart in the list.
+    const name = noteName(note.title, note.preview || body.text);
+    const title = !name.standIn ? (note.title ?? "") : name.untitled ? "" : name.text;
     const titleSealed = await seal(
       key,
-      new TextEncoder().encode(note.title ?? ""),
+      new TextEncoder().encode(title),
       ctx.noteTitle(noteId, epoch),
     );
 

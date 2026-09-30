@@ -27,6 +27,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useNote } from "@/lib/hooks/data";
 import { useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
+import { noteName } from "@/lib/note-name";
 import { vault } from "@/lib/crypto/vault";
 import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
 import { requestVault } from "@/lib/store/vault-gate";
@@ -87,6 +88,9 @@ export function NotePane({
 }) {
   const note = useNote(noteId);
   const title = useNoteTitle(note);
+  /** What the lock dialogs call the note: its title, or the first line standing in for one. */
+  const name = noteName(title, note?.locked ? null : note?.preview);
+  const calledBy = name.untitled ? null : name.text;
   const unlocked = useVaultUnlocked();
   const openLabel = useOpenVaultLabel();
   const { toggleNoteLock, moveNoteTo } = useLockActions();
@@ -190,7 +194,7 @@ export function NotePane({
 
   /** Encrypts a note that sits unencrypted in a locked folder. */
   const lockNow = async () => {
-    const answer = await requestVault({ kind: "lockNote", title: title || null }, { gesture: true });
+    const answer = await requestVault({ kind: "lockNote", title: calledBy }, { gesture: true });
     if (!answer.ok) return;
     setBusy(true);
     const release = vault.hold();
@@ -214,7 +218,7 @@ export function NotePane({
       await toggleNoteLock(
         note,
         // The title is only known while it is readable.
-        note.locked && !unlocked ? null : title || null,
+        note.locked && !unlocked ? null : calledBy,
         menuTrigger.current,
       );
     } finally {

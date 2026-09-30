@@ -14,9 +14,9 @@ import { appendParagraphs } from "@/lib/quick/body";
 import { clearDraft, keepDraft, loadDraft } from "@/lib/quick/draft";
 import { useQuickMode } from "@/lib/quick/mode";
 import { SHELL_HIDDEN, closeQuickWindow, openNoteInApp } from "@/lib/quick/shell";
-import { SHARED, joinShared, splitQuickText } from "@/lib/quick/text";
+import { SHARED, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
-import { createNote, renameNote } from "@/lib/sync/mutations";
+import { createNote } from "@/lib/sync/mutations";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { cn } from "@/lib/utils";
 
@@ -216,30 +216,27 @@ function Capture({
   }, [windowed, close]);
 
   const save = async () => {
-    const { title, body } = splitQuickText(textRef.current);
-    if ((title.length === 0 && body.length === 0) || saving) return;
+    const body = quickLines(textRef.current);
+    if (body.length === 0 || saving) return;
     setSaving(true);
     setStatus(null);
     const run = (async () => {
       try {
-        // The first line is the title, as long as it is short enough to be one.
-        let noteId = unfinished.current;
-        if (noteId) await renameNote(noteId, title);
-        else noteId = await createNote({ folderId: inbox, title, kind: "quick" });
+        // No title: its first line stands in for one where notes are listed.
+        const noteId =
+          unfinished.current ?? (await createNote({ folderId: inbox, title: "", kind: "quick" }));
         unfinished.current = noteId;
 
-        // The rest goes straight into the note's document, so the full editor
-        // opens on exactly what was typed here: all of it, over whatever a
-        // save that did not finish may have written.
-        if (body.length > 0) {
-          const doc = await acquireDoc(noteId);
-          try {
-            const fragment = bodyFragment(doc);
-            if (fragment.length > 0) doc.transact(() => fragment.delete(0, fragment.length));
-            appendParagraphs(doc, body);
-          } finally {
-            await releaseDoc(noteId);
-          }
+        // All of it goes straight into the note's document, so the full editor
+        // opens on exactly what was typed here, over whatever a save that did
+        // not finish may have written.
+        const doc = await acquireDoc(noteId);
+        try {
+          const fragment = bodyFragment(doc);
+          if (fragment.length > 0) doc.transact(() => fragment.delete(0, fragment.length));
+          appendParagraphs(doc, body);
+        } finally {
+          await releaseDoc(noteId);
         }
         unfinished.current = null;
 

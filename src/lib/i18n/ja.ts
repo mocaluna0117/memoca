@@ -77,7 +77,7 @@ export const ja = {
   },
   quick: {
     field: "即席メモ",
-    placeholder: "思いついたことをそのまま書いてください。短い 1 行目はタイトルになります。Inbox に入ります。",
+    placeholder: "思いついたことをそのまま書いてください。Inbox に入ります。",
     back: "戻る",
     saved: "保存しました",
     openNote: "メモを開く",

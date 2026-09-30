@@ -10,6 +10,8 @@ import {
   visibleNotes,
 } from "@/lib/tree";
 import type { Folder, FolderNode, Note } from "@/lib/types";
+import { LOCKED_LABEL } from "@/lib/hooks/use-decrypted";
+import { noteName } from "@/lib/note-name";
 
 const EMPTY: never[] = [];
 
@@ -87,7 +89,15 @@ export function useNoteText(noteId: string | null): string | null {
 
 export type TrashEntry =
   | { kind: "folder"; id: string; label: string; deletedAt: number; locked: boolean }
-  | { kind: "note"; id: string; label: string; deletedAt: number; locked: boolean };
+  | {
+      kind: "note";
+      id: string;
+      label: string;
+      /** The label is the note's first line standing in for a title, or 無題のメモ. */
+      standIn: boolean;
+      deletedAt: number;
+      locked: boolean;
+    };
 
 /**
  * The trash lists only what was deleted directly. Items that merely sit inside
@@ -126,10 +136,14 @@ export function useTrash(): TrashEntry[] {
     for (const note of notes) {
       if (note.purged || note.deletedAt === null) continue;
       if (ancestorTrashed(note.folderId)) continue;
+      const name = note.locked
+        ? { text: LOCKED_LABEL, standIn: false }
+        : noteName(note.title, note.preview);
       entries.push({
         kind: "note",
         id: note.noteId,
-        label: note.locked ? "ロックされたメモ" : note.title || "無題のメモ",
+        label: name.text,
+        standIn: name.standIn,
         deletedAt: note.deletedAt,
         locked: note.locked,
       });

@@ -21,6 +21,8 @@ import { useSync } from "@/components/providers/sync-provider";
 import { type TrashEntry, useTrash } from "@/lib/hooks/data";
 import { setFolderTrashed, setNoteTrashed } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
+import { STAND_IN_CLASS } from "@/lib/note-name";
+import { cn } from "@/lib/utils";
 
 function TrashRow({ entry }: { entry: TrashEntry }) {
   const client = useConvex();
@@ -49,7 +51,14 @@ function TrashRow({ entry }: { entry: TrashEntry }) {
     <li className="flex items-center gap-3 border-b px-4 py-3 last:border-b-0">
       <Icon className="text-muted-foreground size-4 shrink-0" aria-hidden />
       <div className="min-w-0 flex-1">
-        <p className="truncate text-sm">{entry.label}</p>
+        <p
+          className={cn(
+            "truncate text-sm",
+            entry.kind === "note" && entry.standIn && STAND_IN_CLASS,
+          )}
+        >
+          {entry.label}
+        </p>
         <p className="text-muted-foreground text-xs">
           {new Date(entry.deletedAt).toLocaleDateString("ja-JP")} に削除
           {entry.kind === "folder" ? "・中身もいっしょに戻ります" : ""}

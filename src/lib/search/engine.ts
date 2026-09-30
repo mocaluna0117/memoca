@@ -1,4 +1,5 @@
 import { normalize, terms } from "./normalize";
+import { noteName } from "@/lib/note-name";
 
 export type Indexed = {
   noteId: string;
@@ -14,6 +15,12 @@ export type Indexed = {
   normalizedFolder: string;
   /** Reading of title and body; empty when the dictionary is not in use. */
   normalizedReading: string;
+  /**
+   * With no title, the first line of its text, which stands in for one
+   * (src/lib/note-name.ts) and is searched as one; empty otherwise.
+   */
+  standIn: string;
+  normalizedStandIn: string;
 };
 
 export type SearchHit = {
@@ -22,6 +29,11 @@ export type SearchHit = {
   locked: boolean;
   folderName: string;
   updatedAt: number;
+  /**
+   * The first line of its text, standing in for a title where it has none
+   * (src/lib/note-name.ts); empty where it has one, or is locked.
+   */
+  standIn: string;
   /** Where the match was found, best first. */
   matchedIn: "title" | "body" | "folder" | "reading";
   snippet: { text: string; highlights: [number, number][] };
@@ -37,6 +49,11 @@ export type IndexInput = {
   updatedAt: number;
   /** Katakana reading of title and body, when one has been computed. */
   reading?: string | null;
+  /**
+   * The first line of its text, as the note keeps it (note.preview): there
+   * even when the text itself is not yet on this device. Null when locked.
+   */
+  preview?: string | null;
 };
 
 export function buildIndex(rows: IndexInput[]): Indexed[] {
@@ -46,7 +63,15 @@ export function buildIndex(rows: IndexInput[]): Indexed[] {
     normalizedBody: row.body === null ? "" : normalize(row.body),
     normalizedFolder: normalize(row.folderName),
     normalizedReading: row.reading ? normalize(row.reading) : "",
+    ...standInOf(row),
   }));
+}
+
+function standInOf(row: IndexInput): { standIn: string; normalizedStandIn: string } {
+  // A locked note's text is not to be read here: its title, or nothing.
+  const name = noteName(row.title, row.locked ? null : row.preview || row.body);
+  const standIn = name.standIn && !name.untitled ? name.text : "";
+  return { standIn, normalizedStandIn: normalize(standIn) };
 }
 
 const SNIPPET_RADIUS = 48;
@@ -97,13 +122,17 @@ export function search(index: Indexed[], query: string, limit = 50): SearchHit[]
     const everyTerm = (pick: (row: Indexed) => string) =>
       needles.every((needle) => pick(row).includes(needle));
 
-    const inTitle = everyTerm((r) => r.normalizedTitle);
+    // A first line standing in for a missing title counts as one: a quick
+    // note found by its first line ranks as it did when that was its title.
+    const inTitle =
+      everyTerm((r) => r.normalizedTitle) || everyTerm((r) => r.normalizedStandIn);
     const inBody = everyTerm((r) => r.normalizedBody);
     const inFolder = everyTerm((r) => r.normalizedFolder);
     const inReading = everyTerm((r) => r.normalizedReading);
     const anywhere = needles.every(
       (needle) =>
         row.normalizedTitle.includes(needle) ||
+        row.normalizedStandIn.includes(needle) ||
         row.normalizedBody.includes(needle) ||
         row.normalizedFolder.includes(needle) ||
         row.normalizedReading.includes(needle),
@@ -138,6 +167,7 @@ export function search(index: Indexed[], query: string, limit = 50): SearchHit[]
         locked: row.locked,
         folderName: row.folderName,
         updatedAt: row.updatedAt,
+        standIn: row.standIn,
         matchedIn,
         snippet,
       },

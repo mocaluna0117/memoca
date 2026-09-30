@@ -82,7 +82,7 @@ export function attachmentRefs(doc: Y.Doc): string[] {
   return [...found].sort();
 }
 
-/** First non-empty line, used as the list preview and the quick-note title. */
+/** First non-empty line, used as the list preview (and so, for a note with no title, as its name: src/lib/note-name.ts). */
 export function firstLine(text: string, limit = 120): string {
   const line = text.split("\n").find((l) => l.trim().length > 0) ?? "";
   return line.trim().slice(0, limit);

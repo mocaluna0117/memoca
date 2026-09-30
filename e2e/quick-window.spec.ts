@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { openApp, signUp } from "./helpers";
+import { editor, openApp, signUp } from "./helpers";
 import { onScreen } from "./image-helpers";
 import { readTable } from "./local-db";
 
@@ -48,7 +48,8 @@ test.describe("the quick note in a window of its own", () => {
     await page.getByRole("button", { name: "メモを開く" }).click();
     const app = await opened;
     await expect(app).toHaveURL(/\/app\?n=/);
-    await expect(app.getByLabel("メモのタイトル")).toHaveValue("窓から保存");
+    await expect(app.getByLabel("メモのタイトル")).toHaveValue("");
+    await expect(editor(app)).toContainText("窓から保存");
     await expect(page).toHaveURL(/\/quick\?window=1$/);
   });
 

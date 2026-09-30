@@ -72,6 +72,13 @@ const find = (scope: ReturnType<typeof searchScope>, query: string) =>
   search(buildIndex(scope.rows), query).map((hit) => hit.noteId);
 
 describe("what search looks through", () => {
+  test("a note with no title, whose text is not on this device yet, is found by the first line it keeps", () => {
+    const quick = note("quick", null, { title: "", preview: "古い即席メモ" });
+    const scope = searchScope([quick], folders, [], { open: false, titles: new Map() });
+    expect(scope.rows[0]?.preview).toBe("古い即席メモ");
+    expect(find(scope, "即席")).toEqual(["quick"]);
+  });
+
   test("with the vault closed, a locked note is left out entirely", () => {
     const scope = searchScope(notes, folders, bodies, { open: false, titles: new Map() });
     // Not even the placeholder title: searching "ロック" must not list it.

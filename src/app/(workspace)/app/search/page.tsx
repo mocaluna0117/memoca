@@ -14,6 +14,7 @@ import { isKanaQuery } from "@/lib/search/yomi";
 import { requestVault } from "@/lib/store/vault-gate";
 import type { SearchHit } from "@/lib/search/engine";
 import { t } from "@/lib/i18n/ja";
+import { NoteName } from "@/components/search/note-name";
 
 function Highlighted({ snippet }: { snippet: SearchHit["snippet"] }) {
   if (snippet.highlights.length === 0) return <>{snippet.text}</>;
@@ -126,9 +127,9 @@ export default function SearchPage() {
                 >
                   <span className="flex items-center gap-1.5 text-sm font-medium">
                     {hit.locked ? <Lock className="size-3 opacity-60" aria-hidden /> : null}
-                    {hit.title || "無題のメモ"}
+                    <NoteName hit={hit} className="min-w-0 truncate" />
                     {hit.folderName ? (
-                      <span className="text-muted-foreground text-xs font-normal">
+                      <span className="text-muted-foreground shrink-0 text-xs font-normal whitespace-nowrap">
                         / {hit.folderName}
                       </span>
                     ) : null}

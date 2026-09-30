@@ -10,6 +10,7 @@ import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/bytes";
 import { db } from "@/lib/db";
 import { LOCKED_LABEL, useNoteTitle } from "@/lib/hooks/use-decrypted";
+import { noteName } from "@/lib/note-name";
 import { useOnline } from "@/lib/hooks/use-online";
 import { t } from "@/lib/i18n/ja";
 import {
@@ -223,15 +224,20 @@ function LargeFileRow({ file }: { file: LargeFile }) {
     [ids.join(",")],
   );
   const place = notes ? placeOf(file, notes) : null;
-  const title = useNoteTitle(place?.state === "note" ? notes?.get(place.noteId) : undefined);
+  const shown = place?.state === "note" ? notes?.get(place.noteId) : undefined;
+  const title = useNoteTitle(shown);
+  // With no title, its first line stands in for one (src/lib/note-name.ts).
+  const noteCalled = noteName(title, shown?.locked ? null : shown?.preview);
   const Icon = file.locked ? Lock : file.kind === "image" ? ImageIcon : file.kind === "video" ? Film : File;
   const name = file.locked ? t.storage.lockedFile : (file.name ?? t.storage.noName);
   // A title as written in 「」; a placeholder for one, as it is.
   const where =
     place?.state === "note"
-      ? title && title !== LOCKED_LABEL
-        ? `「${title}」`
-        : title || t.storage.untitled
+      ? title === LOCKED_LABEL
+        ? title
+        : noteCalled.untitled
+          ? t.storage.untitled
+          : `「${noteCalled.text}」`
       : place?.state === "trash"
         ? t.storage.inTrash
         : place?.state === "unused"

@@ -1,42 +1,118 @@
 import { expect, type Page, test } from "@playwright/test";
-import { editor, signUp } from "./helpers";
+import { editor, openApp, showList, signUp, waitForSynced } from "./helpers";
 import { onScreen } from "./image-helpers";
 import { readTable } from "./local-db";
+import { createVaultInSettings, enterVaultPassword } from "./vault-helpers";
 
 /** Whether this device holds a draft of the quick note. */
 const hasDraft = async (page: Page) =>
   (await readTable<{ key: string }>(page, "meta")).some((row) => row.key === "quickDraft");
 
 test.describe("the quick note", () => {
-  test("a short first line becomes the title, and only the rest the body", async ({ page }) => {
+  test("all of it goes in the body, and its first line stands in for a title where notes are listed", async ({
+    page,
+  }, testInfo) => {
     await signUp(page);
     await page.goto("/quick");
     await page.getByLabel("即席メモ").fill("買い物\n\n牛乳\n卵");
     await page.getByRole("button", { name: "保存" }).click();
 
     await expect(page).toHaveURL(/\/app\?n=/);
-    await expect(page.getByLabel("メモのタイトル")).toHaveValue("買い物");
-    // A paragraph a line, as the editor makes them, and the title not again.
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("");
+    // A paragraph a line, as the editor makes them: the first line too.
     const paragraphs = editor(page).locator('[data-content-type="paragraph"]');
-    await expect(paragraphs.nth(0)).toHaveText("牛乳");
-    await expect(paragraphs.nth(1)).toHaveText("卵");
-    await expect(editor(page)).not.toContainText("買い物");
+    await expect(paragraphs.nth(0)).toHaveText("買い物");
+    await expect(paragraphs.nth(2)).toHaveText("牛乳");
+    await expect(paragraphs.nth(3)).toHaveText("卵");
+
+    // Listed by its first line, not as 無題のメモ, and not said twice in the row.
+    await showList(page);
+    const row = page.locator("[data-note-row]").filter({ hasText: "買い物" });
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await expect(row).not.toContainText("無題のメモ");
+    expect((await row.textContent())!.split("買い物")).toHaveLength(2);
+    // And so found by ⌘K, where there is a keyboard to open it with.
+    if (testInfo.project.name === "desktop") {
+      await page.keyboard.press("ControlOrMeta+k");
+      await page.getByPlaceholder("メモを検索、または操作を入力").fill("牛乳");
+      await expect(page.getByRole("option", { name: /買い物/ })).toBeVisible();
+    }
   });
 
-  test("a long single line stays whole in the body, where all of it can be read", async ({
+  test("a long first line is set apart, cut short in the list, offered when renaming, and names it in the trash", async ({
     page,
-  }) => {
-    const thought = "明日の打ち合わせで山田さんに見積もりの件を確認する、あと資料も持っていくこと";
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "renaming in the list is by the keyboard");
+    const thought =
+      "明日の打ち合わせで山田さんに見積もりの件を確認する、あと資料も持っていくこと、会議室の予約も忘れずに済ませておく";
+    const standIn = thought.slice(0, 60);
     await signUp(page);
     await page.goto("/quick");
     await page.getByLabel("即席メモ").fill(thought);
     await page.getByRole("button", { name: "保存" }).click();
-
     await expect(page).toHaveURL(/\/app\?n=/);
     await expect(page.getByLabel("メモのタイトル")).toHaveValue("");
     await expect(editor(page).locator('[data-content-type="paragraph"]').first()).toHaveText(
       thought,
     );
+
+    // In the list: lighter than a title given, and cut short with … rather
+    // than widening the list.
+    const row = page.locator("[data-note-row]").filter({ hasText: standIn.slice(0, 10) });
+    await expect(row).toBeVisible({ timeout: 20_000 });
+    await expect(row.getByText(standIn, { exact: true })).toHaveClass(/text-foreground\/70/);
+    const viewport = page.locator('[data-scroll="list"] [data-slot="scroll-area-viewport"]');
+    expect(await viewport.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+
+    // Renamed: the field is empty, with the first line as its hint.
+    await row.focus();
+    await page.keyboard.press("Enter");
+    const field = page.getByRole("textbox", { name: "メモ名" });
+    await expect(field).toHaveValue("");
+    await expect(field).toHaveAttribute("placeholder", standIn);
+    await page.keyboard.press("Escape");
+
+    // In the trash, named by it too, and set apart.
+    await page.getByRole("button", { name: "メモの操作" }).click();
+    await page.getByRole("menuitem", { name: "削除" }).click();
+    await page.goto("/app/trash");
+    await expect(page.getByText(standIn, { exact: true })).toHaveClass(/text-foreground\/70/, {
+      timeout: 20_000,
+    });
+  });
+
+  test("locked, it keeps its first line as its title, sealed, so the list still tells it apart", async ({
+    page,
+  }, testInfo) => {
+    test.skip(
+      testInfo.project.name !== "desktop",
+      "one run is enough: the lock is the same on a phone",
+    );
+    test.slow();
+    await signUp(page);
+    await openApp(page);
+    await createVaultInSettings(page);
+    await page.goto("/quick");
+    await page.getByLabel("即席メモ").fill("秘密の買い物\n牛乳");
+    await page.getByRole("button", { name: "保存" }).click();
+    await expect(page).toHaveURL(/\/app\?n=/);
+    await waitForSynced(page);
+
+    await page.getByRole("button", { name: "メモの操作" }).click();
+    await page.getByRole("menuitem", { name: "ロックする", exact: true }).click();
+    await enterVaultPassword(page, "ロックする");
+    await expect(page.getByText("メモをロックしました")).toBeVisible({ timeout: 30_000 });
+
+    // Its title now, as the note shows it, and as the list does: not a stand-in.
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("秘密の買い物", {
+      timeout: 20_000,
+    });
+    const row = page.locator("[data-note-row]").filter({ hasText: "秘密の買い物" });
+    await expect(row).toBeVisible();
+    await expect(row).not.toContainText("無題のメモ");
+    await expect(row.getByText("秘密の買い物", { exact: true })).toHaveClass(/font-medium/);
   });
 
   test("what is being written is kept as a draft until it is saved", async ({ page }) => {
@@ -123,7 +199,9 @@ test.describe("the quick note", () => {
 
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page).toHaveURL(/\/app\?n=/);
-    await expect(page.getByLabel("メモのタイトル")).toHaveValue("記事");
-    await expect(editor(page).locator('[data-content-type="paragraph"]').first()).toHaveText(link);
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("");
+    const paragraphs = editor(page).locator('[data-content-type="paragraph"]');
+    await expect(paragraphs.nth(0)).toHaveText("記事");
+    await expect(paragraphs.nth(1)).toHaveText(link);
   });
 });
