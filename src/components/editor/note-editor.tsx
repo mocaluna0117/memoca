@@ -34,6 +34,7 @@ import { warmWebpEncoder } from "@/lib/media/webp-encoder";
 import { openLinkApart } from "@/lib/open-link";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
+import { usePlainTextCopy } from "@/components/editor/plain-copy";
 
 /** A link clicked in a note opens apart from the app's window (see openLinkApart). */
 const LINKS = { onClick: (event: MouseEvent) => openLinkApart(event) };
@@ -199,6 +200,7 @@ function EditorSurface({
     editorRef.current = editor as unknown as BlockNoteEditor;
   }, [editor]);
   useRelockCopies({ client, noteId, editor, enabled: locked && !readOnly, allowance: me });
+  usePlainTextCopy(editor);
 
   return (
     <ImageCrop editor={editor} noteId={noteId} editable={!readOnly}>
