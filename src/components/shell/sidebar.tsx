@@ -139,7 +139,10 @@ export function Sidebar({
         </Tooltip>
       </div>
 
-      <ScrollArea className="min-h-0 flex-1 px-2 pt-1">
+      {/* Radix lays the tree out in a table, as wide as its widest row: made a
+          block, a long name is cut short with … rather than running past the
+          edge, however narrow the sidebar is set. */}
+      <ScrollArea className="min-h-0 flex-1 px-2 pt-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
         <FolderTree
           selectedFolderId={selectedFolderId}
           onSelect={(id) => {

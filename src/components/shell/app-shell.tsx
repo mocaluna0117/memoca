@@ -11,10 +11,12 @@ import {
 } from "react";
 import { FolderDrawer } from "@/components/shell/folder-drawer";
 import { MobileNav } from "@/components/shell/mobile-nav";
+import { PANE_WIDTH_CLASS, PaneResizer, paneWidthStyle } from "@/components/shell/pane-resizer";
 import { Sidebar } from "@/components/shell/sidebar";
 import { SyncBadge } from "@/components/shell/sync-badge";
 import { Button } from "@/components/ui/button";
 import { useDrawerSwipe } from "@/lib/hooks/use-drawer-swipe";
+import { SIDEBAR, usePaneWidth } from "@/lib/hooks/use-pane-width";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +31,7 @@ export const useShell = () => useContext(ShellContext);
 export function AppShell({ children }: { children: ReactNode }) {
   const { selection, openFolder } = useWorkspace();
   const drawer = useDrawerSwipe();
+  const [sidebarWidth] = usePaneWidth(SIDEBAR);
   const { show: showDrawer, hide: hideDrawer, areaRef, pageRef, barRef } = drawer;
   const [drawerElement, setDrawerElement] = useState<HTMLDivElement | null>(null);
 
@@ -56,13 +59,20 @@ export function AppShell({ children }: { children: ReactNode }) {
           drawer never makes the document wider than the screen. On a phone a
           swipe right anywhere here opens the folder drawer. */}
       <div ref={areaRef} className="flex min-h-dvh overflow-x-clip md:h-dvh md:overflow-clip">
-        <aside className="hidden w-64 shrink-0 border-r md:block">
+        {/* Its width as set on this device, but never so wide that a narrow
+            window has no room left for the note. */}
+        <aside
+          id={SIDEBAR.id}
+          className={cn("relative hidden w-64 shrink-0 border-r md:block", PANE_WIDTH_CLASS)}
+          style={paneWidthStyle(SIDEBAR, sidebarWidth)}
+        >
           <div className="h-full" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
             <Sidebar
               selectedFolderId={selection.folderId}
               onSelectFolder={select}
             />
           </div>
+          <PaneResizer pane={SIDEBAR} label="サイドバーの幅" />
         </aside>
 
         <FolderDrawer drawer={drawer} containerRef={setDrawerElement}>

@@ -4,9 +4,11 @@ import { Suspense, useEffect, useLayoutEffect, useRef } from "react";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { NoteList } from "@/components/notes/note-list";
 import { NotePane } from "@/components/notes/note-pane";
+import { PANE_WIDTH_CLASS, PaneResizer, paneWidthStyle } from "@/components/shell/pane-resizer";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFolder } from "@/lib/hooks/data";
 import { useFolderName } from "@/lib/hooks/use-decrypted";
+import { NOTE_LIST, usePaneWidth } from "@/lib/hooks/use-pane-width";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
@@ -17,15 +19,21 @@ function Workspace() {
   const folderName = useFolderName(folder);
   const heading = selection.folderId ? folderName || "フォルダ" : t.nav.allNotes;
   usePhoneScroll(selection.noteId);
+  const [listWidth] = usePaneWidth(NOTE_LIST);
 
   return (
     <div className="flex flex-1 md:min-h-0">
-      {/* Middle pane: hidden on phones while a note is open. */}
+      {/* Middle pane: hidden on phones while a note is open. On a wider
+          screen, as wide as set on this device (within what the window leaves
+          for the note), open note or not. */}
       <section
         className={cn(
-          "min-w-0 flex-col border-r md:flex md:min-h-0 md:w-80 md:shrink-0",
+          "relative min-w-0 flex-col border-r md:flex md:min-h-0 md:flex-none",
+          PANE_WIDTH_CLASS,
           selection.noteId ? "hidden" : "flex flex-1",
         )}
+        id={NOTE_LIST.id}
+        style={paneWidthStyle(NOTE_LIST, listWidth)}
       >
         <MobileHeader title={heading} />
         <div className="min-h-0 flex-1">
@@ -35,6 +43,7 @@ function Workspace() {
             onSelectNote={openNote}
           />
         </div>
+        <PaneResizer pane={NOTE_LIST} label="メモ一覧の幅" />
       </section>
 
       <section
