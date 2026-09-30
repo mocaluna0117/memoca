@@ -1,0 +1,17 @@
+diff --git a/dist/inputrules.js b/dist/inputrules.js
+index 6845d468baf8525800b086694432333c4e9c1277..e42a4a2c1b1cb0c5ebfcde2afb2d83220ef3d556 100644
+--- a/dist/inputrules.js
++++ b/dist/inputrules.js
+@@ -124,7 +124,11 @@ function run(view, from, to, text, rules, plugin) {
+                 transform: tr,
+                 from: mappedFrom,
+                 to: mappedTo,
+-                text,
++                // Memoca: the typed text was dispatched on its own above, so
++                // undoing the rule leaves it there already. Told it here,
++                // undoInputRule (this package's and tiptap's) put it in a
++                // second time: "- " came back as "-  ", ・ as ・・.
++                text: "",
+             });
+         view.dispatch(tr);
+         return true;

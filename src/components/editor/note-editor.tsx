@@ -35,6 +35,7 @@ import { openLinkApart } from "@/lib/open-link";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
+import { japaneseLists } from "@/components/editor/japanese-lists";
 
 /** A link clicked in a note opens apart from the app's window (see openLinkApart). */
 const LINKS = { onClick: (event: MouseEvent) => openLinkApart(event) };
@@ -191,6 +192,7 @@ function EditorSurface({
         uploadFile,
         resolveFileUrl,
         links: LINKS,
+        extensions: [japaneseLists],
       }),
     [doc, me?.name, uploadFile, resolveFileUrl],
   );

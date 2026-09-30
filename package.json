@@ -83,7 +83,8 @@
       "@swc/core"
     ],
     "patchedDependencies": {
-      "@blocknote/react@0.54.2": "patches/@blocknote__react@0.54.2.patch"
+      "@blocknote/react@0.54.2": "patches/@blocknote__react@0.54.2.patch",
+      "@handlewithcare/prosemirror-inputrules@0.1.4": "patches/@handlewithcare__prosemirror-inputrules@0.1.4.patch"
     },
     "overrides": {
       "browserslist": "4.29.0"
