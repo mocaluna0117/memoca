@@ -7,12 +7,15 @@ import { db, getMeta, setMeta } from "@/lib/db";
 import { META, deviceId } from "@/lib/db/meta";
 import { purgeLockedBlobs } from "@/lib/media/attachments";
 import { purgeMediaCache } from "@/lib/media/media-cache";
-import { relockCopies, settleHeldCopies } from "@/lib/media/relock-copies";
+import { plainCopies, relockCopies, settleHeldCopies } from "@/lib/media/relock-copies";
 import { stamp } from "@/lib/sync/clock";
+import { withDetachedDoc } from "@/lib/sync/docs";
 import type { SyncEngine } from "@/lib/sync/engine";
 import { renameFolder } from "@/lib/sync/mutations";
+import { attachmentRefs } from "@/lib/sync/ydoc";
 import { sealAttachments } from "./actions";
 import { lockUncovered, resumeUnlockJob } from "./cascade";
+import { lockCoverage, needsLock } from "./model";
 
 export type VaultHealth = {
   /** Folders whose sealed name this vault's key could not open. */
@@ -103,7 +106,9 @@ export async function clearInboxLock(client: ConvexReactClient): Promise<boolean
 export async function lockPlaintextAttachments(client: ConvexReactClient): Promise<number> {
   if (!vault.isUnlocked || (typeof navigator !== "undefined" && !navigator.onLine)) return 0;
   const database = db();
-  const locked = new Set((await database.notes.filter((n) => n.locked && !n.purged).toArray()).map((n) => n.noteId));
+  const locked = new Set(
+    (await database.notes.filter((n) => n.locked && !n.purged).toArray()).map((n) => n.noteId),
+  );
   const plain = (await database.attachments.toArray()).filter(
     (a) => locked.has(a.noteId) && a.status === "committed" && !a.locked && a.deletedAt === null,
   );
@@ -193,7 +198,109 @@ export async function relockCopiedFiles(
       if (!vault.isUnlocked) break;
       // A note this key cannot open (the health check reports those): not
       // read again until it changes, so it cannot take every pass's turn.
-      copiesChecked.set(note.noteId, { seq: note.lastUpdateSeq, retryAt: Number.POSITIVE_INFINITY });
+      copiesChecked.set(note.noteId, {
+        seq: note.lastUpdateSeq,
+        retryAt: Number.POSITIVE_INFINITY,
+      });
+    }
+  }
+  return result;
+}
+
+/**
+ * Notes that are not locked, looked at for files kept encrypted: the update
+ * they were read at, the files they showed then, and, for the ones of those
+ * another note keeps encrypted, when to try them again.
+ */
+const plainChecked = new Map<
+  string,
+  { seq: number; shows: string[]; sealed: string; retryAt: number }
+>();
+/** Notes that are not locked read per pass: cheaper than a locked note, but there are more. */
+const PLAIN_READS_PER_PASS = 20;
+/** Where the last pass over notes that are not locked stopped. */
+let plainCursor = "";
+
+/**
+ * Gives notes that are not locked their own plaintext copy of any file they
+ * show that another note keeps encrypted, which they could not show with
+ * the vault closed: one pasted from a locked note, or one whose note was
+ * locked since (see relock-copies.ts). What each note shows is read once,
+ * and again once it has changed, a few notes per pass, taking turns; a note
+ * is copied into when it shows such a file, or a while after a copy could
+ * not be made. Returns how many files now have a copy, and how many do not
+ * fit the allowance.
+ */
+export async function plainCopiedFiles(
+  client: ConvexReactClient,
+): Promise<{ copied: number; tooLarge: number }> {
+  const result = { copied: 0, tooLarge: 0 };
+  if (!vault.isUnlocked || (typeof navigator !== "undefined" && !navigator.onLine)) return result;
+  const database = db();
+  // Each file kept encrypted, and the note it belongs to.
+  const sealed = new Map(
+    (await database.attachments.filter((a) => a.locked && a.deletedAt === null).toArray()).map(
+      (a) => [a.attachmentId, a.noteId],
+    ),
+  );
+  if (sealed.size === 0) return result;
+  const now = Date.now();
+  // Not one in the trash, or in a locked folder (about to be locked): as plainCopies has it.
+  const coverage = lockCoverage(await database.folders.toArray());
+  const notes = (
+    await database.notes
+      .filter((n) => !n.locked && !n.purged && n.deletedAt === null && !needsLock(n, coverage))
+      .toArray()
+  ).sort((x, y) => (x.noteId < y.noteId ? -1 : 1));
+  // Carry on after the note the last pass stopped reading at.
+  const start = notes.findIndex((note) => note.noteId > plainCursor);
+  const turn = start < 0 ? notes : [...notes.slice(start), ...notes.slice(0, start)];
+
+  let read = 0;
+  let tried = 0;
+  for (const note of turn) {
+    let seen = plainChecked.get(note.noteId);
+    if (!seen || seen.seq !== note.lastUpdateSeq) {
+      if (read >= PLAIN_READS_PER_PASS) continue;
+      // Only a note this device holds in full, as for locked notes.
+      const body = await database.bodies.get(note.noteId);
+      if (!body || body.keyEpoch !== note.keyEpoch || body.throughSeq < note.lastUpdateSeq)
+        continue;
+      read += 1;
+      plainCursor = note.noteId;
+      let shows: string[];
+      try {
+        shows = await withDetachedDoc(note.noteId, (doc) => attachmentRefs(doc));
+      } catch {
+        continue;
+      }
+      seen = { seq: note.lastUpdateSeq, shows, sealed: "", retryAt: 0 };
+      plainChecked.set(note.noteId, seen);
+    }
+    const foreign = seen.shows.filter((id) => {
+      const owner = sealed.get(id);
+      return owner !== undefined && owner !== note.noteId;
+    });
+    if (foreign.length === 0) continue;
+    // Tried already with these very files, and nothing has changed since.
+    const key = foreign.join(" ");
+    if (seen.sealed === key && now < seen.retryAt) continue;
+    if (tried >= COPY_CHECKS_PER_PASS) continue;
+    tried += 1;
+    try {
+      const outcome = await plainCopies(client, note.noteId);
+      if (!vault.isUnlocked) break;
+      result.copied += outcome.copied;
+      result.tooLarge += outcome.tooLarge;
+      const stuck = outcome.pending + outcome.tooLarge > 0;
+      // A note it just copied into changes once that edit is sent, and is
+      // read once more then.
+      seen.sealed = key;
+      seen.retryAt = stuck ? Date.now() + COPY_RETRY_MS : Number.POSITIVE_INFINITY;
+    } catch {
+      if (!vault.isUnlocked) break;
+      seen.sealed = key;
+      seen.retryAt = Date.now() + COPY_RETRY_MS;
     }
   }
   return result;
@@ -239,6 +346,10 @@ export type RepairReport = {
   copiesLocked: number;
   /** Files copied into locked notes whose copy does not fit the allowance. */
   copiesTooLarge: number;
+  /** Encrypted files shown by notes that are not locked that now have a plaintext copy there. */
+  plainCopies: number;
+  /** Encrypted files shown by notes that are not locked whose copy does not fit the allowance. */
+  plainCopiesTooLarge: number;
   unreadable: number;
 };
 
@@ -262,6 +373,8 @@ export function repairLocks(
       attachmentsLocked: 0,
       copiesLocked: 0,
       copiesTooLarge: 0,
+      plainCopies: 0,
+      plainCopiesTooLarge: 0,
       unreadable: 0,
     };
     await purgeLockedBlobs().catch(() => 0);
@@ -276,6 +389,9 @@ export function repairLocks(
     const copies = await relockCopiedFiles(client).catch(() => ({ copied: 0, tooLarge: 0 }));
     report.copiesLocked = copies.copied;
     report.copiesTooLarge = copies.tooLarge;
+    const plain = await plainCopiedFiles(client).catch(() => ({ copied: 0, tooLarge: 0 }));
+    report.plainCopies = plain.copied;
+    report.plainCopiesTooLarge = plain.tooLarge;
     report.unreadable = (await checkVaultHealth())?.unreadableNotes.length ?? 0;
     return report;
   })().finally(() => {

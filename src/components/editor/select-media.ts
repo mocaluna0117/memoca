@@ -256,6 +256,49 @@ export function selectAllOfIt(state: EditorState): Transaction | null {
   return state.tr.setSelection(new TextSelection(doc.resolve(from), doc.resolve(to)));
 }
 
+/**
+ * A selection made by dragging, let go of over an image (or past the last
+ * block, an image, or before the first): taken on over that image, from
+ * where the drag began. The browser ends a drag's selection in text only,
+ * so an image at the end of a note could not be dragged over, and one let
+ * go of on lost the selection.
+ */
+export function dragOntoMedia(
+  state: EditorState,
+  anchor: number,
+  media: Found,
+): Transaction | null {
+  if (!isMedia(media.node)) return null;
+  const head = anchor <= media.pos ? afterLine(media) : media.pos + 1;
+  if (head === anchor) return null;
+  const { doc } = state;
+  return state.tr.setSelection(new TextSelection(doc.resolve(anchor), doc.resolve(head)));
+}
+
+/** The image a drag was let go of over, or past (the note's last block) or before (its first). */
+function mediaAtPointer(view: EditorView, x: number, y: number): Found | null {
+  const group = view.state.doc.firstChild!;
+  const edge = (node: Node, pos: number, rect: DOMRect | undefined, past: boolean) =>
+    rect && (past ? y > rect.bottom : y < rect.top) && isMedia(node) ? { node, pos } : null;
+  const last = group.lastChild!;
+  const lastPos = group.content.size + 1 - last.nodeSize;
+  const lastRect = (view.nodeDOM(lastPos) as HTMLElement | null)?.getBoundingClientRect();
+  const firstRect = (view.nodeDOM(1) as HTMLElement | null)?.getBoundingClientRect();
+  const beside =
+    edge(last, lastPos, lastRect, true) ?? edge(group.firstChild!, 1, firstRect, false);
+  if (beside) return beside;
+  const element = view.root.elementFromPoint?.(x, y);
+  const content =
+    element && view.dom.contains(element) ? element.closest(".bn-block-content") : null;
+  if (!content) return null;
+  try {
+    const block = blockAt(view.state.doc.resolve(view.posAtDOM(content, 0)));
+    return block && isMedia(block.node) ? block : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Whether a selection ends (or starts) at an image, not in a line of text. */
 const endsAtMedia = (selection: Selection) =>
   selection instanceof TextSelection &&
@@ -269,6 +312,51 @@ const endsAtMedia = (selection: Selection) =>
  */
 export const selectMedia = createExtension(({ editor }) => ({
   key: "memocaSelectMedia",
+  mount({ dom, root, signal }) {
+    // A drag of the mouse to select, from where it began: not a click, and
+    // not one that began on an image (which drags the image).
+    let down: { x: number; y: number; anchor: number } | null = null;
+    dom.addEventListener(
+      "mousedown",
+      (event) => {
+        const view = editor.prosemirrorView;
+        const target = event.target instanceof Element ? event.target : null;
+        const block = target?.closest(".bn-block-content");
+        const onImage =
+          !!block?.querySelector("img, video, audio") && !target?.closest(".bn-inline-content");
+        const at = view?.posAtCoords({ left: event.clientX, top: event.clientY });
+        down =
+          event.button === 0 && !event.shiftKey && !onImage && at
+            ? { x: event.clientX, y: event.clientY, anchor: at.pos }
+            : null;
+      },
+      { signal },
+    );
+    // A drag of what is selected, to move it, ends with no mouseup.
+    dom.addEventListener("dragstart", () => (down = null), { signal });
+    root.addEventListener(
+      "mouseup",
+      (event) => {
+        const start = down;
+        down = null;
+        const view = editor.prosemirrorView;
+        if (!start || !view) return;
+        const { clientX: x, clientY: y } = event as MouseEvent;
+        if (Math.hypot(x - start.x, y - start.y) < 4) return;
+        // Once ProseMirror has taken the selection the drag made.
+        setTimeout(() => {
+          if (signal.aborted) return;
+          const media = mediaAtPointer(view, x, y);
+          if (!media) return;
+          const { selection } = view.state;
+          const anchor = selection instanceof TextSelection ? selection.anchor : start.anchor;
+          const tr = dragOntoMedia(view.state, anchor, media);
+          if (tr) view.dispatch(tr);
+        });
+      },
+      { signal },
+    );
+  },
   keyboardShortcuts: {
     "Shift-ArrowDown": () => extend(editor.prosemirrorView, "down"),
     "Shift-ArrowUp": () => extend(editor.prosemirrorView, "up"),

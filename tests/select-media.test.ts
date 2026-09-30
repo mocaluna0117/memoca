@@ -1,7 +1,7 @@
 import { BlockNoteEditor, type PartialBlock } from "@blocknote/core";
 import { type EditorState, NodeSelection, TextSelection } from "prosemirror-state";
 import { describe, expect, test } from "vitest";
-import { extendOverMedia, selectAllOfIt } from "@/components/editor/select-media";
+import { dragOntoMedia, extendOverMedia, selectAllOfIt } from "@/components/editor/select-media";
 
 const IMAGE: PartialBlock = { type: "image", props: { url: "memoca://att/0190" } };
 
@@ -238,5 +238,20 @@ describe("Shift and the arrow keys, next to an image", () => {
       text.tr.setSelection(TextSelection.create(text.doc, 3, 3 + "本文".length)),
     );
     expect(selectAllOfIt(allText)).toBeNull();
+  });
+
+  test("a drag let go of over an image, or past it: taken on over it, from where it began", () => {
+    const state = stateOf([{ type: "paragraph", content: "上の行" }, IMAGE], "上の行", "start");
+    const group = state.doc.firstChild!;
+    const image = { node: group.child(1), pos: 1 + group.child(0).nodeSize };
+    const down = state.apply(dragOntoMedia(state, state.selection.anchor, image)!);
+    expect(taken(down)).toBe("上の行|[image]");
+    // Up, from below an image at the top.
+    const up = stateOf([IMAGE, { type: "paragraph", content: "下の行" }], "下の行");
+    const top = { node: up.doc.firstChild!.child(0), pos: 1 };
+    expect(taken(up.apply(dragOntoMedia(up, up.selection.anchor, top)!))).toBe("[image]|下の行");
+    // Not an image: nothing.
+    const text = { node: group.child(0), pos: 1 };
+    expect(dragOntoMedia(state, state.selection.anchor, text)).toBeNull();
   });
 });

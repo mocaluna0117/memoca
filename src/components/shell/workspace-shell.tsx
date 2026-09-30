@@ -100,6 +100,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const unreadableSeen = useRef(0);
   // Said once per session: the repair pass runs often.
   const copiesWarned = useRef(false);
+  const plainCopiesWarned = useRef(false);
   useEffect(() => {
     let cancelled = false;
     const run = async () => {
@@ -125,6 +126,13 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         copiesWarned.current = true;
         toast.warning(
           `ロックしたメモに、ほかのメモからコピーした画像が ${report.copiesTooLarge} 件あり、容量が足りないため暗号化できていません。不要なファイルを削除すると、自動で暗号化します。`,
+          { action: { label: "設定を開く", onClick: () => router.push("/app/settings") } },
+        );
+      }
+      if (report.plainCopiesTooLarge > 0 && !plainCopiesWarned.current) {
+        plainCopiesWarned.current = true;
+        toast.warning(
+          `ロックしたメモからコピーした画像が ${report.plainCopiesTooLarge} 件あり、容量が足りないため、コピー先のメモに保存できていません。不要なファイルを削除すると、自動で保存します。`,
           { action: { label: "設定を開く", onClick: () => router.push("/app/settings") } },
         );
       }

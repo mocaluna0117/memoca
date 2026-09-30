@@ -1,8 +1,15 @@
 "use client";
 
-import type { BlockNoteEditor } from "@blocknote/core";
+import { type BlockNoteEditor, selectedFragmentToHTML } from "@blocknote/core";
 import { TextSelection } from "prosemirror-state";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
+import {
+  asPng,
+  imageAlone,
+  isWebKit,
+  putImageOnClipboard,
+  rememberImageCopy,
+} from "@/components/editor/copy-image";
 import { clipboardFor, copyRange, cutRange, isOpenOnScreen } from "@/components/editor/toggles";
 import { plainTextBetween, plainTextOf } from "@/lib/plain-text";
 
@@ -22,13 +29,27 @@ const forThisSystem = (text: string) =>
  * back up), over what it wrote. Listened for on the document: the editor's
  * view is made after this component's first render, and may be made again.
  *
+ * An image copied alone is put on the clipboard as an image, for other apps
+ * to paste, and known again when pasted back into Memoca (see copy-image.ts).
+ *
  * A copy or cut of all of a closed toggle's line takes what is hidden inside
  * it too (see copyRange in toggles.ts): written here in full, BlockNote's
  * HTML included, and kept from the editor, which would take the line alone.
  */
-export function usePlainTextCopy(editor: BlockNoteEditor) {
+export function usePlainTextCopy(
+  editor: BlockNoteEditor,
+  /** An image's bytes, by its url: for an image copied alone (see copy-image.ts). */
+  loadImage?: (url: string) => Promise<Blob>,
+) {
+  const imageOf = useRef(loadImage);
+  useEffect(() => {
+    imageOf.current = loadImage;
+  }, [loadImage]);
   useEffect(() => {
     let text: string | null = null;
+    // Every copy and cut counts, in the note or not: an image made ready for
+    // the clipboard after a later one has been made is not put there.
+    let copies = 0;
     // The editor's element, where it is shown: none before it is, or after
     // (its view is then not to be touched).
     const inEditor = (event: Event) => {
@@ -38,6 +59,7 @@ export function usePlainTextCopy(editor: BlockNoteEditor) {
         : null;
     };
     const read = (event: Event) => {
+      copies += 1;
       const view = inEditor(event);
       text = null;
       if (!view) return;
@@ -73,6 +95,29 @@ export function usePlainTextCopy(editor: BlockNoteEditor) {
         return;
       }
       text = plainTextOf(doc, selection);
+      // An image alone: the image itself, for other apps, and the block as
+      // Memoca copies it, to be pasted back as that.
+      const url = event.type === "copy" ? imageAlone(doc, selection) : null;
+      const load = imageOf.current;
+      if (url && load) {
+        const { clipboardHTML } = selectedFragmentToHTML(view, editor);
+        const mine = copies;
+        const image = load(url)
+          .then(asPng)
+          .then(({ png, width, height }) => {
+            if (mine !== copies || !document.hasFocus()) throw new Error("overtaken");
+            rememberImageCopy({ html: clipboardHTML, width, height });
+            return png;
+          });
+        if (isWebKit()) {
+          // WebKit refuses the image once the copy has written the clipboard:
+          // the copy writes nothing, and the image is all it puts there.
+          event.preventDefault();
+          event.stopPropagation();
+          text = null;
+        }
+        putImageOnClipboard(image);
+      }
     };
     const write = (event: ClipboardEvent) => {
       // The editor wrote the clipboard (and so stopped the browser's own copy).

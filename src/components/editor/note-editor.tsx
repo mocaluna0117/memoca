@@ -25,6 +25,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { vault } from "@/lib/crypto/vault";
 import {
   idFromRef,
+  loadAttachmentBlob,
   prepareUpload,
   resolveAttachment,
   stageUpload,
@@ -35,6 +36,7 @@ import { openLinkApart } from "@/lib/open-link";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
+import { pasteOwnImage } from "@/components/editor/copy-image";
 import { dragHandle } from "@/components/editor/drag-handle";
 import { selectMedia } from "@/components/editor/select-media";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
@@ -197,6 +199,9 @@ function EditorSurface({
         links: LINKS,
         extensions: [japaneseLists, toggles(), dragHandle, selectMedia()],
         dropCursor: { hooks: { computeDropPosition } },
+        // An image Memoca copied alone, pasted back as the block it was.
+        pasteHandler: ({ event, editor: pasting, defaultPasteHandler }) =>
+          pasteOwnImage(event, pasting as unknown as BlockNoteEditor) || defaultPasteHandler(),
       }),
     [doc, me?.name, uploadFile, resolveFileUrl],
   );
@@ -205,8 +210,16 @@ function EditorSurface({
   useEffect(() => {
     editorRef.current = editor as unknown as BlockNoteEditor;
   }, [editor]);
-  useRelockCopies({ client, noteId, editor, enabled: locked && !readOnly, allowance: me });
-  usePlainTextCopy(editor);
+  useRelockCopies({ client, noteId, editor, locked, enabled: !readOnly, allowance: me });
+  const loadImage = useCallback(
+    async (url: string) => {
+      const id = idFromRef(url);
+      if (id) return loadAttachmentBlob(client, id);
+      return (await fetch(url)).blob();
+    },
+    [client],
+  );
+  usePlainTextCopy(editor, loadImage);
 
   return (
     <ImageCrop editor={editor} noteId={noteId} editable={!readOnly}>

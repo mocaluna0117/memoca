@@ -4,31 +4,38 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import type { ConvexReactClient } from "convex/react";
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
+import { vault } from "@/lib/crypto/vault";
 import type { Allowance } from "@/lib/media/attachments";
-import { relockCopies } from "@/lib/media/relock-copies";
+import { plainCopies, relockCopies } from "@/lib/media/relock-copies";
 
 /** Edits are let settle this long before the note is looked at again. */
 const SETTLE_MS = 1_000;
 
 /**
- * While a locked note is open, gives it its own encrypted copy of any file
- * pasted in from another note, as soon as it arrives: that file belongs to
- * the other note and would otherwise stay readable on the server. Runs when
- * the note opens and after each burst of edits. The copy replaces the pasted
- * file in the document directly, so it appears in place and is not an undo
- * step.
+ * While a note is open, gives it its own copy of any file pasted in from
+ * another note that it could not otherwise keep as it is, as soon as it
+ * arrives. A locked note gets an encrypted copy of every such file: the file
+ * belongs to the other note and would otherwise stay readable on the server.
+ * A note that is not locked gets a plaintext copy of one kept encrypted,
+ * while the vault is open: the other note's file could not be shown here
+ * once it closes. Runs when the note opens, after each burst of edits, and
+ * when the vault opens.
+ * The copy replaces the pasted file in the document directly, so it appears
+ * in place and is not an undo step.
  */
 export function useRelockCopies({
   client,
   noteId,
   editor,
+  locked,
   enabled,
   allowance,
 }: {
   client: ConvexReactClient;
   noteId: string;
   editor: BlockNoteEditor;
-  /** The note is locked and can be edited. */
+  locked: boolean;
+  /** The note can be edited. */
   enabled: boolean;
   allowance: Allowance | null | undefined;
 }): void {
@@ -36,21 +43,24 @@ export function useRelockCopies({
   useEffect(() => {
     figures.current = allowance;
   }, [allowance]);
-  // Said once per note: every edit would otherwise say it again.
-  const warned = useRef(false);
+  // Said once per note and way round: every edit would otherwise say it again.
+  const warned = useRef(new Set<boolean>());
 
   useEffect(() => {
     if (!enabled) return;
     let alive = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const pass = locked ? relockCopies : plainCopies;
     const run = () => {
       timer = null;
-      void relockCopies(client, noteId, { allowance: figures.current })
+      void pass(client, noteId, { allowance: figures.current })
         .then((outcome) => {
-          if (!alive || outcome.tooLarge === 0 || warned.current) return;
-          warned.current = true;
+          if (!alive || outcome.tooLarge === 0 || warned.current.has(locked)) return;
+          warned.current.add(locked);
           toast.error(
-            "ほかのメモからコピーした画像を、このメモ用に暗号化する容量が足りません。不要なファイルを削除してください。",
+            locked
+              ? "ほかのメモからコピーした画像を、このメモ用に暗号化する容量が足りません。不要なファイルを削除してください。"
+              : "ロックしたメモからコピーした画像を、このメモに保存する容量が足りません。不要なファイルを削除してください。",
           );
         })
         .catch(() => {});
@@ -61,10 +71,15 @@ export function useRelockCopies({
     };
     run();
     const unsubscribe = editor.onChange(schedule);
+    // Nothing can be copied with the vault closed: tried again once it opens.
+    const unwatch = vault.subscribe((unlocked) => {
+      if (unlocked) schedule();
+    });
     return () => {
       alive = false;
       if (timer) clearTimeout(timer);
       unsubscribe?.();
+      unwatch();
     };
-  }, [client, noteId, editor, enabled]);
+  }, [client, noteId, editor, enabled, locked]);
 }

@@ -265,21 +265,21 @@ test.describe("trimming an image", () => {
     await expectTopLeftQuarter(noteImages(page).first());
     expect(await readTable(page, "blobs")).toEqual([]);
 
-    // The locked original, pasted into a note that is not locked, shows there
-    // while the vault is open. A crop made there would be stored in
-    // plaintext, so it is refused.
+    // The locked original, pasted into a note that is not locked, is given a
+    // plaintext copy there while the vault is open (plain-copies.spec.ts), so
+    // a crop is made from that copy rather than from the encrypted file.
     await createNote(page, "ロックしていないメモ");
     await pasteHtml(page, `<img src="memoca://att/${original!.attachmentId}" alt="コピー">`);
+    await expect
+      .poll(() => page.locator('[data-content-type="image"]').first().getAttribute("data-url"), {
+        timeout: 15_000,
+      })
+      .not.toBe(`memoca://att/${original!.attachmentId}`);
     const copy = noteImages(page).first();
     await expect.poll(() => natural(copy), { timeout: 30_000 }).toEqual({ w: 400, h: 300 });
-    await press(page, copy);
-    await press(page, page.getByRole("button", { name: "トリミング", exact: true }));
-    await expect(
-      page.getByText("この画像はロックしたメモのものなので", { exact: false }),
-    ).toBeVisible();
-    await expect(page.getByRole("dialog", { name: "画像をトリミング" })).toHaveCount(0);
-    expect(await readTable(page, "pendingUploads")).toEqual([]);
-    expect(await attachments(page)).toHaveLength(2);
+    const plainDialog = await openCrop(page, copy);
+    await keepTopLeftQuarter(page, plainDialog);
+    await expectTopLeftQuarter(noteImages(page).first());
   });
 
   test("a width set by hand shrinks with the crop at once, and ⌘Z takes the crop back in one step", async ({

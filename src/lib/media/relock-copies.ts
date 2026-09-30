@@ -8,16 +8,19 @@ import { db, getMeta, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { acquireDoc, flushDoc, releaseDoc, withDetachedDoc } from "@/lib/sync/docs";
 import { attachmentRefs, bodyFragment } from "@/lib/sync/ydoc";
-import type { Attachment } from "@/lib/types";
+import type { Attachment, Folder, Note } from "@/lib/types";
+import { lockCoverage, needsLock } from "@/lib/vault/model";
 import {
   type Allowance,
+  UPLOADABLE_FILE_TYPES,
   discardStaged,
   fitsAllowance,
   loadAttachmentBlob,
   queuedBytes,
+  sealedMeta,
   stageUpload,
 } from "./attachments";
-import { categoryOf } from "./compress";
+import { UPLOADABLE_IMAGE_TYPES, categoryOf } from "./compress";
 import { idFromRef, refFor } from "./ref";
 
 /**
@@ -31,6 +34,13 @@ import { idFromRef, refFor } from "./ref";
  * already points at them ({@link copiesForLock}). After that, the editor (for
  * files pasted into a locked note) and the repair pass (for whatever could
  * not be copied at the time) do the same for locked notes ({@link relockCopies}).
+ *
+ * The other way round, a note that is not locked cannot show another note's
+ * encrypted file once the vault is closed: the file is only ever decrypted
+ * inside this tab. While the vault is open, such a note is given its own
+ * plaintext copy of the file and pointed there ({@link plainCopies}), by the
+ * editor and the repair pass alike. The original stays encrypted with the
+ * note it belongs to.
  */
 
 /** What one pass over a note did. */
@@ -252,17 +262,24 @@ type Plan = {
   outcome: RelockOutcome;
 };
 
+/** The types a note that is not locked can hold: what the server takes in plaintext. */
+const PLAIN_TYPES: readonly string[] = [...UPLOADABLE_IMAGE_TYPES, ...UPLOADABLE_FILE_TYPES];
+
 /**
- * Stages an encrypted copy of every file the note shows that another note
- * owns, where it can, and works out what to point where. The note itself is
- * not touched.
+ * Stages a copy of every file the note shows that another note owns, where
+ * it can, and works out what to point where. The note itself is not touched.
+ *
+ * For a locked note the copies are encrypted, and every other note's file is
+ * copied. With `plain`, for a note that is not locked, the copies are
+ * plaintext, and only files kept encrypted are copied: a plain file already
+ * shows wherever it is pasted.
  */
 async function planCopies(
   client: ConvexReactClient,
   noteId: string,
   shownIds: string[],
   allowance: Allowance | null,
-  forLock = false,
+  { forLock = false, plain = false }: { forLock?: boolean; plain?: boolean } = {},
 ): Promise<Plan> {
   const database = db();
   const outcome = { ...NONE };
@@ -283,10 +300,13 @@ async function planCopies(
   const foreign = await foreignFiles(noteId, [...shown]);
 
   // A file this device has not heard of yet may be one the server holds:
-  // copied later, once its row has arrived.
-  const unknown = foreign.flatMap((file) =>
-    "unknown" in file && !gone.has(file.unknown) ? [file.unknown] : [],
-  );
+  // copied later, once its row has arrived. Only a locked note asks now: for
+  // a plain one, only the row can say whether the file is encrypted at all.
+  const unknown = plain
+    ? []
+    : foreign.flatMap((file) =>
+        "unknown" in file && !gone.has(file.unknown) ? [file.unknown] : [],
+      );
   if (unknown.length > 0) {
     const held = await serverHolds(client, unknown);
     for (const id of unknown) {
@@ -301,15 +321,21 @@ async function planCopies(
 
   const figures = allowance ?? (await getMeta<Allowance | null>(META.profile, null));
   let queued = await queuedBytes();
+  // What a copy adds to the file it is made from: encryption adds its tag.
+  const added = plain ? 0 : SEAL_OVERHEAD;
   const copies: Swap[] = [];
   try {
     for (const file of foreign) {
       if (!("row" in file) || gone.has(file.row.attachmentId)) continue;
       const { row } = file;
-      // Marked plain while the note it belongs to is locked: sealed elsewhere
-      // and not heard of here yet, or about to be sealed by the repair pass.
-      // What the server holds may already be ciphertext, so it waits.
-      if (!row.locked && (await database.notes.get(row.noteId))?.locked === true) {
+      if (plain) {
+        // A plain file shows here as it is.
+        if (!row.locked) continue;
+      } else if (!row.locked && (await database.notes.get(row.noteId))?.locked === true) {
+        // Marked plain while the note it belongs to is locked: sealed
+        // elsewhere and not heard of here yet, or about to be sealed by the
+        // repair pass. What the server holds may already be ciphertext, so
+        // it waits.
         outcome.pending += 1;
         continue;
       }
@@ -327,18 +353,22 @@ async function planCopies(
         leave("tooLarge");
         continue;
       }
+      // An encrypted file's name and type are sealed with it, and a plain
+      // copy takes them over. It has to be of a type a plain note can hold:
+      // one only a locked note takes, such as a PDF, is not copied out.
+      const meta = plain ? await sealedMeta(row).catch(() => null) : null;
+      if (meta && !PLAIN_TYPES.includes(meta.mime)) continue;
+      const known = row.mime ?? meta?.mime ?? null;
       // A file only the vault can describe has no known type until it is
       // read, so until then it is held only to the looser limit.
       const fits = (bytes: number, mime: string | null) =>
         !figures ||
-        fitsAllowance(
-          figures,
-          bytes + SEAL_OVERHEAD,
-          queued,
-          mime === null ? "video" : categoryOf(mime),
-        );
-      // Before downloading anything: the row knows the size.
-      if (!fits(row.bytes, row.mime)) {
+        fitsAllowance(figures, bytes + added, queued, mime === null ? "video" : categoryOf(mime));
+      // Before downloading anything: the row knows the size. A stored
+      // encrypted file's is its ciphertext's, the tag longer than its
+      // plaintext.
+      const size = plain ? Math.max(0, row.bytes - SEAL_OVERHEAD) : row.bytes;
+      if (!fits(size, known)) {
         leave("tooLarge");
         continue;
       }
@@ -358,21 +388,25 @@ async function planCopies(
         leave("pending");
         continue;
       }
-      const mime = row.mime ?? (loaded.type || "application/octet-stream");
+      const mime = known ?? (loaded.type || "application/octet-stream");
+      if (plain && !PLAIN_TYPES.includes(mime)) continue;
       if (!fits(loaded.size, mime)) {
         leave("tooLarge");
         continue;
       }
-      const name = row.name ?? (mime.startsWith("image/") ? "image" : "file");
+      const name = row.name ?? meta?.name ?? (mime.startsWith("image/") ? "image" : "file");
       const ref = await stageUpload({
         noteId,
         file: new File([loaded], name, { type: mime }),
-        locked: true,
+        locked: !plain,
         prepared: { blob: loaded, mime, width: row.width ?? 0, height: row.height ?? 0 },
         copyOf: row.attachmentId,
-        heldForLock: forLock,
+        // A plaintext copy is not sent until the note points at it: one sent
+        // for a pass that then stops would be decrypted bytes on the server
+        // that nothing shows.
+        heldForLock: forLock || plain,
       });
-      queued += loaded.size + SEAL_OVERHEAD;
+      queued += loaded.size + added;
       copies.push({ from: refFor(row.attachmentId), to: ref });
     }
   } catch (error) {
@@ -401,27 +435,67 @@ export async function relockCopies(
   return withRelockLock(
     noteId,
     opts.wait === true,
-    () => relockOnce(client, noteId, opts.allowance ?? null),
+    () => copyOnce(client, noteId, opts.allowance ?? null, false),
     () => BUSY,
   );
 }
 
-async function relockOnce(
+/**
+ * Gives a note that is not locked its own plaintext copy of every file it
+ * shows that belongs to another note and is kept encrypted, and points the
+ * note at the copies: the original can only be shown with the vault open.
+ * Points it back at the original of any copy the server refused. Does
+ * nothing for a locked note, which is never given a plaintext copy, or with
+ * the vault closed, when nothing can be decrypted: it is done next time.
+ *
+ * Takes the same turn per note as {@link relockCopies}, and the same options.
+ */
+export async function plainCopies(
+  client: ConvexReactClient,
+  noteId: string,
+  opts: { allowance?: Allowance | null; wait?: boolean } = {},
+): Promise<RelockOutcome> {
+  return withRelockLock(
+    noteId,
+    opts.wait === true,
+    () => copyOnce(client, noteId, opts.allowance ?? null, true),
+    () => BUSY,
+  );
+}
+
+/**
+ * Whether a note is given copies in a pass: encrypted ones if it is locked;
+ * with `plain`, plaintext ones if it is not, is not in the trash (where
+ * they would only take room), and is not in a locked folder, where it is
+ * about to be locked and is kept from gaining plaintext meanwhile.
+ */
+function wanted(note: Note, folders: Folder[], plain: boolean): boolean {
+  if (note.purged) return false;
+  if (!plain) return note.locked;
+  return !note.locked && note.deletedAt === null && !needsLock(note, lockCoverage(folders));
+}
+
+/** One pass over a note: encrypted copies for a locked note, or `plain` ones for a note that is not. */
+async function copyOnce(
   client: ConvexReactClient,
   noteId: string,
   allowance: Allowance | null,
+  plain: boolean,
 ): Promise<RelockOutcome> {
   // Not held open: a background pass must not keep the vault from closing.
   // Every step below either needs no key or checks for one first.
   if (!vault.isUnlocked) return NONE;
   const database = db();
-  const note = await database.notes.get(noteId);
-  if (!note || note.purged || !note.locked) return NONE;
+  const [note, folders] = await Promise.all([
+    database.notes.get(noteId),
+    database.folders.toArray(),
+  ]);
+  if (!note || !wanted(note, folders, plain)) return NONE;
   const ids = await withDetachedDoc(noteId, (doc) => attachmentRefs(doc));
   // Read without its key, a locked note comes out empty: nothing to go on.
-  if (!vault.isUnlocked) return NONE;
+  if (!vault.isUnlocked || ids.length === 0) return NONE;
 
-  const plan = await planCopies(client, noteId, ids, allowance);
+  const plan = await planCopies(client, noteId, ids, allowance, { plain });
   // Copies staged but not pointed at: taken back at the end.
   const unused = new Set(plan.copies.map((copy) => idFromRef(copy.to)!));
   try {
@@ -430,9 +504,13 @@ async function relockOnce(
     try {
       // Read again with the document open, and nothing awaited from here to
       // the edit: an unlock may have finished while the files were read, and
-      // a plain note must not point at copies only the vault can show.
-      const now = await database.notes.get(noteId);
-      if (!now || now.purged || !now.locked || !vault.isUnlocked) {
+      // a plain note must not point at copies only the vault can show; or a
+      // lock, and a locked note must not point at a plaintext copy.
+      const [now, foldersNow] = await Promise.all([
+        database.notes.get(noteId),
+        database.folders.toArray(),
+      ]);
+      if (!now || !wanted(now, foldersNow, plain) || !vault.isUnlocked) {
         plan.outcome.pending += plan.copies.length;
         return plan.outcome;
       }
@@ -448,6 +526,12 @@ async function relockOnce(
       // In storage before the pass ends: another tab reads it from there, and
       // so does the upload of a copy the server then refuses.
       await flushDoc(noteId);
+      // Plaintext copies go up once the note points at them.
+      if (plain) {
+        await releaseHeldCopies(
+          plan.copies.map((copy) => idFromRef(copy.to)!).filter((id) => !unused.has(id)),
+        );
+      }
       // Refused while the other files were being read: back at once.
       const refused = await refusedCopies();
       const late = plan.copies.filter((copy) => {
@@ -487,7 +571,7 @@ export async function copiesForLock(
   noteId: string,
 ): Promise<{ swaps: Swap[]; staged: string[]; left: number }> {
   const ids = await withDetachedDoc(noteId, (doc) => attachmentRefs(doc));
-  const plan = await planCopies(client, noteId, ids, null, true);
+  const plan = await planCopies(client, noteId, ids, null, { forLock: true });
   return {
     swaps: [...plan.restores, ...plan.copies],
     staged: plan.copies.map((copy) => idFromRef(copy.to)!),

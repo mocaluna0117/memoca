@@ -190,4 +190,112 @@ test.describe("an image selected with Shift and the arrow keys", () => {
     await expect(editor(page).locator(".selectedCell")).toHaveCount(2);
     await expect(looksSelected(page)).toHaveCount(0);
   });
+
+  test("an image copied alone is on the clipboard as an image, for other apps", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "画像");
+    await editor(page).click();
+    await page.keyboard.type("上の行");
+    await pasteImage(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await noteImages(page).first().click();
+    await page.keyboard.press("ControlOrMeta+c");
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const [item] = await navigator.clipboard.read();
+          if (!item?.types.includes("image/png")) return null;
+          const bitmap = await createImageBitmap(await item.getType("image/png"));
+          return [bitmap.width, bitmap.height];
+        }),
+      )
+      .toEqual([400, 300]);
+  });
+
+  test("an image copied alone, pasted back into Memoca, is the same image, not a new one", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "画像");
+    await editor(page).click();
+    await page.keyboard.type("上の行");
+    await pasteImage(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    const src = await editor(page)
+      .locator('[data-content-type="image"]')
+      .first()
+      .getAttribute("data-url");
+    await noteImages(page).first().click();
+    await page.keyboard.press("ControlOrMeta+c");
+    // Once the image itself is on the clipboard, and nothing else.
+    await expect
+      .poll(() => page.evaluate(async () => (await navigator.clipboard.read())[0]?.types.join(",")))
+      .toBe("image/png");
+    // Pasted on the line above, not over the image still selected.
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(noteImages(page)).toHaveCount(2);
+    const urls = await editor(page)
+      .locator('[data-content-type="image"]')
+      .evaluateAll((found) => found.map((block) => block.getAttribute("data-url")));
+    expect(urls).toEqual([src, src]);
+  });
+
+  test("an image copied alone does not take the place of a copy made straight after it", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "画像");
+    await editor(page).click();
+    await page.keyboard.type("上の行");
+    await pasteImage(page);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await noteImages(page).first().click();
+    await page.keyboard.press("ControlOrMeta+c");
+    // At once, before the image is ready: the line above, copied.
+    await page.keyboard.press("ArrowUp");
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("ControlOrMeta+c");
+    await page.waitForTimeout(1500);
+    const types = await page.evaluate(async () => (await navigator.clipboard.read())[0]?.types);
+    expect(types).not.toContain("image/png");
+    expect(types).toContain("text/plain");
+  });
+
+  for (const where of ["past the image", "over the image"] as const) {
+    test(`a drag with the mouse let go of ${where} at the end takes the image`, async ({
+      page,
+    }) => {
+      await signUp(page);
+      await openApp(page);
+      await createNote(page, "画像");
+      await editor(page).click();
+      await page.keyboard.type("上の行");
+      await pasteImage(page);
+      // The caret back on the line, so the image's toolbar is not over it.
+      await page.keyboard.press("ArrowUp");
+      await expect(page.locator(".bn-formatting-toolbar")).toHaveCount(0);
+      const line = (await editor(page).getByText("上の行").boundingBox())!;
+      const image = (await noteImages(page).first().boundingBox())!;
+      await page.mouse.move(line.x + 1, line.y + line.height / 2);
+      await page.mouse.down();
+      const end =
+        where === "past the image"
+          ? { x: image.x + image.width / 2, y: image.y + image.height + 40 }
+          : { x: image.x + image.width / 2, y: image.y + image.height / 2 };
+      await page.mouse.move(end.x, end.y, { steps: 10 });
+      await page.mouse.up();
+      await expect(looksSelected(page)).toHaveCount(1);
+      const copied = await nextCopy(page);
+      await page.keyboard.press("ControlOrMeta+c");
+      const { html } = await copied.done;
+      expect(html).toContain("上の行");
+      expect(html).toContain("<img");
+    });
+  }
 });
