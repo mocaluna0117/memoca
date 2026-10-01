@@ -1,4 +1,4 @@
-import { expect, type Page, test } from "@playwright/test";
+import { expect, type Locator, type Page, test } from "@playwright/test";
 import { createNote, editor, openApp, signUp } from "./helpers";
 
 /** Each block of the note a line: its type and text, indented by how deep it is. */
@@ -780,4 +780,102 @@ test("on a phone, a toggle's lines backspaced away leave it open", async ({ page
   await expect.poll(() => outline(page)).toEqual(["toggleListItem:箱の見出し"]);
   await expect(line.locator(".bn-toggle-wrapper")).toHaveAttribute("data-show-children", "true");
   await expect(line.locator(".bn-toggle-add-block-button")).toBeVisible();
+});
+
+/**
+ * How far down a line the middle of its ink is, in CSS pixels, for the
+ * ▼ and for the text (or placeholder) beside it: read off a screenshot.
+ * Ink is what is nearer the darkest there than the white around it, so a
+ * grey placeholder is read as the text is. Null where there is none.
+ */
+async function inkMiddles(page: Page, content: Locator) {
+  const line = (await content.boundingBox())!;
+  const button = (await content.locator(".bn-toggle-button").boundingBox())!;
+  const shot = await page.screenshot({ clip: line });
+  return page.evaluate(
+    async ({ data, button, width }) => {
+      const image = new Image();
+      image.src = `data:image/png;base64,${data}`;
+      await image.decode();
+      const canvas = document.createElement("canvas");
+      canvas.width = image.width;
+      canvas.height = image.height;
+      const context = canvas.getContext("2d")!;
+      context.drawImage(image, 0, 0);
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const scale = image.width / width;
+      const sum = (x: number, y: number) => {
+        const at = (y * canvas.width + x) * 4;
+        return pixels[at]! + pixels[at + 1]! + pixels[at + 2]!;
+      };
+      /** The middle of the rows with ink between two x, or null. */
+      const middle = (left: number, right: number) => {
+        const from = Math.floor(left * scale);
+        const to = Math.min(canvas.width, Math.ceil(right * scale));
+        let darkest = 765;
+        for (let y = 0; y < canvas.height; y += 1) {
+          for (let x = from; x < to; x += 1) darkest = Math.min(darkest, sum(x, y));
+        }
+        if (darkest > 700) return null;
+        const ink = (765 + darkest) / 2;
+        let top = -1;
+        let bottom = -1;
+        for (let y = 0; y < canvas.height; y += 1) {
+          for (let x = from; x < to; x += 1) {
+            if (sum(x, y) < ink) {
+              if (top < 0) top = y;
+              bottom = y;
+              break;
+            }
+          }
+        }
+        return (top + bottom) / 2 / scale;
+      };
+      return {
+        button: middle(button.x, button.x + button.width),
+        text: middle(button.x + button.width + 2, width),
+      };
+    },
+    {
+      data: shot.toString("base64"),
+      button: { x: button.x - line.x, width: button.width },
+      width: line.width,
+    },
+  );
+}
+
+test("an empty toggle's placeholder is where its text goes, level with its ▼", async ({ page }) => {
+  await toggleNote(page, "");
+  const line = editor(page).locator(".bn-block-content").first();
+  await expect(line).toHaveAttribute("data-is-empty-and-focused", "true");
+  const empty = await inkMiddles(page, line);
+  await page.keyboard.type("トグル");
+  await expect(line.locator(".bn-inline-content")).toHaveText("トグル");
+  const typed = await inkMiddles(page, line);
+  expect(empty.text).not.toBeNull();
+  expect(Math.abs(empty.text! - typed.text!)).toBeLessThanOrEqual(1);
+});
+
+test("an empty toggle opened shows no placeholder beside its add-a-block button", async ({
+  page,
+}) => {
+  await toggleNote(page, "");
+  const line = editor(page).locator(".bn-block-content").first();
+  await expect(line).toHaveAttribute("data-is-empty-and-focused", "true");
+  const placeholder = () =>
+    line.evaluate((content) => getComputedStyle(content, "::after").content);
+  expect(await placeholder()).toBe('"トグル"');
+  await line.locator(".bn-toggle-button").click();
+  await expect(line.locator(".bn-toggle-add-block-button")).toBeVisible();
+  expect(await placeholder()).toBe("none");
+  // Nor anything squeezed in beside it, the line no taller than its ▼,
+  // its text and the button below them.
+  const [outer, inner] = await line.evaluate((content) => {
+    const style = getComputedStyle(content);
+    return [
+      content.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+      content.firstElementChild!.getBoundingClientRect().height,
+    ];
+  });
+  expect(Math.abs(outer! - inner!)).toBeLessThanOrEqual(1);
 });

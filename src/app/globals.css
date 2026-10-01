@@ -253,3 +253,18 @@
     --memoca-sticky-top: 0px;
   }
 }
+
+/* An empty toggle's placeholder (トグル) level with the text that takes its
+   place: BlockNote draws it beside the ▼ and the line, stretched to the
+   height of the ▼ (taller than a line of text), its text at the top, where
+   the line itself is in the middle. */
+.memoca-editor .bn-block-content:has(> div > .bn-toggle-wrapper)::after {
+  align-self: center;
+}
+/* Open with nothing inside, its "add a block" button below the line says
+   what it is: no placeholder, which BlockNote would squeeze in beside that
+   button (on a phone a character a line, a heading's growing very tall).
+   Over BlockNote's own rule for it, added after this. */
+.memoca-editor .bn-block-content:has(> div > .bn-toggle-add-block-button)::after {
+  content: none !important;
+}
