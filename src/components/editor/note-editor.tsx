@@ -41,6 +41,7 @@ import { dragHandle } from "@/components/editor/drag-handle";
 import { fromTitle, linesAbove } from "@/components/editor/line-above";
 import { selectMedia } from "@/components/editor/select-media";
 import { onTitleEnter } from "@/components/editor/title-enter";
+import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
 
@@ -199,7 +200,14 @@ function EditorSurface({
         uploadFile,
         resolveFileUrl,
         links: LINKS,
-        extensions: [japaneseLists, toggles(), dragHandle, selectMedia(), linesAbove()],
+        extensions: [
+          japaneseLists,
+          toggles(),
+          stuckToggles,
+          dragHandle,
+          selectMedia(),
+          linesAbove(),
+        ],
         dropCursor: { hooks: { computeDropPosition } },
         // An image Memoca copied alone, pasted back as the block it was.
         pasteHandler: ({ event, editor: pasting, defaultPasteHandler }) =>

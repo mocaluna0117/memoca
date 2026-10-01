@@ -14,6 +14,7 @@ import {
   type Transaction,
 } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
+import { uncover } from "@/components/editor/stuck-toggles";
 
 /**
  * Toggles (a toggle list item, or a heading made one) as Notion has them,
@@ -34,6 +35,11 @@ import type { EditorView } from "prosemirror-view";
  * - Copied or cut with its line all selected, a closed toggle takes what is
  *   hidden inside it along, where BlockNote takes the line alone. See
  *   {@link copyRange}.
+ * - ⌘/Ctrl+Enter opens or closes the toggle the caret is in: in its line, or
+ *   anywhere inside it, however far down. Its line stays at the top of the
+ *   screen as what is inside it is scrolled past (globals.css, and
+ *   stuck-toggles.ts), for its ▼ to be in reach too; closed, it is brought
+ *   back into view.
  */
 
 /** A toggle's line: a toggle list item, or a heading that is one. */
@@ -411,6 +417,39 @@ export function caretOutOfClosed(state: EditorState, block: Found): Transaction 
   return state.tr.setSelection(TextSelection.create(state.doc, afterLine - 1));
 }
 
+/**
+ * The toggle ⌘/Ctrl+Enter opens or closes for a caret at `pos`: the nearest
+ * one it is in, in its line or inside it. Null if it is in none.
+ */
+export function toggleAt(state: EditorState, pos: number): Found | null {
+  const $pos = state.doc.resolve(pos);
+  for (let depth = $pos.depth; depth > 0; depth -= 1) {
+    const node = $pos.node(depth);
+    if (node.type.name === "blockContainer" && isToggle(node.firstChild)) {
+      return { node, pos: $pos.before(depth) };
+    }
+  }
+  return null;
+}
+
+/**
+ * The toggle ⌘/Ctrl+Enter opens or closes for the selection: as for a caret
+ * where it ends, or, a block selected whole (as one is once dropped), the
+ * block itself if it is one, not one it is in.
+ */
+export function toggleToFlip(state: EditorState): Found | null {
+  const { selection } = state;
+  return toggleAt(state, selection instanceof NodeSelection ? selection.from + 1 : selection.head);
+}
+
+/** A toggle's ▼ button, on the screen. */
+function buttonOf(view: EditorView, block: Found): HTMLElement | null {
+  const content = view.nodeDOM(block.pos + 1);
+  return content instanceof HTMLElement
+    ? content.querySelector<HTMLElement>(".bn-toggle-button")
+    : null;
+}
+
 export const toggles = createExtension(({ editor }) => ({
   key: "memocaToggles",
   // Before BlockNote's own Enter for a toggle list item.
@@ -438,11 +477,26 @@ export const toggles = createExtension(({ editor }) => ({
         }
         const tr = block && caretOutOfClosed(view.state, block);
         if (tr) view.dispatch(tr);
+        // Closed from its line kept at the top, far down inside it: what is
+        // inside it gone, the line itself is up out of sight. Back into view,
+        // below the header where the page scrolls (scroll-margin-top), and
+        // below the lines of those it is in, kept there too.
+        content.scrollIntoView({ block: "nearest" });
+        uncover(content);
       },
       { signal },
     );
   },
   keyboardShortcuts: {
+    // As its ▼ does: the closing then goes as for a click (see above).
+    "Mod-Enter": () => {
+      const view = editor.prosemirrorView;
+      const block = view && toggleToFlip(view.state);
+      const button = block && buttonOf(view, block);
+      if (!button) return false;
+      button.click();
+      return true;
+    },
     Enter: () => {
       const view = editor.prosemirrorView;
       if (!view) return false;

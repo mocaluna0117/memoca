@@ -104,6 +104,19 @@ export function NotePane({
   // On wide screens the note scrolls in its own pane, which stays mounted
   // from note to note: the next note opens at its top.
   const body = useRef<HTMLDivElement>(null);
+  // The header's height, for an open toggle's line to stay just below it as
+  // the page scrolls on a phone (--memoca-sticky-top, in globals.css).
+  // Watched from when it is shown: not while the note is still loading.
+  const [header, setHeader] = useState<HTMLElement | null>(null);
+  useEffect(() => {
+    const pane = header?.parentElement;
+    if (!header || !pane) return;
+    const observer = new ResizeObserver(() =>
+      pane.style.setProperty("--note-header-height", `${header.getBoundingClientRect().height}px`),
+    );
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, [header]);
   useLayoutEffect(() => {
     if (body.current) body.current.scrollTop = 0;
   }, [noteId]);
@@ -233,8 +246,9 @@ export function NotePane({
   const pendingLock = needsLock(note, coverage);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="memoca-note-pane flex h-full min-h-0 flex-col">
       <header
+        ref={setHeader}
         className="bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-0 z-20 flex items-center gap-1 border-b px-2 py-2 backdrop-blur"
         style={{ top: "env(safe-area-inset-top, 0px)" }}
       >
@@ -342,10 +356,12 @@ export function NotePane({
       <div
         ref={body}
         data-scroll="note"
-        // Contained only where the note is its own scroller: on a phone it
-        // never overflows and the page scrolls, so containing it here would
-        // stop a finger on the note from scrolling anything.
-        className="min-h-0 flex-1 overflow-y-auto md:overscroll-y-contain"
+        // The note's own scroller on a wider screen only: on a phone it never
+        // overflows and the page scrolls, so containing it here would stop a
+        // finger on the note from scrolling anything, and a scroller (even
+        // one that never scrolls) would hold an open toggle's line, kept at
+        // the top as the note scrolls, to itself rather than the screen.
+        className="min-h-0 flex-1 md:overflow-y-auto md:overscroll-y-contain"
       >
         {hidden ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">

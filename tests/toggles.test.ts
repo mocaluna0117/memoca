@@ -11,6 +11,8 @@ import {
   enterInToggle,
   draggedFrom,
   isToggle,
+  toggleAt,
+  toggleToFlip,
 } from "@/components/editor/toggles";
 
 /** The range to copy, every toggle closed. */
@@ -502,5 +504,95 @@ describe("closing a toggle", () => {
     const block = around(state.doc, "親見出し");
     expect(caretOutOfClosed(withCaret(state, textAt(state.doc, "親見出し") + 1), block)).toBeNull();
     expect(caretOutOfClosed(withCaret(state, textAt(state.doc, "後")), block)).toBeNull();
+  });
+});
+
+describe("the toggle ⌘/Ctrl+Enter opens or closes", () => {
+  /** That toggle's line, for a caret at `pos`, or null. */
+  const lineFor = (state: EditorState, pos: number) =>
+    toggleAt(state, pos)?.node.firstChild?.textContent ?? null;
+
+  test("in its line, or anywhere inside it, however far down: the nearest", () => {
+    const state = stateOf([
+      {
+        type: "toggleListItem",
+        content: "外",
+        children: [
+          {
+            type: "paragraph",
+            content: "外の子",
+            children: [{ type: "paragraph", content: "孫" }],
+          },
+          {
+            type: "heading",
+            props: { isToggleable: true },
+            content: "内",
+            children: [{ type: "paragraph", content: "内の子" }],
+          },
+        ],
+      },
+      { type: "paragraph", content: "後" },
+    ]);
+    const { doc } = state;
+    expect(lineFor(state, textAt(doc, "外") + 1)).toBe("外");
+    expect(lineFor(state, textAt(doc, "外の子"))).toBe("外");
+    expect(lineFor(state, textAt(doc, "孫") + 1)).toBe("外");
+    expect(lineFor(state, textAt(doc, "内"))).toBe("内");
+    expect(lineFor(state, textAt(doc, "内の子") + 2)).toBe("内");
+    expect(lineFor(state, textAt(doc, "後"))).toBeNull();
+  });
+
+  test("an image inside it, selected: it", () => {
+    const state = stateOf([
+      { type: "toggleListItem", content: "親", children: [{ type: "image" }] },
+    ]);
+    let image = -1;
+    state.doc.descendants((node, pos) => {
+      if (node.type.name === "image") image = pos;
+      return image < 0;
+    });
+    const selected = state.apply(state.tr.setSelection(NodeSelection.create(state.doc, image)));
+    expect(toggleToFlip(selected)?.node.firstChild?.textContent).toBe("親");
+  });
+
+  test("a toggle selected whole, as one is once dropped: it, not the one it is in", () => {
+    const state = stateOf([
+      {
+        type: "toggleListItem",
+        content: "外",
+        children: [
+          {
+            type: "toggleListItem",
+            content: "内",
+            children: [{ type: "paragraph", content: "子" }],
+          },
+        ],
+      },
+      { type: "toggleListItem", content: "上の段" },
+    ]);
+    const containerOf = (text: string) => textAt(state.doc, text) - 2;
+    for (const text of ["内", "上の段"]) {
+      const selected = state.apply(
+        state.tr.setSelection(NodeSelection.create(state.doc, containerOf(text))),
+      );
+      expect(toggleToFlip(selected)?.node.firstChild?.textContent).toBe(text);
+    }
+    // A caret, or text selected: where it ends.
+    const caret = withCaret(state, textAt(state.doc, "子"));
+    expect(toggleToFlip(caret)?.node.firstChild?.textContent).toBe("内");
+  });
+
+  test("a heading not made a toggle, with lines inside it: not one, the toggle it is in", () => {
+    const state = stateOf([
+      {
+        type: "toggleListItem",
+        content: "外",
+        children: [
+          { type: "heading", content: "見出し", children: [{ type: "paragraph", content: "下" }] },
+        ],
+      },
+    ]);
+    expect(lineFor(state, textAt(state.doc, "見出し"))).toBe("外");
+    expect(lineFor(state, textAt(state.doc, "下"))).toBe("外");
   });
 });

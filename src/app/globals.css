@@ -186,3 +186,70 @@
   width: 1.5rem;
   border-top: 2px solid var(--foreground);
 }
+
+/* An open toggle's line stays at the top of the note while what is inside it
+   is scrolled past, its ▼ in reach to close it from anywhere in it. Within
+   the toggle's own block only: past its end, it goes on up with it. Below
+   the note's header, where the page itself scrolls (a phone): see
+   --memoca-sticky-top, set by the note pane. Not while something is dragged
+   over the note: see stuck-toggles.ts. */
+.memoca-editor:not([data-memoca-dragging])
+  .bn-block:has(> .bn-block-group):has(
+    > .bn-block-content .bn-toggle-wrapper[data-show-children="true"]
+  )
+  > .bn-block-content {
+  position: sticky;
+  top: var(--memoca-sticky-top, 0px);
+  /* Below BlockNote's menus and toolbars; see Z in stuck-toggles.ts. */
+  z-index: 8;
+}
+/* Opaque over what scrolls under it: the colour of the block it is in, as
+   BlockNote paints a coloured block and all inside it, or the editor's own. */
+.memoca-editor
+  .bn-block:has(> .bn-block-group):has(
+    > .bn-block-content .bn-toggle-wrapper[data-show-children="true"]
+  )
+  > .bn-block-content {
+  background-color: var(--memoca-block-background, var(--bn-colors-editor-background));
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="gray"]) {
+  --memoca-block-background: var(--bn-colors-highlights-gray-background);
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="brown"]) {
+  --memoca-block-background: var(--bn-colors-highlights-brown-background);
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="red"]) {
+  --memoca-block-background: var(--bn-colors-highlights-red-background);
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="orange"]) {
+  --memoca-block-background: var(--bn-colors-highlights-orange-background);
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="yellow"]) {
+  --memoca-block-background: var(--bn-colors-highlights-yellow-background);
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="green"]) {
+  --memoca-block-background: var(--bn-colors-highlights-green-background);
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="blue"]) {
+  --memoca-block-background: var(--bn-colors-highlights-blue-background);
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="purple"]) {
+  --memoca-block-background: var(--bn-colors-highlights-purple-background);
+}
+.memoca-editor .bn-block:has(> .bn-block-content[data-background-color="pink"]) {
+  --memoca-block-background: var(--bn-colors-highlights-pink-background);
+}
+/* Brought back into view below the header once closed: see toggles.ts. One
+   open inside another is kept below the other's line: see stuck-toggles.ts. */
+.memoca-editor .bn-block-content {
+  scroll-margin-top: var(--memoca-sticky-top, 0px);
+}
+.memoca-note-pane {
+  --memoca-sticky-top: calc(env(safe-area-inset-top, 0px) + var(--note-header-height, 0px));
+}
+@media (min-width: 48rem) {
+  /* The note scrolls under its header, inside its own pane. */
+  .memoca-note-pane {
+    --memoca-sticky-top: 0px;
+  }
+}

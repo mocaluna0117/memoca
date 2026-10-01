@@ -2,6 +2,9 @@ import { expect, type Page, test } from "@playwright/test";
 import { NEWS } from "../src/lib/news";
 import { folderPanel, openApp, signUp } from "./helpers";
 
+/** An entry's heading by its title: from its start, the 新着 badge after it or not. */
+const titled = (title: string) => new RegExp(`^${title.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+
 /** The お知らせ link, in the sidebar or (on a phone) the drawer, from the notes page. */
 async function newsLink(page: Page) {
   return (await folderPanel(page)).getByRole("link", { name: /お知らせ/ });
@@ -38,7 +41,8 @@ test("お知らせ: nothing new to a new account; those since the last seen, mar
   const heading = page.getByRole("heading", { name: "お知らせ", level: 1 }).last();
   await expect(heading).toBeVisible();
   await expect(page.getByText("新着")).toHaveCount(2);
-  await expect(page.getByRole("heading", { name: /メモの並び順を選べるように/ })).toContainText(
+  await expect(page.getByRole("heading", { name: titled(NEWS[1]!.title) })).toContainText("新着");
+  await expect(page.getByRole("heading", { name: titled(NEWS[2]!.title) })).not.toContainText(
     "新着",
   );
 
