@@ -150,6 +150,106 @@ test.describe("toggles", () => {
     await expect(block(page, "中身の行")).toBeHidden();
   });
 
+  test("Backspace in an empty line inside it takes the line away, the toggle staying open", async ({
+    page,
+  }) => {
+    await toggleNote(page, "箱の見出し");
+    await flip(page, "箱の見出し");
+    await block(page, "箱の見出し").locator(".bn-toggle-add-block-button").click();
+    await page.keyboard.type("一");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("二");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("続き");
+    await expect
+      .poll(() => outline(page))
+      .toEqual(["toggleListItem:箱の見出し", "  paragraph:一", "  paragraph:二続き"]);
+    await expect(block(page, "箱の見出し").locator(".bn-toggle-wrapper")).toHaveAttribute(
+      "data-show-children",
+      "true",
+    );
+  });
+
+  test("its only line backspaced away, it stays open, its add-a-block button there", async ({
+    page,
+  }) => {
+    await toggleNote(page, "箱の見出し");
+    await flip(page, "箱の見出し");
+    const line = block(page, "箱の見出し");
+    await line.locator(".bn-toggle-add-block-button").click();
+    await page.keyboard.type("一");
+    await page.keyboard.press("Backspace");
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => outline(page)).toEqual(["toggleListItem:箱の見出し"]);
+    await expect(line.locator(".bn-toggle-wrapper")).toHaveAttribute("data-show-children", "true");
+    await expect(line.locator(".bn-toggle-add-block-button")).toBeVisible();
+    // The caret at the end of its line.
+    await page.keyboard.type("続き");
+    await expect.poll(() => outline(page)).toEqual(["toggleListItem:箱の見出し続き"]);
+  });
+
+  test("its only line joined to its own by Backspace at its start, it stays open", async ({
+    page,
+  }) => {
+    await toggleNote(page, "箱の見出し");
+    await flip(page, "箱の見出し");
+    await block(page, "箱の見出し").locator(".bn-toggle-add-block-button").click();
+    await page.keyboard.type("一");
+    await page.keyboard.press("ArrowLeft");
+    // For the editor to take the caret from where the browser put it.
+    await page.waitForTimeout(150);
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => outline(page)).toEqual(["toggleListItem:箱の見出し一"]);
+    const line = block(page, "箱の見出し一");
+    await expect(line.locator(".bn-toggle-wrapper")).toHaveAttribute("data-show-children", "true");
+    await expect(line.locator(".bn-toggle-add-block-button")).toBeVisible();
+  });
+
+  test("Backspace at the start of a line inside it joins it to the line above, those after staying inside", async ({
+    page,
+  }) => {
+    await toggleNote(page, "箱の見出し");
+    await flip(page, "箱の見出し");
+    await block(page, "箱の見出し").locator(".bn-toggle-add-block-button").click();
+    for (const [i, text] of ["一", "二", "三"].entries()) {
+      if (i > 0) await page.keyboard.press("Enter");
+      await page.keyboard.type(text);
+    }
+    await toEnd(page, "二");
+    await page.keyboard.press("ArrowLeft");
+    await page.waitForTimeout(150);
+    await page.keyboard.press("Backspace");
+    await page.keyboard.type("と");
+    await expect
+      .poll(() => outline(page))
+      .toEqual(["toggleListItem:箱の見出し", "  paragraph:一と二", "  paragraph:三"]);
+  });
+
+  test("Enter in an empty line inside it with lines after makes a line there, inside", async ({
+    page,
+  }) => {
+    await toggleNote(page, "箱の見出し");
+    await flip(page, "箱の見出し");
+    await block(page, "箱の見出し").locator(".bn-toggle-add-block-button").click();
+    await page.keyboard.type("一");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("三");
+    await toEnd(page, "一");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("間");
+    await expect
+      .poll(() => outline(page))
+      .toEqual([
+        "toggleListItem:箱の見出し",
+        "  paragraph:一",
+        "  paragraph:",
+        "  paragraph:間",
+        "  paragraph:三",
+      ]);
+  });
+
   test("closed with the caret inside it, the caret comes to its line", async ({ page }) => {
     await toggleNote(page, "箱の見出し");
     await flip(page, "箱の見出し");
@@ -654,4 +754,30 @@ test("a toggle kept at the top inside a coloured block keeps the block's colour"
   const [line, editorBackground] = await backgrounds(page, "子トグル");
   expect(grey).not.toBe(editorBackground);
   expect(line).toBe(grey);
+});
+
+test("on a phone, a toggle's lines backspaced away leave it open", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile", "a phone's keyboard");
+  await toggleNote(page, "箱の見出し");
+  await flip(page, "箱の見出し");
+  const line = block(page, "箱の見出し");
+  await line.locator(".bn-toggle-add-block-button").click();
+  await page.keyboard.type("一");
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => outline(page)).toEqual(["toggleListItem:箱の見出し", "  paragraph:"]);
+  // The change read, before the next one.
+  await page.waitForTimeout(150);
+  // As Android's keyboard has it: an input, no key, ProseMirror making it Backspace.
+  await page.evaluate(() =>
+    document.activeElement!.dispatchEvent(
+      new InputEvent("beforeinput", {
+        inputType: "deleteContentBackward",
+        bubbles: true,
+        cancelable: true,
+      }),
+    ),
+  );
+  await expect.poll(() => outline(page)).toEqual(["toggleListItem:箱の見出し"]);
+  await expect(line.locator(".bn-toggle-wrapper")).toHaveAttribute("data-show-children", "true");
+  await expect(line.locator(".bn-toggle-add-block-button")).toBeVisible();
 });

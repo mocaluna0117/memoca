@@ -13,6 +13,9 @@ import {
   isToggle,
   toggleAt,
   toggleToFlip,
+  backspaceInToggle,
+  emptiedToggles,
+  enterInEmptyLine,
 } from "@/components/editor/toggles";
 
 /** The range to copy, every toggle closed. */
@@ -595,4 +598,331 @@ describe("the toggle ⌘/Ctrl+Enter opens or closes", () => {
     expect(lineFor(state, textAt(state.doc, "見出し"))).toBe("外");
     expect(lineFor(state, textAt(state.doc, "下"))).toBe("外");
   });
+});
+
+describe("Backspace in an empty line inside an open toggle", () => {
+  /** Backspace with the caret where `at` finds in the note, its toggles open (or not). */
+  function backspace(blocks: PartialBlock[], at: (doc: Node) => number, open = true) {
+    const state = stateOf(blocks);
+    const ready = withCaret(state, at(state.doc));
+    const tr = backspaceInToggle(ready, () => open);
+    if (!tr) return null;
+    const next = ready.apply(tr);
+    return {
+      lines: outline(next.doc),
+      caret: `${next.selection.$from.parent.textContent}@${next.selection.$from.parentOffset}`,
+    };
+  }
+  /** Where the n-th empty textblock is. */
+  const empty =
+    (n = 0) =>
+    (doc: Node) => {
+      let seen = -1;
+      let found = -1;
+      doc.descendants((node, pos) => {
+        if (found < 0 && node.isTextblock && node.content.size === 0 && ++seen === n)
+          found = pos + 1;
+        return found < 0;
+      });
+      return found;
+    };
+
+  test("among others: the line gone, the caret to the end of the line above", () => {
+    expect(
+      backspace(
+        [
+          {
+            type: "toggleListItem",
+            content: "箱",
+            children: [
+              { type: "paragraph", content: "一" },
+              { type: "paragraph" },
+              { type: "paragraph", content: "三" },
+            ],
+          },
+        ],
+        empty(),
+      ),
+    ).toEqual({
+      lines: ["toggleListItem:箱", "  paragraph:一", "  paragraph:三"],
+      caret: "一@1",
+    });
+  });
+
+  test("first inside it: the caret to the end of the toggle's line; the only one, it empty", () => {
+    expect(
+      backspace(
+        [
+          {
+            type: "toggleListItem",
+            content: "箱",
+            children: [{ type: "paragraph" }, { type: "paragraph", content: "二" }],
+          },
+        ],
+        empty(),
+      ),
+    ).toEqual({ lines: ["toggleListItem:箱", "  paragraph:二"], caret: "箱@1" });
+    expect(
+      backspace(
+        [{ type: "toggleListItem", content: "箱", children: [{ type: "paragraph" }] }],
+        empty(),
+      ),
+    ).toEqual({ lines: ["toggleListItem:箱"], caret: "箱@1" });
+  });
+
+  test("after a block with lines inside it: the end of the last of them, however deep", () => {
+    expect(
+      backspace(
+        [
+          {
+            type: "toggleListItem",
+            content: "箱",
+            children: [
+              {
+                type: "paragraph",
+                content: "上",
+                children: [
+                  {
+                    type: "paragraph",
+                    content: "下",
+                    children: [{ type: "paragraph", content: "底" }],
+                  },
+                ],
+              },
+              { type: "paragraph" },
+            ],
+          },
+        ],
+        empty(),
+      )?.caret,
+    ).toBe("底@1");
+  });
+
+  test("after a closed toggle: the end of its line, not of what is hidden in it", () => {
+    const state = stateOf([
+      {
+        type: "toggleListItem",
+        content: "箱",
+        children: [
+          {
+            type: "toggleListItem",
+            content: "閉",
+            children: [{ type: "paragraph", content: "隠" }],
+          },
+          { type: "paragraph" },
+        ],
+      },
+    ]);
+    const ready = withCaret(state, empty()(state.doc));
+    const tr = backspaceInToggle(ready, (block) => block.node.firstChild!.textContent === "箱")!;
+    const next = ready.apply(tr);
+    expect(next.selection.$from.parent.textContent).toBe("閉");
+  });
+
+  test("left to BlockNote: text in the line, a closed toggle, not in a toggle, a line with lines inside", () => {
+    const inToggle: PartialBlock[] = [
+      { type: "toggleListItem", content: "箱", children: [{ type: "paragraph", content: "字" }] },
+    ];
+    expect(backspace(inToggle, (doc) => textAt(doc, "字") + 1)).toBeNull();
+    expect(
+      backspace(
+        [{ type: "toggleListItem", content: "箱", children: [{ type: "paragraph" }] }],
+        empty(),
+        false,
+      ),
+    ).toBeNull();
+    expect(
+      backspace([{ type: "paragraph", content: "親", children: [{ type: "paragraph" }] }], empty()),
+    ).toBeNull();
+    expect(
+      backspace(
+        [
+          {
+            type: "toggleListItem",
+            content: "箱",
+            children: [{ type: "paragraph", children: [{ type: "paragraph", content: "子" }] }],
+          },
+        ],
+        empty(),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("Backspace at the start of a line inside an open toggle", () => {
+  /** Backspace at the start of the line saying `text`. */
+  function backspaceAt(blocks: PartialBlock[], text: string) {
+    const state = stateOf(blocks);
+    const ready = withCaret(state, textAt(state.doc, text));
+    const tr = backspaceInToggle(ready, () => true);
+    if (!tr) return null;
+    const next = ready.apply(tr);
+    next.doc.check();
+    return {
+      lines: outline(next.doc),
+      caret: `${next.selection.$from.parent.textContent}@${next.selection.$from.parentOffset}`,
+      selected: next.selection instanceof NodeSelection ? next.selection.node.type.name : null,
+    };
+  }
+  const box = (children: PartialBlock[]): PartialBlock[] => [
+    { type: "toggleListItem", content: "箱", children },
+    { type: "paragraph", content: "後" },
+  ];
+
+  test("joined to the line above, the lines after it staying inside", () => {
+    expect(
+      backspaceAt(
+        box([
+          { type: "paragraph", content: "一" },
+          { type: "paragraph", content: "二" },
+          { type: "paragraph", content: "三" },
+        ]),
+        "二",
+      ),
+    ).toEqual({
+      lines: ["toggleListItem:箱", "  paragraph:一二", "  paragraph:三", "paragraph:後"],
+      caret: "一二@1",
+      selected: null,
+    });
+  });
+
+  test("the first: joined to the toggle's own line; the only one, the toggle left empty", () => {
+    expect(
+      backspaceAt(
+        box([
+          { type: "paragraph", content: "一" },
+          { type: "paragraph", content: "二" },
+        ]),
+        "一",
+      ),
+    ).toEqual({
+      lines: ["toggleListItem:箱一", "  paragraph:二", "paragraph:後"],
+      caret: "箱一@1",
+      selected: null,
+    });
+    expect(backspaceAt(box([{ type: "paragraph", content: "一" }]), "一")?.lines).toEqual([
+      "toggleListItem:箱一",
+      "paragraph:後",
+    ]);
+  });
+
+  test("below an image: it selected, the line left as it is", () => {
+    const result = backspaceAt(
+      box([{ type: "image" }, { type: "paragraph", content: "下" }]),
+      "下",
+    );
+    expect(result?.selected).toBe("image");
+    expect(result?.lines).toEqual([
+      "toggleListItem:箱",
+      "  image:",
+      "  paragraph:下",
+      "paragraph:後",
+    ]);
+  });
+
+  test("below a table: the caret to the end of its last cell; an empty line, taken away", () => {
+    const table: PartialBlock = {
+      type: "table",
+      content: {
+        type: "tableContent",
+        rows: [{ cells: ["a", "b"] }, { cells: ["c", "d"] }],
+      },
+    };
+    const kept = backspaceAt(box([table, { type: "paragraph", content: "下" }]), "下");
+    expect(kept?.caret).toBe("d@1");
+    expect(kept?.lines).toContain("  paragraph:下");
+    const state = stateOf(box([table, { type: "paragraph" }]));
+    let empty = -1;
+    state.doc.descendants((node, pos) => {
+      if (empty < 0 && node.type.name === "paragraph" && node.content.size === 0) empty = pos + 1;
+      return empty < 0;
+    });
+    const next = withCaret(state, empty);
+    const after = next.apply(backspaceInToggle(next, () => true)!);
+    after.doc.check();
+    expect(
+      `${after.selection.$from.parent.textContent}@${after.selection.$from.parentOffset}`,
+    ).toBe("d@1");
+    expect(outline(after.doc)).not.toContain("  paragraph:");
+  });
+
+  test("below a code block, marked text not joined to it", () => {
+    const result = backspaceAt(
+      box([
+        { type: "codeBlock", content: "code" },
+        { type: "paragraph", content: [{ type: "text", text: "太字", styles: { bold: true } }] },
+      ]),
+      "太字",
+    );
+    expect(result?.caret).toBe("code@4");
+    expect(result?.lines).toContain("  paragraph:太字");
+  });
+});
+
+describe("Enter in an empty line inside an open toggle", () => {
+  const enter = (children: PartialBlock[], n: number) => {
+    const state = stateOf([{ type: "toggleListItem", content: "箱", children }]);
+    let seen = -1;
+    let at = -1;
+    state.doc.descendants((node, pos) => {
+      if (at < 0 && node.isTextblock && node.content.size === 0 && ++seen === n) at = pos + 1;
+      return at < 0;
+    });
+    const ready = withCaret(state, at);
+    const tr = enterInEmptyLine(ready, () => true);
+    return tr ? outline(ready.apply(tr).doc) : null;
+  };
+
+  test("lines after it there: a new line after it, inside", () => {
+    expect(
+      enter(
+        [
+          { type: "paragraph", content: "一" },
+          { type: "paragraph" },
+          { type: "paragraph", content: "三" },
+        ],
+        0,
+      ),
+    ).toEqual([
+      "toggleListItem:箱",
+      "  paragraph:一",
+      "  paragraph:",
+      "  paragraph:",
+      "  paragraph:三",
+    ]);
+  });
+
+  test("the last line: left to BlockNote, a way out of it", () => {
+    expect(enter([{ type: "paragraph", content: "一" }, { type: "paragraph" }], 0)).toBeNull();
+  });
+});
+
+test("toggles emptied by a change: those with lines inside before, none after", () => {
+  const before = stateOf([
+    {
+      id: "a",
+      type: "toggleListItem",
+      content: "a",
+      children: [{ type: "paragraph", content: "1" }],
+    },
+    {
+      id: "b",
+      type: "toggleListItem",
+      content: "b",
+      children: [{ type: "paragraph", content: "2" }],
+    },
+    { id: "c", type: "toggleListItem", content: "c" },
+  ]).doc;
+  const after = stateOf([
+    { id: "a", type: "toggleListItem", content: "a" },
+    {
+      id: "b",
+      type: "toggleListItem",
+      content: "b",
+      children: [{ type: "paragraph", content: "2" }],
+    },
+    { id: "c", type: "toggleListItem", content: "c" },
+  ]).doc;
+  expect(emptiedToggles(before, after)).toEqual(["a"]);
+  expect(emptiedToggles(after, before)).toEqual([]);
 });

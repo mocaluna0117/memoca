@@ -35,6 +35,12 @@ import { uncover } from "@/components/editor/stuck-toggles";
  * - Copied or cut with its line all selected, a closed toggle takes what is
  *   hidden inside it along, where BlockNote takes the line alone. See
  *   {@link copyRange}.
+ * - Backspace in an empty line inside an open toggle takes the line away,
+ *   the caret to the end of the line above it, as anywhere else in a note.
+ *   BlockNote moves the line out of the toggle instead, and (were it the
+ *   last there) closes the toggle. Nor does an open toggle close when what
+ *   was inside it is all taken out some other way: open, it shows its "add
+ *   a block" button, as BlockNote has a new one.
  * - ⌘/Ctrl+Enter opens or closes the toggle the caret is in: in its line, or
  *   anywhere inside it, however far down. Its line stays at the top of the
  *   screen as what is inside it is scrolled past (globals.css, and
@@ -404,6 +410,143 @@ export function dropByToggle(
 }
 
 /**
+ * Where the caret goes back to from a block: the end of the last line shown
+ * of the block (`pos`, a blockContainer): the end of its last line inside,
+ * however deep, unless that is out of sight in a closed toggle. A block of
+ * no text (an image), selected.
+ */
+function endShown(doc: Node, pos: number, isOpen: (block: Found) => boolean): Selection {
+  const container = doc.nodeAt(pos)!;
+  const content = container.firstChild!;
+  const shown =
+    container.childCount > 1 && (!isToggle(content) || isOpen({ node: container, pos }));
+  if (shown) {
+    const group = container.child(1);
+    const groupStart = pos + 1 + content.nodeSize;
+    return endShown(doc, groupStart + group.content.size + 1 - group.lastChild!.nodeSize, isOpen);
+  }
+  if (content.isTextblock) return TextSelection.create(doc, pos + 1 + content.nodeSize - 1);
+  // A table: the end of its last cell, as BlockNote has it.
+  if (content.childCount > 0) return Selection.near(doc.resolve(pos + content.nodeSize), -1);
+  return NodeSelection.create(doc, pos + 1);
+}
+
+/**
+ * A line straight inside an open toggle, with nothing inside the line
+ * itself, and the caret in it: where it is, and the toggle. Null otherwise.
+ */
+function lineInToggle(
+  state: EditorState,
+  isOpen: (block: Found) => boolean,
+): { line: Found; toggle: Found; index: number; group: Node } | null {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const { $from } = selection;
+  if ($from.parent.type.name !== "paragraph") return null;
+  // The line's block, its group, and the block holding that: the toggle.
+  const depth = $from.depth - 1;
+  if (depth < 3) return null;
+  const container = $from.node(depth);
+  if (container.type.name !== "blockContainer" || container.childCount > 1) return null;
+  const toggle = { node: $from.node(depth - 2), pos: $from.before(depth - 2) };
+  if (toggle.node.type.name !== "blockContainer" || !isToggle(toggle.node.firstChild)) return null;
+  if (!isOpen(toggle)) return null;
+  return {
+    line: { node: container, pos: $from.before(depth) },
+    toggle,
+    index: $from.index(depth - 1),
+    group: $from.node(depth - 1),
+  };
+}
+
+/**
+ * Backspace at the start of a line straight inside an open toggle (nothing
+ * inside the line itself), as anywhere else in a note: the line joined to
+ * the end of the line shown above it (the toggle's own, for its first), or,
+ * empty, taken away, the caret there. BlockNote takes it out of the toggle
+ * instead, with all the lines after it under it. Above it a block of no text
+ * (an image) or one its text cannot join (a table, a code block for marked
+ * text): the caret goes there, the line left as it is. Null for anything
+ * else, left to BlockNote (which first makes a list item a paragraph).
+ */
+export function backspaceInToggle(
+  state: EditorState,
+  isOpen: (block: Found) => boolean,
+): Transaction | null {
+  const found = lineInToggle(state, isOpen);
+  if (!found || state.selection.$from.parentOffset !== 0) return null;
+  const { line, toggle, index, group } = found;
+  const text = line.node.firstChild!.content;
+  const above =
+    index === 0
+      ? TextSelection.create(state.doc, toggle.pos + 1 + toggle.node.firstChild!.nodeSize - 1)
+      : endShown(state.doc, line.pos - group.child(index - 1).nodeSize, isOpen);
+  const $above = above.$from;
+  const joins =
+    above instanceof TextSelection &&
+    $above.depth >= 1 &&
+    $above.node($above.depth - 1).type.name === "blockContainer" &&
+    $above.parent.type.validContent($above.parent.content.append(text));
+  if (text.size > 0 && !joins) return state.tr.setSelection(above).scrollIntoView();
+  // The last line there: its group too, as a group is never empty. All
+  // after where the caret goes, which stays where it is.
+  const tr =
+    group.childCount === 1
+      ? state.tr.delete(line.pos - 1, line.pos + line.node.nodeSize + 1)
+      : state.tr.delete(line.pos, line.pos + line.node.nodeSize);
+  if (text.size === 0) return tr.setSelection(above.map(tr.doc, tr.mapping)).scrollIntoView();
+  // Where they join: before the text brought up.
+  tr.insert(above.from, text);
+  return tr.setSelection(TextSelection.create(tr.doc, above.from)).scrollIntoView();
+}
+
+/**
+ * Enter in an empty line straight inside an open toggle, lines after it
+ * there: a new line after it, inside too. BlockNote takes the line out of
+ * the toggle, with all the lines after it under it. In the last line, left
+ * to BlockNote: out of it, as a way out.
+ */
+export function enterInEmptyLine(
+  state: EditorState,
+  isOpen: (block: Found) => boolean,
+): Transaction | null {
+  const found = lineInToggle(state, isOpen);
+  if (!found || found.line.node.firstChild!.content.size > 0) return null;
+  if (found.index === found.group.childCount - 1) return null;
+  const after = found.line.pos + found.line.node.nodeSize;
+  const tr = state.tr.insert(after, blockOf(state, "paragraph"));
+  return tr.setSelection(TextSelection.create(tr.doc, after + 2)).scrollIntoView();
+}
+
+/**
+ * The toggles open with something inside them before a change, and nothing
+ * after it: for each, its id. By the ids BlockNote gives blocks.
+ */
+export function emptiedToggles(before: Node, after: Node): string[] {
+  const filled = new Set<string>();
+  before.descendants((node) => {
+    if (node.type.name === "blockContainer" && isToggle(node.firstChild) && node.childCount > 1) {
+      filled.add(node.attrs.id as string);
+    }
+    return !node.isTextblock;
+  });
+  const emptied: string[] = [];
+  if (filled.size === 0) return emptied;
+  after.descendants((node) => {
+    if (
+      node.type.name === "blockContainer" &&
+      isToggle(node.firstChild) &&
+      node.childCount < 2 &&
+      filled.has(node.attrs.id as string)
+    ) {
+      emptied.push(node.attrs.id as string);
+    }
+    return !node.isTextblock;
+  });
+  return emptied;
+}
+
+/**
  * A toggle just closed with the caret inside it: the caret to the end of its
  * line, as Notion has it. Left inside, out of sight, it takes what is typed
  * next, and a click at the end of the line does not always bring it out.
@@ -440,6 +583,13 @@ export function toggleAt(state: EditorState, pos: number): Found | null {
 export function toggleToFlip(state: EditorState): Found | null {
   const { selection } = state;
   return toggleAt(state, selection instanceof NodeSelection ? selection.from + 1 : selection.head);
+}
+
+/** A toggle's wrapper (its ▼ and line), on the screen, by its block's id. */
+function wrapperOf(view: EditorView, id: string): Element | null {
+  return view.dom.querySelector(
+    `.bn-block[data-id="${CSS.escape(id)}"] > .bn-block-content .bn-toggle-wrapper`,
+  );
 }
 
 /** A toggle's ▼ button, on the screen. */
@@ -497,10 +647,19 @@ export const toggles = createExtension(({ editor }) => ({
       button.click();
       return true;
     },
+    Backspace: () => {
+      const view = editor.prosemirrorView;
+      if (!view) return false;
+      const tr = backspaceInToggle(view.state, (block) => isOpenOnScreen(view, block));
+      if (!tr) return false;
+      view.dispatch(tr);
+      return true;
+    },
     Enter: () => {
       const view = editor.prosemirrorView;
       if (!view) return false;
-      const tr = enterInToggle(view.state, (block) => isOpenOnScreen(view, block));
+      const isOpen = (block: Found) => isOpenOnScreen(view, block);
+      const tr = enterInToggle(view.state, isOpen) ?? enterInEmptyLine(view.state, isOpen);
       if (!tr) return false;
       view.dispatch(tr);
       return true;
@@ -508,6 +667,28 @@ export const toggles = createExtension(({ editor }) => ({
   },
   prosemirrorPlugins: [
     new Plugin({
+      // Open with something inside, and all of it taken out: kept open.
+      // BlockNote closes it once told of the change, after this has seen
+      // it: open again then, by its ▼, as it would be. Found again by its id
+      // then, not held: a change after this one in the same go (another
+      // device's, say) can draw it anew, closed as BlockNote has just noted.
+      view: () => ({
+        update(view, before) {
+          if (view.state.doc.eq(before.doc)) return;
+          const open = emptiedToggles(before.doc, view.state.doc).filter(
+            (id) => wrapperOf(view, id)?.getAttribute("data-show-children") === "true",
+          );
+          if (open.length === 0) return;
+          queueMicrotask(() => {
+            for (const id of open) {
+              const wrapper = wrapperOf(view, id);
+              if (wrapper?.getAttribute("data-show-children") === "false") {
+                wrapper.querySelector<HTMLElement>(".bn-toggle-button")?.click();
+              }
+            }
+          });
+        },
+      }),
       props: {
         handleDrop(view, event, slice, moved) {
           light(null, null);
