@@ -32,7 +32,7 @@ npx convex dev            # プロジェクトとリージョンを聞かれま�
 
 ```bash
 npx convex env set BETTER_AUTH_SECRET "$(openssl rand -base64 32)"
-npx convex env set SITE_URL http://localhost:3000
+npx convex env set SITE_URL http://localhost:3100
 npx convex env set ALLOW_PASSWORD_AUTH true
 npx convex env set MAX_USERS 100000
 npx convex env set ADMIN_EMAILS <あなたのメールアドレス>
@@ -87,7 +87,7 @@ Memoca が要求するのはメールアドレスと氏名だけで、これは�
 承認済みのリダイレクト URI に次の 2 つを登録します。
 
 ```
-http://localhost:3000/api/auth/callback/google
+http://localhost:3100/api/auth/callback/google
 https://<あなたのドメイン>/api/auth/callback/google
 ```
 

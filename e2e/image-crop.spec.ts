@@ -194,7 +194,7 @@ test.describe("trimming an image", () => {
       .context()
       .browser()!
       .newContext({
-        baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+        baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3100",
         viewport: page.viewportSize(),
       });
     const other = await fresh.newPage();

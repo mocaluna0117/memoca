@@ -134,7 +134,7 @@ test.describe("passkey unlock", () => {
     // A second browser, like Chrome on a Mac whose passkey lives in Safari:
     // it can do Touch ID, but has none of the vault's passkeys.
     const fresh = await context.browser()!.newContext({
-      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3100",
       viewport: page.viewportSize(),
     });
     const other = await fresh.newPage();

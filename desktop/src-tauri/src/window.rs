@@ -16,7 +16,7 @@ use url::Url;
 pub const LABEL: &str = "quick";
 
 /// Where Memoca is. A build for development can be pointed elsewhere
-/// (MEMOCA_ORIGIN=http://localhost:3000); a release never is.
+/// (MEMOCA_ORIGIN=http://localhost:3100); a release never is.
 pub fn origin() -> Url {
     #[cfg(debug_assertions)]
     if let Some(url) = std::env::var("MEMOCA_ORIGIN")

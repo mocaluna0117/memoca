@@ -66,14 +66,14 @@ pnpm install
 CONVEX_AGENT_MODE=anonymous pnpm dev:convex
 
 # 別のターミナルで
-pnpm dev          # http://localhost:3000
+pnpm dev          # http://localhost:3100
 ```
 
 初回だけ、ローカルの Convex に設定を入れます。
 
 ```bash
 npx convex env set BETTER_AUTH_SECRET "$(openssl rand -base64 32)"
-npx convex env set SITE_URL http://localhost:3000
+npx convex env set SITE_URL http://localhost:3100
 npx convex env set ALLOW_PASSWORD_AUTH true   # ローカルとテストのログイン用
 npx convex env set MAX_USERS 100000           # テストが作るアカウント用
 ```

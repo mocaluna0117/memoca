@@ -33,7 +33,7 @@ test.describe("offline", () => {
 
     // A second, empty browser profile can only see it if it really synced.
     const fresh = await context.browser()!.newContext({
-      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3100",
       viewport: page.viewportSize(),
     });
     const other = await fresh.newPage();

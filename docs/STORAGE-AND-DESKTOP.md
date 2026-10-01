@@ -215,7 +215,7 @@
   - 新しい版が起動したとき、保存済みのシェルを取り直す（5 秒まで）。デプロイで前の版のファイルが消えたあと、古いシェルがオフラインで起動しなくなるため。ログインへの転送になっていたら消し、通信がなければそのまま残す。
   - ログアウト・アカウントの削除・別のアカウントのデータを見つけたとき（`resetLocalData`）に、アカウントの中身を含みうるキャッシュも消す（`src/lib/db/caches.ts`）：`memoca-shell`・`memoca-pages`・`memoca-media`・既定の規則のページ・RSC・API・他サイトのキャッシュ。アプリ自身のファイル（precache・読みの辞書・WebP の変換・スクリプトなど）は残す。保存した画面には、ページに埋め込んだ Convex のトークン（名前とメールを含む）も入っているため。
   - 残した点：precache の `/offline` は、入れたときの Cookie で取るので、そのときの人のトークンが入る（`credentials: "omit"` にすると Vercel の保護付きプレビューで入れられなくなるため、そのまま）。アプリ内の移動の RSC のキャッシュ（`pages-rsc`）は、未ログインのときに転送を保存しうる。
-  - E2E は `e2e/offline-copies.spec.ts`。開発用の Convex が信頼するのは `localhost:3000` だけなので、E2E はそこで流す。
+  - E2E は `e2e/offline-copies.spec.ts`。開発用の Convex が信頼するのは `localhost:3100` だけなので、E2E はそこで流す。
 
 ### Q6 の実装で決めたこと（2026-09-27）
 
@@ -469,7 +469,7 @@ Mac / Windows                              Vercel（Next）                 Conv
 
 - **単体（vitest）**：S1 `rewriteRefInDoc`・`stageLockedCopy`（`tests/apply-crop.test.ts` の fixture を流用）、S3 判定 1 回・上限・容量チェック（`tests/compress.test.ts` のスタブ）、S4 `FakeWorker` で transfer・タイムアウト・`unavailable`、版の一致、S5 分類と `fitScale` と段階の上限、Q1 の各モジュール、D0 の UA 判定と `state` の検証。
 - **Convex（convex-test）**：S2 `foreignPlaintext`、S6 内訳・トゥームストーン・再計算。
-- **E2E（Playwright）**：S1 `pasteHtml` で A の画像を B に貼る → `{noteId: B, locked: true}` の行と `blobs` が空（`image-crop.spec.ts` の流れ）、S3/S4 `pasteImage` → `mime: image/webp` でサイズが縮む、第 2 段の `quick.spec` と `quick-window.spec`、D0 の `e2e/desktop-sign-in.spec.ts`（殻の UA を付けた窓と、偽の `window.memocaShell` で `hide`/`openExternal` の呼び出しを記録、D1 で殻がページにコードを渡す形に。専用の Playwright プロジェクトは作らず、desktop プロジェクトの中で窓を作る）。実行は `pnpm build && pnpm start`、`E2E_BASE_URL=http://localhost:3000`、Convex の変更後は `npx convex dev --once`。
+- **E2E（Playwright）**：S1 `pasteHtml` で A の画像を B に貼る → `{noteId: B, locked: true}` の行と `blobs` が空（`image-crop.spec.ts` の流れ）、S3/S4 `pasteImage` → `mime: image/webp` でサイズが縮む、第 2 段の `quick.spec` と `quick-window.spec`、D0 の `e2e/desktop-sign-in.spec.ts`（殻の UA を付けた窓と、偽の `window.memocaShell` で `hide`/`openExternal` の呼び出しを記録、D1 で殻がページにコードを渡す形に。専用の Playwright プロジェクトは作らず、desktop プロジェクトの中で窓を作る）。実行は `pnpm build && pnpm start`、`E2E_BASE_URL=http://localhost:3100`、Convex の変更後は `npx convex dev --once`。
 - **実機（自動化できない）**：iPhone と Mac の Safari で診断欄を使い、スクショ・写真・HEIC・10 MB の PNG の圧縮時間とサイズを記録して `ENCODING` を決める。Tauri：起動して何も出ない → ホットキーで出て入力欄にフォーカス → 保存で Inbox に入る → blur で隠れる → ログアウト状態から「ブラウザでログイン」で戻る（ビルド版）→ 2 回目の起動は既存の窓を出す → スリープ復帰後の再読み込み。Windows は SmartScreen、WebView2、Ctrl 表示、自動更新。
 - **本番**：Convex を変えるコミット（S2・S6・D0）の前に `npx convex export --prod`。デプロイ後は `gh api repos/mocaluna0117/memoca/commits/<sha>/status` と、`/serwist/sw.js` の一覧から本番チャンクを取って文言で確認。
 

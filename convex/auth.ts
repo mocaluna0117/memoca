@@ -6,7 +6,7 @@ import type { DataModel } from "./_generated/dataModel";
 import authConfig from "./auth.config";
 import { desktopSignIn } from "./lib/desktopSignIn";
 
-const siteUrl = process.env.SITE_URL ?? "http://localhost:3000";
+const siteUrl = process.env.SITE_URL ?? "http://localhost:3100";
 
 /**
  * Email and password exist only so local development and the end-to-end tests

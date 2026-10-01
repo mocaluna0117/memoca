@@ -122,7 +122,7 @@ cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 ```
 
 - `memoca://` のリンク（ブラウザからの戻り）は、「アプリケーション」に入れたビルドでだけ働きます。`pnpm tauri dev` では、コードの貼り付けでログインします。
-- 開発用のビルド（`pnpm tauri dev`）は、`MEMOCA_ORIGIN=http://localhost:3000` で手元のサイトを開けます（開発用の Convex は `ALLOW_DESKTOP_SIGN_IN=true`）。リリースのビルドは、この指定を無視して本番だけを開きます。
+- 開発用のビルド（`pnpm tauri dev`）は、`MEMOCA_ORIGIN=http://localhost:3100` で手元のサイトを開けます（開発用の Convex は `ALLOW_DESKTOP_SIGN_IN=true`）。リリースのビルドは、この指定を無視して本番だけを開きます。
 - アイコンは `pnpm icons` で `public/icons/icon-512.png` から作り直せます（メニューバーのアイコン `icons/tray.png` は別に描いたもの）。
 - ビルドには ad-hoc の署名（`tauri.conf.json` の `signingIdentity: "-"`）だけを付けます。Apple シリコンでは、署名のないアプリは開けないためです。
 

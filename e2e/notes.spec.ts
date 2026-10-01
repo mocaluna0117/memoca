@@ -172,7 +172,7 @@ test.describe("notes", () => {
 
     // Another device writes a note; this one must still hear about it.
     const fresh = await context.browser()!.newContext({
-      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3100",
       viewport: page.viewportSize(),
     });
     const other = await fresh.newPage();

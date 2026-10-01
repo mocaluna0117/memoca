@@ -5,7 +5,7 @@ const SHELL_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) MemocaShell/0.1.0 (macos)";
 const STATE = "s".repeat(40) + "_-7";
 const CHALLENGE = "c".repeat(40) + "-_0";
-const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3000";
+const baseURL = process.env.E2E_BASE_URL ?? "http://localhost:3100";
 
 /** Shell windows a test opened: closed after it, whether it passed or not. */
 const opened: BrowserContext[] = [];

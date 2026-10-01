@@ -57,7 +57,7 @@ test.describe("another account signing in on the same browser", () => {
   }) => {
     // The other account, made and set up elsewhere.
     const elsewhere = await browser.newContext({
-      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3000",
+      baseURL: process.env.E2E_BASE_URL ?? "http://localhost:3100",
       viewport: page.viewportSize(),
     });
     const theirPage = await elsewhere.newPage();

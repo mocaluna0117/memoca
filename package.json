@@ -4,10 +4,10 @@
   "private": true,
   "scripts": {
     "predev": "node scripts/copy-kuromoji-dict.mjs && node scripts/build-webp-worker.mjs",
-    "dev": "next dev",
+    "dev": "next dev -p 3100",
     "dev:convex": "convex dev",
     "build": "node scripts/copy-kuromoji-dict.mjs && node scripts/build-webp-worker.mjs && next build",
-    "start": "next start",
+    "start": "next start -p 3100",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
     "test": "vitest run",

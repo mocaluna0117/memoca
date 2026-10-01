@@ -238,11 +238,11 @@ CONVEX_AGENT_MODE=anonymous pnpm dev:convex   # Convex をローカルで起動�
 
 # 別のターミナルで、初回だけ設定を入れる
 npx convex env set BETTER_AUTH_SECRET "$(openssl rand -base64 32)"
-npx convex env set SITE_URL http://localhost:3000
+npx convex env set SITE_URL http://localhost:3100
 npx convex env set ALLOW_PASSWORD_AUTH true   # テスト用のメールとパスワードのログイン
 npx convex env set MAX_USERS 100000
 
-pnpm dev    # http://localhost:3000
+pnpm dev    # http://localhost:3100
 ```
 
 `ALLOW_PASSWORD_AUTH` は、Google ログインの設定なしで開発と自動テストを回すためのもので、本番では設定していない。
