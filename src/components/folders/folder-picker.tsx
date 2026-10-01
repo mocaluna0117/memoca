@@ -42,6 +42,7 @@ export function FolderPicker({
    */
   rootLabel,
   title = t.action.move,
+  onCloseAutoFocus,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -49,6 +50,8 @@ export function FolderPicker({
   excludeSubtreeOf?: string;
   rootLabel?: string;
   title?: string;
+  /** Where focus goes once it closes, if not back to what opened it. */
+  onCloseAutoFocus?: (event: Event) => void;
 }) {
   const tree = useFolderTree();
 
@@ -81,7 +84,7 @@ export function FolderPicker({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="overflow-hidden p-0 sm:max-w-md">
+      <DialogContent className="overflow-hidden p-0 sm:max-w-md" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader className="px-4 pt-4">
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>移動先のフォルダを選んでください。</DialogDescription>

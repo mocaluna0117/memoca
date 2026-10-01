@@ -1,14 +1,6 @@
 "use client";
 
-import {
-  DndContext,
-  type DragEndEvent,
-  DragOverlay,
-  PointerSensor,
-  pointerWithin,
-  useSensor,
-  useSensors,
-} from "@dnd-kit/core";
+import { type DragEndEvent, pointerWithin } from "@dnd-kit/core";
 
 import {
   ChevronRight,
@@ -55,6 +47,7 @@ import {
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { RenameDialog } from "@/components/folders/rename-dialog";
 import { InlineRename } from "@/components/shell/inline-rename";
+import { dragData, shownUnderPointer, useWorkspaceDrag } from "@/components/shell/workspace-dnd";
 
 /** Read out with each folder row, so the keys are discoverable. */
 const FOLDER_KEYS_HINT =
@@ -109,41 +102,32 @@ export function FolderTree({
   // the move dialog covers the same need there, so this is a pointer feature.
   const canDrag = useMediaQuery("(pointer: fine)");
 
-  const sensors = useSensors(
-    // A small threshold so a plain click still selects the folder. There is no
-    // keyboard drag: Enter renames and Space opens, as in VS Code, reordering
-    // has its own keys, and moving into another folder has the move dialog.
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-  );
-
-  // dnd-kit announces drag progress to screen readers in English by default.
-  const nameOf = (id: string | number) => findNode(tree, String(id))?.name ?? "フォルダ";
-  const announcements = {
-    onDragStart: ({ active }: { active: { id: string | number } }) =>
-      `${nameOf(active.id)} をつかみました。`,
-    onDragOver: ({ over }: { over: { id: string | number } | null }) =>
-      over ? "移動先の上にいます。" : undefined,
-    onDragEnd: ({ over }: { over: { id: string | number } | null }) =>
-      over ? "移動しました。" : "移動をやめました。",
-    onDragCancel: () => "移動をやめました。",
+  // Its folders' drags and drop targets, told apart from the other tree's
+  // (the drawer's, on a phone) and from the note list's.
+  const owner = useId();
+  const nameOf = (folderId: string | undefined) =>
+    (folderId && findNode(tree, folderId)?.name) || "フォルダ";
+  const draggedFolder = (active: { data: { current?: unknown } }) => {
+    const data = dragData(active);
+    return data?.kind === "folder" ? data.folderId : undefined;
   };
 
   const onDragEnd = async ({ active, over }: DragEndEvent) => {
     setDragging(null);
-    if (!over) return;
-    const sourceId = String(active.id);
-    const target = String(over.id);
+    const sourceId = draggedFolder(active);
+    const target = dragData(over);
+    if (!sourceId || !target) return;
 
     const folders = await db().folders.toArray();
-    if (target === "root") {
+    if (target.kind === "root") {
       if (canMoveFolder(folders, sourceId, null)) await moveFolderTo(sourceId, null);
       return;
     }
-
-    const [mode, targetId] = target.split(":");
+    if (target.kind !== "into" && target.kind !== "before") return;
+    const targetId = target.folderId;
     if (targetId === sourceId) return;
 
-    if (mode === "into") {
+    if (target.kind === "into") {
       if (!canMoveFolder(folders, sourceId, targetId!)) {
         toast.error("そのフォルダの中には移動できません。");
         return;
@@ -161,11 +145,48 @@ export function FolderTree({
       toast.error("そのフォルダの中には移動できません。");
       return;
     }
-    const siblings = siblingsOf(tree, targetId!).filter((f) => f.folderId !== sourceId);
+    // Not Inbox: it is shown first whatever its key, so it is not the one
+    // before the first folder after it.
+    const siblings = siblingsOf(tree, targetId!).filter(
+      (f) => f.folderId !== sourceId && f.system !== "inbox",
+    );
     const index = siblings.findIndex((f) => f.folderId === targetId);
     const previous = index > 0 ? siblings[index - 1]!.sortKey : null;
     await moveFolderTo(sourceId, parentId, between(previous, anchor.sortKey));
   };
+
+  // A small threshold so a plain click still selects the folder (see
+  // WorkspaceDnd). There is no keyboard drag: Enter renames and Space opens,
+  // as in VS Code, reordering has its own keys, and moving into another
+  // folder has the move dialog.
+  useWorkspaceDrag(owner, {
+    // Its own targets only, under the pointer.
+    collide: (args) =>
+      shownUnderPointer(
+        pointerWithin({
+          ...args,
+          droppableContainers: args.droppableContainers.filter(
+            (container) => dragData(container)?.owner === owner,
+          ),
+        }),
+        args,
+      ),
+    onDragStart: ({ active }) => setDragging(draggedFolder(active) ?? null),
+    onDragEnd: (event) => void onDragEnd(event),
+    onDragCancel: () => setDragging(null),
+    // dnd-kit announces drag progress to screen readers in English by default.
+    announcements: {
+      onDragStart: ({ active }) => `${nameOf(draggedFolder(active))} をつかみました。`,
+      onDragOver: ({ over }) => (over ? "移動先の上にいます。" : undefined),
+      onDragEnd: ({ over }) => (over ? "移動しました。" : "移動をやめました。"),
+      onDragCancel: () => "移動をやめました。",
+    },
+    overlay: (active) => (
+      <div className="rounded-md border bg-card px-2 py-1.5 text-sm shadow-lg">
+        {nameOf(draggedFolder(active))}
+      </div>
+    ),
+  });
 
   const rows = flattenTree(tree, expanded);
 
@@ -253,17 +274,7 @@ export function FolderTree({
   };
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={pointerWithin}
-      accessibility={{
-        announcements,
-        screenReaderInstructions: { draggable: FOLDER_KEYS_HINT },
-      }}
-      onDragStart={({ active }) => setDragging(String(active.id))}
-      onDragCancel={() => setDragging(null)}
-      onDragEnd={(event) => void onDragEnd(event)}
-    >
+    <>
       <p id={hintId} className="sr-only">
         {FOLDER_KEYS_HINT}
       </p>
@@ -282,6 +293,7 @@ export function FolderTree({
           return (
             <FolderRowDropZones
               key={node.folderId}
+              owner={owner}
               folderId={node.folderId}
               disabled={!canDrag || dragging === node.folderId}
             >
@@ -342,6 +354,7 @@ export function FolderTree({
                   </div>
                 ) : (
                   <FolderDragButton
+                    owner={owner}
                     folderId={node.folderId}
                     disabled={!canDrag || isInbox}
                     onClick={() => onSelect(node.folderId)}
@@ -475,7 +488,7 @@ export function FolderTree({
           );
         })}
 
-        <RootDropZone active={dragging !== null} />
+        <RootDropZone owner={owner} active={dragging !== null} />
 
         <FolderPicker
           open={moving !== null}
@@ -491,14 +504,6 @@ export function FolderTree({
           }}
         />
 
-        <DragOverlay dropAnimation={null}>
-          {dragging ? (
-            <div className="rounded-md border bg-card px-2 py-1.5 text-sm shadow-lg">
-              {findNode(tree, dragging)?.name ?? "フォルダ"}
-            </div>
-          ) : null}
-        </DragOverlay>
-
         <RenameDialog
           open={renaming !== null}
           title="フォルダ名を変更"
@@ -510,7 +515,7 @@ export function FolderTree({
           }}
         />
       </div>
-    </DndContext>
+    </>
   );
 }
 

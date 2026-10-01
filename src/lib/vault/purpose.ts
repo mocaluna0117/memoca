@@ -15,7 +15,16 @@ export type VaultPurpose =
   /** A new note in a locked folder: it is encrypted from the start. */
   | { kind: "createInLocked"; name: string }
   /** Moving a note, or a folder with notes, into a locked folder locks them first. */
-  | { kind: "moveIntoLocked"; name: string; folder?: string | null; count?: number };
+  | {
+      kind: "moveIntoLocked";
+      name: string;
+      folder?: string | null;
+      count?: number;
+      /** Notes moved together: said, more than one. */
+      notes?: number;
+      /** Of those, the ones not locked yet, which the move locks. */
+      toLock?: number;
+    };
 
 export type PurposeCopy = {
   title: string;
@@ -133,6 +142,13 @@ export function purposeCopy(
   }
 }
 
+/** The notes a move locks, said: of how many moved, those not locked yet. */
+function notesLocked(moved: number, toLock: number): string {
+  if (moved <= 1) return "このメモ";
+  if (toLock >= moved) return `移動するメモ ${moved} 件`;
+  return `移動するメモ ${moved} 件のうち、まだロックされていない ${toLock} 件`;
+}
+
 /** Copy for the two purposes that come from creating or moving. */
 function placementCopy(
   purpose: Extract<VaultPurpose, { kind: "createInLocked" | "moveIntoLocked" }>,
@@ -149,7 +165,7 @@ function placementCopy(
     title: "ロックされたフォルダへ移動しますか？",
     body: purpose.folder
       ? `「${purpose.name}」に移動すると、「${purpose.folder}」の中のメモ${purpose.count === undefined ? "" : ` ${purpose.count} 件`}もロックされます。インターネット接続が必要です。`
-      : `「${purpose.name}」に移動すると、このメモもロックされます。インターネット接続が必要です。`,
+      : `「${purpose.name}」に移動すると、${notesLocked(purpose.notes ?? 1, purpose.toLock ?? purpose.notes ?? 1)}もロックされます。インターネット接続が必要です。`,
     verb: "移動する",
     offline: "移動してロックするにはインターネット接続が必要です。",
   };

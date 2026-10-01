@@ -72,12 +72,13 @@ export function useLockActions() {
     /** The locked folder a place is under, if any. */
     const cover = (folderId: string | null) => (folderId !== null ? (coverage.get(folderId) ?? null) : null);
 
-    /** Locks notes one by one; true only if every one of them is locked. */
-    const lockAll = async (noteIds: string[], report: LockReport) => {
+    /** Locks notes one by one; true only if every one of them is locked. Says how far it got. */
+    const lockAll = async (noteIds: string[], report: LockReport, onLocked?: (done: number) => void) => {
       const release = vault.hold();
       try {
-        for (const noteId of noteIds) {
+        for (const [index, noteId] of noteIds.entries()) {
           if ((await changeNote(client, engine(), noteId, "lock", "folder", report)) !== null) return false;
+          onLocked?.(index + 1);
         }
         return true;
       } finally {
@@ -173,22 +174,87 @@ export function useLockActions() {
         if (!into || note.locked) {
           await moveNote(note.noteId, folderId);
           toast.success(note.locked && from && !into ? "移動しました。メモのロックはそのままです。" : "移動しました");
-          return;
+          return true;
         }
         const answer = await requestVault({ kind: "moveIntoLocked", name: nameOf(folderId) }, { returnFocus });
-        if (!answer.ok) return;
+        if (!answer.ok) return false;
         const report: LockReport = { copiesLeft: 0 };
         try {
           if (!(await lockAll([note.noteId], report))) {
             toast.error("ロックできなかったメモがあるため、移動しませんでした。もう一度お試しください。");
-            return;
+            return false;
           }
         } catch (cause) {
           toast.error(moveFailure(cause));
-          return;
+          return false;
         }
         await moveNote(note.noteId, folderId);
         sayLocked("移動してロックしました", report, true);
+        return true;
+      },
+
+      /**
+       * Moves notes, as moveNoteTo does one: those already there left as
+       * they are, the vault asked for once for all of them, and none moved
+       * unless every plaintext one going into a locked folder is locked.
+       * In their order: each goes first in the folder, so the last one first.
+       * Whether they were moved.
+       */
+      moveNotesTo: async (notes: Note[], folderId: string | null, returnFocus?: HTMLElement | null) => {
+        const moving = notes.filter((note) => note.folderId !== folderId);
+        if (moving.length === 0) return false;
+        const into = cover(folderId);
+        const count = `${moving.length} 件のメモを`;
+        const moveAll = async () => {
+          for (const note of [...moving].reverse()) await moveNote(note.noteId, folderId);
+        };
+        if (!into || moving.every((note) => note.locked)) {
+          await moveAll();
+          const keptLocked = !into && moving.some((note) => note.locked && cover(note.folderId));
+          toast.success(
+            keptLocked ? `${count}移動しました。ロックされていたメモは、ロックされたままです。` : `${count}移動しました`,
+          );
+          return true;
+        }
+        const answer = await requestVault(
+          {
+            kind: "moveIntoLocked",
+            name: nameOf(folderId),
+            notes: moving.length,
+            toLock: moving.filter((note) => !note.locked).length,
+          },
+          { returnFocus },
+        );
+        if (!answer.ok) return false;
+        // As they are now, not when they were chosen: one may have been
+        // locked, or its lock taken off, on another device meanwhile.
+        const now = await db().notes.bulkGet(moving.map((note) => note.noteId));
+        const plain = now.flatMap((note) => (note && !note.locked ? [note.noteId] : []));
+        const report: LockReport = { copiesLeft: 0 };
+        const id = toast.loading(`メモをロックしています…（0 / ${plain.length}）`);
+        let done = 0;
+        const progress = (locked: number) => {
+          done = locked;
+          toast.loading(`メモをロックしています…（${locked} / ${plain.length}）`, { id });
+        };
+        /** Where those locked before it stopped are: left, locked, where they were. */
+        const leftLocked = () =>
+          done > 0 ? `途中までロックしたメモ ${done} 件は、ロックしたまま元のフォルダにあります。` : "";
+        try {
+          if (!(await lockAll(plain, report, progress))) {
+            toast.error(
+              `ロックできなかったメモがあるため、移動しませんでした。${leftLocked()}もう一度お試しください。`,
+              { id },
+            );
+            return false;
+          }
+        } catch (cause) {
+          toast.error(`${moveFailure(cause)}${leftLocked()}`, { id });
+          return false;
+        }
+        await moveAll();
+        sayLocked(`${count}移動してロックしました`, report, false, id);
+        return true;
       },
 
       /**

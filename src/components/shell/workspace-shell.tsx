@@ -8,6 +8,7 @@ import { OpenNoteFromQuickWindow, QuickNoteShortcut } from "@/components/notes/q
 import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
 import { PwaPrompts } from "@/components/shell/pwa-prompts";
+import { WorkspaceDnd } from "@/components/shell/workspace-dnd";
 import { VaultDialog } from "@/components/vault/vault-dialog";
 import { VaultRecordSync } from "@/components/vault/vault-record-sync";
 import { recoveryKeyState } from "@/components/vault/recovery-settings";
@@ -157,7 +158,11 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
   return (
     <>
-      <AppShell>{children}</AppShell>
+      {/* One place for the drags of both the sidebar and the list: a note
+          dragged onto a folder. */}
+      <WorkspaceDnd>
+        <AppShell>{children}</AppShell>
+      </WorkspaceDnd>
       <CommandPalette />
       <QuickNoteShortcut />
       <OpenNoteFromQuickWindow />

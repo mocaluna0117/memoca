@@ -83,3 +83,14 @@ describe("what the prompt says", () => {
     expect(passkeyAction({ kind: "lockNote", title: null }, "Touch ID")).toBe("Touch ID で続ける");
   });
 });
+
+test("moved into a locked folder: one note as this one, more by how many, and how many not locked yet", () => {
+  const body = (notes?: number, toLock?: number) =>
+    purposeCopy({ kind: "moveIntoLocked", name: "仕事", notes, toLock }).body as string;
+  expect(body()).toContain("このメモもロックされます");
+  expect(body(1, 1)).toContain("このメモもロックされます");
+  expect(body(3, 3)).toContain("移動するメモ 3 件もロックされます");
+  expect(body(3, 1)).toContain(
+    "移動するメモ 3 件のうち、まだロックされていない 1 件もロックされます",
+  );
+});

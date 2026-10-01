@@ -2,6 +2,7 @@
 
 import { useDraggable, useDroppable } from "@dnd-kit/core";
 import type { KeyboardEvent, ReactNode } from "react";
+import type { DragData } from "@/components/shell/workspace-dnd";
 import { cn } from "@/lib/utils";
 
 /**
@@ -9,23 +10,30 @@ import { cn } from "@/lib/utils";
  *
  * Two of them: a thin strip above the row places the dragged folder there as a
  * sibling, and the row itself moves it inside. Without the strip there is no
- * way to express "at the top level, above this one" with a drag.
+ * way to express "at the top level, above this one" with a drag. A note
+ * dragged from the list goes into the row, the strip being for folders.
+ * By the tree they are in (`owner`), as there can be two (the sidebar's, and
+ * the drawer's on a phone).
  */
 export function FolderRowDropZones({
+  owner,
   folderId,
   disabled,
   children,
 }: {
+  owner: string;
   folderId: string;
   disabled: boolean;
   children: ReactNode;
 }) {
   const { setNodeRef: setBeforeRef, isOver: overBefore } = useDroppable({
-    id: `before:${folderId}`,
+    id: `${owner}/before/${folderId}`,
+    data: { owner, kind: "before", folderId } satisfies DragData,
     disabled,
   });
   const { setNodeRef: setIntoRef, isOver: overInto } = useDroppable({
-    id: `into:${folderId}`,
+    id: `${owner}/into/${folderId}`,
+    data: { owner, kind: "into", folderId } satisfies DragData,
     disabled,
   });
 
@@ -61,6 +69,7 @@ export function FolderRowDropZones({
  * the tree's to decide, so they arrive through `onKeyDown`.
  */
 export function FolderDragButton({
+  owner,
   folderId,
   disabled,
   onClick,
@@ -69,6 +78,7 @@ export function FolderDragButton({
   className,
   children,
 }: {
+  owner: string;
   folderId: string;
   disabled: boolean;
   onClick: () => void;
@@ -81,7 +91,11 @@ export function FolderDragButton({
     listeners,
     setNodeRef: setDragRef,
     isDragging,
-  } = useDraggable({ id: folderId, disabled });
+  } = useDraggable({
+    id: `${owner}/folder/${folderId}`,
+    data: { owner, kind: "folder", folderId } satisfies DragData,
+    disabled,
+  });
 
   return (
     <button
@@ -111,8 +125,11 @@ export function FolderDragButton({
 }
 
 /** Drop target for moving a folder back out to the top level. */
-export function RootDropZone({ active }: { active: boolean }) {
-  const { setNodeRef: setRootRef, isOver } = useDroppable({ id: "root" });
+export function RootDropZone({ owner, active }: { owner: string; active: boolean }) {
+  const { setNodeRef: setRootRef, isOver } = useDroppable({
+    id: `${owner}/root`,
+    data: { owner, kind: "root" } satisfies DragData,
+  });
   if (!active) return null;
   return (
     <div
