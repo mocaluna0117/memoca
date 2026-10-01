@@ -2,6 +2,7 @@
 
 import { useBlockNoteEditor, useSelectedBlocks } from "@blocknote/react";
 import {
+  ArrowUpToLine,
   ChevronDown,
   ChevronUp,
   Code,
@@ -26,7 +27,7 @@ import { cn } from "@/lib/utils";
  * list would drop the file, so they get only the actions that keep it.
  */
 const FILE_BLOCKS = new Set(["image", "video", "audio", "file"]);
-const FILE_ACTIONS = new Set(["crop", "up", "down", "delete"]);
+const FILE_ACTIONS = new Set(["crop", "lineAbove", "up", "down", "delete"]);
 
 type BlockType =
   | "paragraph"
@@ -154,6 +155,18 @@ export function MobileBlockToolbar() {
       disabled: !editor.canUnnestBlock(),
       run: () => {
         editor.unnestBlock();
+        editor.focus();
+      },
+    },
+    {
+      // Above an image (the note's first, say), where there is no line to put
+      // the caret in: the margin above it is too thin to tap.
+      key: "lineAbove",
+      label: "上に行を追加",
+      icon: ArrowUpToLine,
+      run: () => {
+        const [line] = editor.insertBlocks([{ type: "paragraph" }], block, "before");
+        if (line) editor.setTextCursorPosition(line, "start");
         editor.focus();
       },
     },

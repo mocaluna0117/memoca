@@ -39,6 +39,7 @@ import { useConvex } from "convex/react";
 import { useSync } from "@/components/providers/sync-provider";
 import { copiesLeftNotice, useLockActions } from "@/components/vault/use-lock-actions";
 import { FolderPicker } from "@/components/folders/folder-picker";
+import { enterFromTitle } from "@/components/editor/title-enter";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 
@@ -253,6 +254,14 @@ export function NotePane({
             setDraft({ noteId, value: event.target.value, dirty: true })
           }
           disabled={hidden || pendingLock}
+          onKeyDown={(event) => {
+            // Down into the note, as in a document; not while a word is still
+            // being written with the input method (Safari says so by keyCode 229
+            // alone on the Enter that commits it).
+            if (event.key !== "Enter" || event.shiftKey) return;
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+            if (enterFromTitle(noteId)) event.preventDefault();
+          }}
           placeholder="タイトル"
           aria-label="メモのタイトル"
           className="h-9 flex-1 border-0 bg-transparent px-2 text-base font-medium shadow-none focus-visible:ring-0 dark:bg-transparent"

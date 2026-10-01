@@ -413,7 +413,7 @@ test.describe("trimming an image", () => {
     await expect(bar).toBeVisible();
     await expect
       .poll(labels)
-      .toEqual(["トリミング", "上へ移動", "下へ移動", "ブロックを削除"]);
+      .toEqual(["トリミング", "上に行を追加", "上へ移動", "下へ移動", "ブロックを削除"]);
 
     // BlockNote's toolbar over the image, one button longer for トリミング,
     // scrolls within the screen instead of making the page wider.

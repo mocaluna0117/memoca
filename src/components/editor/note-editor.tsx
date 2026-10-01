@@ -38,7 +38,9 @@ import { bodyFragment } from "@/lib/sync/ydoc";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { pasteOwnImage } from "@/components/editor/copy-image";
 import { dragHandle } from "@/components/editor/drag-handle";
+import { fromTitle, linesAbove } from "@/components/editor/line-above";
 import { selectMedia } from "@/components/editor/select-media";
+import { onTitleEnter } from "@/components/editor/title-enter";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
 
@@ -197,7 +199,7 @@ function EditorSurface({
         uploadFile,
         resolveFileUrl,
         links: LINKS,
-        extensions: [japaneseLists, toggles(), dragHandle, selectMedia()],
+        extensions: [japaneseLists, toggles(), dragHandle, selectMedia(), linesAbove()],
         dropCursor: { hooks: { computeDropPosition } },
         // An image Memoca copied alone, pasted back as the block it was.
         pasteHandler: ({ event, editor: pasting, defaultPasteHandler }) =>
@@ -220,6 +222,19 @@ function EditorSurface({
     [client],
   );
   usePlainTextCopy(editor, loadImage);
+  // Enter in the title: down into the note's first line (a new one above an
+  // image the note starts with).
+  useEffect(
+    () =>
+      onTitleEnter(noteId, () => {
+        const view = editor.prosemirrorView;
+        if (!view?.editable) return false;
+        view.dispatch(fromTitle(view.state));
+        view.focus();
+        return true;
+      }),
+    [editor, noteId],
+  );
 
   return (
     <ImageCrop editor={editor} noteId={noteId} editable={!readOnly}>
