@@ -14,8 +14,10 @@ import { MobileNav } from "@/components/shell/mobile-nav";
 import { PANE_WIDTH_CLASS, PaneResizer, paneWidthStyle } from "@/components/shell/pane-resizer";
 import { Sidebar } from "@/components/shell/sidebar";
 import { SyncBadge } from "@/components/shell/sync-badge";
+import { UnreadDot } from "@/components/shell/unread-dot";
 import { Button } from "@/components/ui/button";
 import { useDrawerSwipe } from "@/lib/hooks/use-drawer-swipe";
+import { useUnreadNews } from "@/lib/hooks/use-news";
 import { SIDEBAR, usePaneWidth } from "@/lib/hooks/use-pane-width";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { cn } from "@/lib/utils";
@@ -114,6 +116,7 @@ export function MobileHeader({
   className?: string;
 }) {
   const { openDrawer } = useShell();
+  const unreadNews = useUnreadNews();
   return (
     <header
       className={cn(
@@ -126,9 +129,16 @@ export function MobileHeader({
         variant="ghost"
         size="icon"
         onClick={(event) => openDrawer(event.currentTarget)}
-        aria-label="メニューを開く"
+        aria-label={
+          unreadNews > 0 ? `メニューを開く（お知らせ 未読 ${unreadNews} 件）` : "メニューを開く"
+        }
+        className="relative"
       >
         <Menu className="size-5" aria-hidden />
+        {/* お知らせ not seen yet: in the menu, which is where they are on a phone. */}
+        {unreadNews > 0 ? (
+          <UnreadDot count={unreadNews} className="ring-background absolute top-0.5 right-0.5 ring-2" />
+        ) : null}
       </Button>
       <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{title}</h1>
       <SyncBadge />

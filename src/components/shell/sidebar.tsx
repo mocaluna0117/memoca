@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import {
   FileText,
   FolderPlus,
+  Megaphone,
   Search,
   Settings,
   Shield,
@@ -18,10 +19,12 @@ import { FolderTree } from "@/components/folders/folder-tree";
 import { SyncBadge } from "@/components/shell/sync-badge";
 import { VaultBadge } from "@/components/vault/vault-badge";
 import { QuotaBar } from "@/components/shell/quota-bar";
+import { UnreadDot } from "@/components/shell/unread-dot";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { useUnreadNews } from "@/lib/hooks/use-news";
 import { createFolder } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
@@ -50,9 +53,11 @@ export function Sidebar({
   const pathname = usePathname();
   const openQuickNote = useOpenQuickNote();
 
+  const unreadNews = useUnreadNews();
   const links = [
     { href: "/app/search", label: t.nav.search, icon: Search },
     { href: "/app/trash", label: t.nav.trash, icon: Trash2 },
+    { href: "/app/news", label: t.nav.news, icon: Megaphone },
     { href: "/app/settings", label: t.nav.settings, icon: Settings },
     ...(me?.role === "admin"
       ? [{ href: "/app/admin", label: t.nav.admin, icon: Shield }]
@@ -171,6 +176,9 @@ export function Sidebar({
           >
             <Icon className="size-4 opacity-70" aria-hidden />
             {label}
+            {href === "/app/news" && unreadNews > 0 ? (
+              <UnreadDot count={unreadNews} className="ml-auto" />
+            ) : null}
           </Link>
         ))}
       </nav>

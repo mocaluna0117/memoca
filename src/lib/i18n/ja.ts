@@ -15,6 +15,7 @@ export const ja = {
     quick: "即席メモ",
     settings: "設定",
     trash: "ゴミ箱",
+    news: "お知らせ",
     inbox: "Inbox",
     admin: "管理",
     allNotes: "すべてのメモ",
