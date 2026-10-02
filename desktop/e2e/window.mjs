@@ -9,7 +9,9 @@ if (!application) throw new Error("usage: node e2e/window.mjs <Memoca.exe>");
 
 const driver = await new Builder()
   .usingServer("http://127.0.0.1:4444/")
-  .withCapabilities({ browserName: "wry", "tauri:options": { application } })
+  // webviewOptions: tells Edge's driver the app is a WebView2 one, not
+  // Edge itself, whose own folder it would wait in for the debugging port.
+  .withCapabilities({ browserName: "wry", "tauri:options": { application, webviewOptions: {} } })
   .build();
 
 const check = (ok, what) => {
