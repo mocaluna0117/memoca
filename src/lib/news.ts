@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-02-download-icon",
+    date: "2026-10-02",
+    title: "ダウンロードボタンが見えるように",
+    details: [
+      "PDF などのファイルを押すと出るボタンの並びで、一番右のダウンロードボタンのアイコンが表示されていなかったのを直しました。",
+    ],
+  },
+  {
     id: "2026-10-02-first-bullet",
     date: "2026-10-02",
     title: "1 行目の箇条書きの「•」",
