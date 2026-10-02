@@ -11,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import dynamic from "next/dynamic";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,6 +39,7 @@ import { useConvex } from "convex/react";
 import { useSync } from "@/components/providers/sync-provider";
 import { copiesLeftNotice, useLockActions } from "@/components/vault/use-lock-actions";
 import { FolderPicker } from "@/components/folders/folder-picker";
+import { useNotePlace } from "@/components/notes/use-note-place";
 import { enterFromTitle } from "@/components/editor/title-enter";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
@@ -101,9 +102,6 @@ export function NotePane({
   const coverage = useMemo(() => lockCoverage(folders), [folders]);
   const menu = useMenuDialog();
   const menuTrigger = useRef<HTMLButtonElement>(null);
-  // On wide screens the note scrolls in its own pane, which stays mounted
-  // from note to note: the next note opens at its top.
-  const body = useRef<HTMLDivElement>(null);
   // The header's height, for an open toggle's line to stay just below it as
   // the page scrolls on a phone (--memoca-sticky-top, in globals.css).
   // Watched from when it is shown: not while the note is still loading.
@@ -117,9 +115,10 @@ export function NotePane({
     observer.observe(header);
     return () => observer.disconnect();
   }, [header]);
-  useLayoutEffect(() => {
-    if (body.current) body.current.scrollTop = 0;
-  }, [noteId]);
+  // On wide screens the note scrolls in its own pane, which stays mounted
+  // from note to note, and on a phone the page does: either way, a note
+  // opens where it was last read on this device, or at its top.
+  const body = useNotePlace(noteId, header, Boolean(note?.locked) && !unlocked);
 
   /**
    * The title field is a controlled draft that knows which note it belongs to

@@ -1,6 +1,7 @@
 import Dexie, { type Table } from "dexie";
 import type { Attachment, Folder, Note, Sealed } from "@/lib/types";
 import { forgetAccountCaches } from "./caches";
+import { forgetPlaces } from "@/lib/note-place";
 
 /** A Yjs update waiting to be merged or sent. */
 export type LocalUpdate = {
@@ -150,6 +151,7 @@ export function db(): MemocaDb {
  */
 export async function resetLocalData(): Promise<void> {
   await forgetAccountCaches();
+  forgetPlaces();
   const database = db();
   await database.transaction(
     "rw",
