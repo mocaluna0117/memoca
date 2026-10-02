@@ -50,6 +50,15 @@ async function paste(page: Page, types: Record<string, string>) {
 const looksSelected = (page: Page) =>
   page.locator('[data-content-type="image"].memoca-selected-media');
 
+/**
+ * Back from the image just pasted (selected, its toolbar over the line above
+ * it, as BlockNote shows one for a selected image) to that line, by the keys.
+ */
+async function toLineAbove(page: Page, text: string) {
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(() => page.evaluate(() => getSelection()?.anchorNode?.textContent)).toBe(text);
+}
+
 test.describe("an image selected with Shift and the arrow keys", () => {
   test.beforeEach(({}, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "a computer's keyboard");
@@ -66,7 +75,7 @@ test.describe("an image selected with Shift and the arrow keys", () => {
     await pasteImage(page);
     expect(await kinds(page)).toEqual(["paragraph:上の行", "image:"]);
 
-    await editor(page).getByText("上の行").click();
+    await toLineAbove(page, "上の行");
     await page.keyboard.press("Shift+ArrowDown");
     await page.keyboard.press("Shift+ArrowDown");
     await expect(looksSelected(page)).toHaveCount(1);
@@ -132,7 +141,7 @@ test.describe("an image selected with Shift and the arrow keys", () => {
     await editor(page).click();
     await page.keyboard.type("一行目");
     await pasteImage(page);
-    await editor(page).getByText("一行目").click();
+    await toLineAbove(page, "一行目");
     await expect
       .poll(() => page.evaluate(() => getSelection()?.anchorNode?.textContent))
       .toBe("一行目");
@@ -155,7 +164,7 @@ test.describe("an image selected with Shift and the arrow keys", () => {
     await editor(page).click();
     await page.keyboard.type("一行目");
     await pasteImage(page);
-    await editor(page).getByText("一行目").click();
+    await toLineAbove(page, "一行目");
     await page.keyboard.press("Shift+ArrowDown");
     await page.keyboard.press("Shift+ArrowDown");
     await expect(looksSelected(page)).toHaveCount(1);

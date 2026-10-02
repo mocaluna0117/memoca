@@ -96,4 +96,8 @@ Google ログインの設定なしで開発と自動テストを回すための�
 
 ## ライセンス
 
-[MIT](LICENSE)
+Copyright (C) 2026 mocaluna0117
+
+[GNU General Public License v3.0](LICENSE)（GPL-3.0）。
+
+メモの段組み（列）に、GPL-3.0 で公開されている BlockNote の段組み（`@blocknote/xl-multi-column`）を使うため、2026-10-02 に MIT から変えました。それより前に MIT で公開した版は、MIT のままです。

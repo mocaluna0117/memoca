@@ -6,7 +6,7 @@ import "@blocknote/shadcn/style.css";
 import { ja as blocknoteJa } from "@blocknote/core/locales";
 import { BlockNoteSchema, type BlockNoteEditor, defaultBlockSpecs } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
-import { FormattingToolbarController, useCreateBlockNote } from "@blocknote/react";
+import { DesktopFormattingToolbarController, useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { useConvex } from "convex/react";
 import { useTheme } from "next-themes";
@@ -269,7 +269,10 @@ function EditorSurface({
         formattingToolbar={false}
       >
         {/* BlockNote's own toolbar, with トリミング added for images. */}
-        <FormattingToolbarController formattingToolbar={MemocaFormattingToolbar} />
+        {/* The floating one only, on a phone too: BlockNote's own for a phone
+            (from 0.55) is pinned above the keyboard, where Memoca's block bar
+            (MobileBlockToolbar) is, and covered it. */}
+        <DesktopFormattingToolbarController formattingToolbar={MemocaFormattingToolbar} />
         <ToolbarOnImageTap />
         <MobileBlockToolbar />
       </BlockNoteView>

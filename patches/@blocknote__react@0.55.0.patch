@@ -1,24 +1,24 @@
 diff --git a/dist/blocknote-react.js b/dist/blocknote-react.js
-index 8e2ad6909f6d9a2e76de8a7630f0696e87d62e84..027e19959857b50d7578f95cdbd38e8b195fd587 100644
+index cc3af01f251ef4393bb3f9318d8e28c97a62f0dc..36616477e5b8495c8ab2d4275439e910254a944e 100644
 --- a/dist/blocknote-react.js
 +++ b/dist/blocknote-react.js
-@@ -1860,7 +1860,7 @@ var nr = () => {
- 		label: r.link_toolbar.open.tooltip,
+@@ -1980,7 +1980,7 @@ var Fr = (e) => {
+ 		label: n.link_toolbar.open.tooltip,
  		isSelected: !1,
  		onClick: () => {
--			window.open(tr(e.url, window.location.href), "_blank");
-+			window.open(tr(e.url, window.location.href), "_blank", "noopener,noreferrer");
+-			window.open(hr(e.url, window.location.href), "_blank");
++			window.open(hr(e.url, window.location.href), "_blank", "noopener,noreferrer");
  		},
- 		icon: /* @__PURE__ */ Y(Pt, {})
+ 		icon: /* @__PURE__ */ K(Gt, {})
  	});
-@@ -3773,6 +3773,9 @@ var Ii = (t) => {
+@@ -3917,6 +3917,9 @@ var oa = (e) => {
  	}
- }), Gi = (e) => {
- 	let [t, n] = j(void 0), [r, i] = j(e.block.props.previewWidth), [a, o] = j(!1), s = A(null);
-+	D(() => {
+ }), ha = (e) => {
+ 	let [t, n] = P(void 0), [r, i] = P(e.block.props.previewWidth), [a, o] = P(!1), s = N(null);
++	j(() => {
 +		i(e.block.props.previewWidth);
 +	}, [e.block.props.previewWidth]);
- 	D(() => {
+ 	j(() => {
  		let a = (n) => {
  			let r, a = "touches" in n ? n.touches[0].clientX : n.clientX;
 diff --git a/src/blocks/File/helpers/render/ResizableFileBlockWrapper.tsx b/src/blocks/File/helpers/render/ResizableFileBlockWrapper.tsx

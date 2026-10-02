@@ -255,7 +255,7 @@ function ImageCropButton() {
       className="bn-button"
       label="トリミング"
       mainTooltip="トリミング"
-      icon={<Crop />}
+      icon={<Crop className="size-4" />}
       onClick={() => open(target)}
     />
   );

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Memoca のデスクトップ版（即席メモの窓）。docs/DESKTOP.md",
-  "license": "MIT",
+  "license": "GPL-3.0-only",
   "scripts": {
     "tauri": "tauri",
     "build": "tauri build",
