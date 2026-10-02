@@ -39,7 +39,14 @@ Start-Sleep -Seconds 5
 Check ((Running).Count -eq 1) "a memoca:// link goes to the one running"
 
 Stop-Process -Name "Memoca" -Force
-Start-Sleep -Seconds 2
+# And its WebView2's processes: one still there for the app's data folder
+# is used again by the next start, and would not take the debugging port
+# the window is driven through.
+Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force
+for ($i = 0; $i -lt 15 -and @(Get-Process -Name "msedgewebview2", "Memoca" -ErrorAction SilentlyContinue).Count -gt 0; $i++) {
+  Start-Sleep -Seconds 1
+}
+Write-Host "Left running: $(@(Get-Process -Name 'msedgewebview2', 'Memoca' -ErrorAction SilentlyContinue).Count)"
 
 if (-not $NoWindow) {
   Write-Host "Checking the window through tauri-driver"
@@ -51,6 +58,7 @@ if (-not $NoWindow) {
   } finally {
     Stop-Process -Id $driver.Id -Force -ErrorAction SilentlyContinue
     Stop-Process -Name "Memoca" -Force -ErrorAction SilentlyContinue
+    Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force
   }
 }
 
