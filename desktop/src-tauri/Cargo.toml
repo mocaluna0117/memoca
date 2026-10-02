@@ -1,9 +1,9 @@
 [package]
 name = "memoca"
-version = "0.1.0"
+version = "0.2.0"
 description = "Memoca のデスクトップ版：即席メモの窓"
 authors = ["mocaluna0117"]
-license = "MIT"
+license = "GPL-3.0-only"
 edition = "2021"
 publish = false
 
@@ -16,12 +16,18 @@ tauri-plugin-deep-link = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-single-instance = { version = "2", features = ["deep-link"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-updater = "2"
 base64 = "0.22"
 getrandom = "0.3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 url = "2"
+
+# Kept out of Alt-Tab: the window's extended style (window.rs).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [profile.release]
 codegen-units = 1

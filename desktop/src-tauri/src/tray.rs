@@ -2,11 +2,13 @@
 //! away; its menu (a right click) has the rest.
 
 use crate::settings::{Corner, Store};
+use crate::updater::{self, VersionItem};
 use crate::window;
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, Wry};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 
 /// The corners offered, as the menu names them.
@@ -20,6 +22,20 @@ const CORNERS: [(Option<Corner>, &str, &str); 5] = [
 
 /// The corner items, to tick the one chosen.
 struct CornerItems(Vec<(Option<Corner>, CheckMenuItem<Wry>)>);
+
+/// The item that starts the app at login, ticked as the system has it.
+struct AtLogin(CheckMenuItem<Wry>);
+
+/// The tray icon: on a Mac, a glyph the menu bar colours as it is coloured;
+/// on Windows, the app's own icon, which a dark taskbar shows as well as a
+/// light one (a black glyph would be lost on it).
+fn icon() -> tauri::Result<Image<'static>> {
+    if cfg!(target_os = "windows") {
+        Image::from_bytes(include_bytes!("../icons/32x32.png"))
+    } else {
+        Image::from_bytes(include_bytes!("../icons/tray.png"))
+    }
+}
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let settings = app.state::<Store>().get();
@@ -70,6 +86,15 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         None::<&str>,
     )?;
     let reload = MenuItem::with_id(app, "reload", "再読み込み", true, None::<&str>)?;
+    let at_login = CheckMenuItem::with_id(
+        app,
+        "at-login",
+        "ログイン時に起動",
+        true,
+        app.autolaunch().is_enabled().unwrap_or(false),
+        None::<&str>,
+    )?;
+    let update = MenuItem::with_id(app, "update", "アップデートを確認", true, None::<&str>)?;
     let sign_out = MenuItem::with_id(app, "sign-out", "ログアウト", true, None::<&str>)?;
     let version = MenuItem::with_id(
         app,
@@ -92,15 +117,19 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &reload,
             &sign_out,
             &PredefinedMenuItem::separator(app)?,
+            &at_login,
+            &update,
             &version,
             &quit,
         ],
     )?;
     app.manage(CornerItems(corners));
+    app.manage(AtLogin(at_login));
+    app.manage(VersionItem(version));
 
     TrayIconBuilder::with_id("memoca")
-        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
-        .icon_as_template(true)
+        .icon(icon()?)
+        .icon_as_template(cfg!(target_os = "macos"))
         .tooltip("Memoca")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -137,6 +166,24 @@ fn chosen(app: &AppHandle, id: &str) {
             );
         }
         "reload" => window::reload(app),
+        "at-login" => {
+            let launch = app.autolaunch();
+            let on = launch.is_enabled().unwrap_or(false);
+            let done = if on {
+                launch.disable()
+            } else {
+                launch.enable()
+            };
+            if let Err(error) = done {
+                eprintln!("Memoca: could not change starting at login: {error}");
+            }
+            // As the system has it now, whatever the change came to.
+            let _ = app
+                .state::<AtLogin>()
+                .0
+                .set_checked(launch.is_enabled().unwrap_or(on));
+        }
+        "update" => updater::look_now(app),
         "sign-out" => {
             window::go(app, window::origin().join("/desktop/sign-out").unwrap());
             window::show(app, window::Place::Cursor);

@@ -1,7 +1,9 @@
 //! What the person chose, kept in settings.json in the app's configuration
-//! folder (~/Library/Application Support/io.github.mocaluna0117.memoca):
-//! the hotkey, which is changed there (the menu opens the file), the hot
-//! corner and whether the window is pinned, which the menu sets.
+//! folder (~/Library/Application Support/io.github.mocaluna0117.memoca on a
+//! Mac, %APPDATA%\io.github.mocaluna0117.memoca on Windows): the hotkey,
+//! which is changed there (the menu opens the file), the hot corner and
+//! whether the window is pinned, which the menu sets, and the window's size
+//! and, pinned, where it was, which the window keeps as it is put away.
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -29,6 +31,10 @@ pub struct Settings {
     pub hot_corner: Option<Corner>,
     /// Kept out when another app is clicked, rather than put away.
     pub pinned: bool,
+    /// The window's size as it was last put away, in points (logical pixels).
+    pub size: Option<(f64, f64)>,
+    /// Where a pinned window was last put away, in points: it comes out there.
+    pub position: Option<(f64, f64)>,
 }
 
 impl Default for Settings {
@@ -37,6 +43,8 @@ impl Default for Settings {
             shortcut: DEFAULT_SHORTCUT.into(),
             hot_corner: None,
             pinned: false,
+            size: None,
+            position: None,
         }
     }
 }

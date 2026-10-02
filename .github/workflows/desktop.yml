@@ -1,17 +1,33 @@
 name: Desktop
 
-# The Mac app (docs/DESKTOP.md), built on a tag such as desktop-v0.1.0 into a
-# draft release with its .dmg, for the owner to look over and publish. Run
-# by hand, it builds and keeps the .dmg as an artifact of the run instead.
-# Not signed: see docs/DESKTOP.md for opening it the first time.
+# The Mac and Windows apps (docs/DESKTOP.md).
+#
+# - A change to desktop/ on main, or one asked for by hand: both built, the
+#   Windows one installed, run and checked on the runner as a person would
+#   use it (scripts/check-windows.ps1, e2e/window.mjs), and each kept as an
+#   artifact of the run.
+# - A tag such as desktop-v0.2.0: the same, into a draft release with the
+#   .dmg, the Windows installer and latest.json, for the owner to look over
+#   and publish. Installed apps update themselves from the latest release
+#   published (src-tauri/src/updater.rs); a draft is not seen.
+#
+# Not signed by Apple or Microsoft: see docs/DESKTOP.md for opening it the
+# first time. Updates are signed with the key in the TAURI_SIGNING_* secrets.
 
 on:
   push:
+    branches: [main]
     tags: ["desktop-v*"]
+    paths: ["desktop/**", ".github/workflows/desktop.yml"]
   workflow_dispatch:
 
 permissions:
   contents: write
+
+env:
+  TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+  TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+  RELEASE: ${{ startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
   macos:
@@ -49,7 +65,6 @@ jobs:
         run: cargo test
 
       - name: Build, and draft a release for a tag
-        id: build
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -57,14 +72,78 @@ jobs:
           projectPath: desktop
           tauriScript: pnpm tauri
           args: --target universal-apple-darwin
-          tagName: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          tagName: ${{ env.RELEASE == 'true' && github.ref_name || '' }}
           releaseName: Memoca デスクトップ版 ${{ github.ref_name }}
-          releaseBody: 署名なしの Mac 版です。初めて開くときの手順は docs/DESKTOP.md を見てください。
+          releaseBody: 署名なしの Mac 版と Windows 版です。初めて開くときの手順は docs/DESKTOP.md を見てください。
           releaseDraft: true
 
-      - name: Keep the .dmg of a run by hand
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
+      - name: Keep the .dmg
+        if: ${{ env.RELEASE != 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: Memoca-macos
           path: desktop/src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
+  windows:
+    name: Build and check the Windows app
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: desktop
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: desktop/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Test
+        working-directory: desktop/src-tauri
+        run: cargo test
+
+      - name: Build, and add to the draft release for a tag
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: desktop
+          tauriScript: pnpm tauri
+          tagName: ${{ env.RELEASE == 'true' && github.ref_name || '' }}
+          releaseName: Memoca デスクトップ版 ${{ github.ref_name }}
+          releaseBody: 署名なしの Mac 版と Windows 版です。初めて開くときの手順は docs/DESKTOP.md を見てください。
+          releaseDraft: true
+
+      # What drives the window: tauri-driver, and Edge's driver for the
+      # WebView2 the runner has.
+      - name: Get the window's drivers
+        shell: pwsh
+        run: |
+          cargo install tauri-driver --locked
+          cargo install --git https://github.com/chippers/msedgedriver-tool
+          & "$env:USERPROFILE\.cargo\bin\msedgedriver-tool.exe"
+          Get-ChildItem msedgedriver.exe
+
+      - name: Install, run and check it, as a person would
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem src-tauri\target\release\bundle\nsis\*-setup.exe | Select-Object -First 1
+          .\scripts\check-windows.ps1 -Installer $installer.FullName
+
+      - name: Keep the installer
+        if: ${{ env.RELEASE != 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: Memoca-windows
+          path: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe

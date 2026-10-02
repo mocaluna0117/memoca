@@ -5,10 +5,12 @@
 
 use crate::screen::{self, Area};
 use crate::settings::{Corner, Store};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::webview::NewWindowResponse;
 use tauri::{
-    AppHandle, LogicalPosition, Manager, Rect, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
-    WindowEvent,
+    AppHandle, LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
@@ -48,11 +50,24 @@ fn quick_url() -> Url {
     origin().join("/quick?window=1").unwrap()
 }
 
-/// What the window tells the site it is: Safari's engine, as on a Mac, and
-/// the shell (src/lib/quick/shell.ts reads it before any script runs).
+/// The system, as the site is told it (src/lib/quick/shell.ts): "macos" or "windows".
+pub const PLATFORM: &str = if cfg!(target_os = "windows") {
+    "windows"
+} else {
+    "macos"
+};
+
+/// What the window tells the site it is: the engine it is (Safari's on a
+/// Mac, Edge's on Windows), and the shell (src/lib/quick/shell.ts reads it
+/// before any script runs).
 fn user_agent() -> String {
+    let engine = if cfg!(target_os = "windows") {
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
+    } else {
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)"
+    };
     format!(
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) MemocaShell/{} (macos)",
+        "{engine} MemocaShell/{} ({PLATFORM})",
         env!("CARGO_PKG_VERSION")
     )
 }
@@ -71,11 +86,12 @@ fn bridge() -> String {
       beginSignIn: () => invoke("begin_sign_in"),
       completeSignIn: (code) => invoke("complete_sign_in", {{ code: String(code) }}),
       takeSignIn: () => invoke("take_sign_in"),
-      platform: "macos",
+      platform: {platform:?},
     }}),
   }});
 }})();"#,
-        origin = origin().origin().ascii_serialization()
+        origin = origin().origin().ascii_serialization(),
+        platform = PLATFORM
     )
 }
 
@@ -98,11 +114,20 @@ fn may_go(app: &AppHandle, url: &Url) -> bool {
     false
 }
 
+/// When the window's page was last loaded: one older than this is loaded
+/// again as it comes out, rather than shown as it was (a version of the
+/// site long gone, a sign-in long out of date).
+pub struct Loaded(Mutex<Instant>);
+
+const STALE: Duration = Duration::from_secs(12 * 60 * 60);
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let (guard, opener) = (app.clone(), app.clone());
+    // As big as it was last put away, or as it starts.
+    let (width, height) = app.state::<Store>().get().size.unwrap_or((420.0, 360.0));
     let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(quick_url()))
         .title("Memoca")
-        .inner_size(420.0, 360.0)
+        .inner_size(width.max(320.0), height.max(240.0))
         .min_inner_size(320.0, 240.0)
         .decorations(false)
         .shadow(true)
@@ -121,6 +146,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             NewWindowResponse::Deny
         })
         .build()?;
+    app.manage(Loaded(Mutex::new(Instant::now())));
+    #[cfg(target_os = "windows")]
+    out_of_alt_tab(&window);
 
     let handle = app.clone();
     window.on_window_event(move |event| match event {
@@ -136,29 +164,55 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Keeps the window out of Alt-Tab, as it is out of the taskbar: a tool
+/// window, called by its hotkey or the tray icon, never switched to.
+#[cfg(target_os = "windows")]
+fn out_of_alt_tab(window: &WebviewWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as windows_sys::Win32::Foundation::HWND;
+    // SAFETY: the window's own handle, on the thread that made it.
+    unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        let style = (style | WS_EX_TOOLWINDOW as isize) & !(WS_EX_APPWINDOW as isize);
+        SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style);
+    }
+}
+
 /// Where the window comes out.
 pub enum Place {
     /// At the top of the screen the pointer is on, in the middle.
     Cursor,
-    /// Under the menu bar icon (where it is, in its screen's pixels).
+    /// By the menu bar icon (where it is, in its screen's pixels): under it
+    /// at the top of the screen, above it at the foot (a taskbar's tray).
     Tray(Rect),
     /// In a corner of the screen the pointer is on.
     Corner(Corner),
 }
 
 /// Where the window's top left corner goes, in points: `size` is the
-/// window's, `usable` what the screen's menu bar and Dock leave, `icon` the
-/// menu bar icon's place. Kept on the screen, whatever the icon's.
+/// window's, `usable` what the screen's menu bar and Dock (or taskbar)
+/// leave, `icon` the menu bar (or tray) icon's place. Kept on the screen,
+/// whatever the icon's.
 fn spot(place: &Place, size: (f64, f64), usable: Area, icon: Option<Area>) -> (f64, f64) {
     let (width, height) = size;
     let margin = 12.0;
     let (left, top) = (usable.x, usable.y);
     let (right, bottom) = (usable.x + usable.width, usable.y + usable.height);
     let (x, y) = match (place, icon) {
-        (Place::Tray(_), Some(icon)) => (
-            icon.x + icon.width / 2.0 - width / 2.0,
-            icon.y + icon.height + 4.0,
-        ),
+        (Place::Tray(_), Some(icon)) => {
+            let x = icon.x + icon.width / 2.0 - width / 2.0;
+            // An icon in the lower half is in a taskbar at the foot of the screen.
+            let low = icon.y + icon.height / 2.0 > usable.y + usable.height / 2.0;
+            let y = if low {
+                icon.y - height - 4.0
+            } else {
+                icon.y + icon.height + 4.0
+            };
+            (x, y)
+        }
         (Place::Corner(Corner::TopLeft), _) => (left + margin, top + margin),
         (Place::Corner(Corner::TopRight), _) => (right - width - margin, top + margin),
         (Place::Corner(Corner::BottomLeft), _) => (left + margin, bottom - height - margin),
@@ -203,7 +257,7 @@ fn place(app: &AppHandle, window: &WebviewWindow, place: &Place) {
         _ => None,
     };
     let (x, y) = spot(place, (size.width, size.height), screen.usable, icon);
-    let _ = window.set_position(LogicalPosition::new(x, y));
+    let _ = window.set_position(screen::position(x, y, screen.scale));
 }
 
 /// Brings the window out at `where_`, to type in at once. One already out
@@ -211,7 +265,21 @@ fn place(app: &AppHandle, window: &WebviewWindow, place: &Place) {
 pub fn show(app: &AppHandle, where_: Place) {
     let Some(window) = window(app) else { return };
     if !window.is_visible().unwrap_or(false) {
-        place(app, &window, &where_);
+        let settings = app.state::<Store>().get();
+        match settings.position {
+            // Pinned, it comes out where it was left.
+            Some((x, y)) if settings.pinned => {
+                let _ = window.set_position(LogicalPosition::new(x, y));
+            }
+            _ => place(app, &window, &where_),
+        }
+        // Loaded long ago: loaded again on the way out.
+        let loaded = app.state::<Loaded>();
+        let mut at = loaded.0.lock().unwrap();
+        if at.elapsed() >= STALE {
+            *at = Instant::now();
+            let _ = window.navigate(quick_url());
+        }
     }
     // After the move, which macOS makes when it next can: not first seen
     // where it was last.
@@ -231,11 +299,40 @@ pub fn show(app: &AppHandle, where_: Place) {
 pub fn hide(app: &AppHandle) {
     let Some(window) = window(app) else { return };
     if window.is_visible().unwrap_or(false) {
+        remember(app, &window);
         let _ = window.hide();
         #[cfg(target_os = "macos")]
         let _ = app.hide();
         let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-hidden'))");
     }
+}
+
+/// Keeps the window's size, and where it is if pinned, for the next time it
+/// comes out (after a restart too).
+fn remember(app: &AppHandle, window: &WebviewWindow) {
+    let (Ok(scale), Ok(size), Ok(at)) = (
+        window.scale_factor(),
+        window.inner_size(),
+        window.outer_position(),
+    ) else {
+        return;
+    };
+    let size: LogicalSize<f64> = size.to_logical(scale);
+    let at: LogicalPosition<f64> = at.to_logical(scale);
+    let store = app.state::<Store>();
+    let before = store.get();
+    let position = before.pinned.then_some((at.x, at.y));
+    if before.size != Some((size.width, size.height)) || before.position != position {
+        store.update(|settings| {
+            settings.size = Some((size.width, size.height));
+            settings.position = position;
+        });
+    }
+}
+
+/// Whether the window is out.
+pub fn is_out(app: &AppHandle) -> bool {
+    window(app).is_some_and(|window| window.is_visible().unwrap_or(false))
 }
 
 /// Brings the window out, or puts it away if it is out and in use.
@@ -251,6 +348,7 @@ pub fn toggle(app: &AppHandle, where_: Place) {
 /// Loads the window's page again: the quick note.
 pub fn reload(app: &AppHandle) {
     if let Some(window) = window(app) {
+        *app.state::<Loaded>().0.lock().unwrap() = Instant::now();
         let _ = window.navigate(quick_url());
     }
 }
@@ -308,6 +406,29 @@ mod tests {
         assert_eq!(
             spot(&Place::Tray(rect), WINDOW, SCREEN, Some(icon(1420.0))).0,
             1440.0 - 420.0
+        );
+    }
+
+    #[test]
+    fn above_a_tray_icon_at_the_foot_of_the_screen() {
+        // Windows: the taskbar at the foot, under what the screen leaves.
+        let screen = Area {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1032.0,
+        };
+        let icon = Area {
+            x: 1700.0,
+            y: 1040.0,
+            width: 24.0,
+            height: 32.0,
+        };
+        // Above the icon, kept within what the screen leaves: its right edge
+        // and the top of the taskbar.
+        assert_eq!(
+            spot(&Place::Tray(Rect::default()), WINDOW, screen, Some(icon)),
+            (1920.0 - 420.0, 1032.0 - 360.0)
         );
     }
 

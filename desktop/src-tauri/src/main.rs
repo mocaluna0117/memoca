@@ -1,6 +1,7 @@
 //! Memoca's desktop app (docs/DESKTOP.md): a light shell around the site's
-//! quick note. It stays in the menu bar with one window, hidden and loaded
-//! ahead, which the hotkey, the menu bar icon or a hot corner brings out.
+//! quick note, for a Mac and Windows. It stays in the menu bar (the tray,
+//! on Windows) with one window, hidden and loaded ahead, which the hotkey,
+//! the icon or a hot corner brings out.
 //! The page is the site itself (https://memoca-app.vercel.app/quick);
 //! nothing of the app's is bundled here.
 
@@ -13,14 +14,48 @@ mod settings;
 mod shortcut;
 mod sign_in;
 mod tray;
+mod updater;
 mod window;
 
 use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
-use tauri::{Manager, RunEvent};
+use tauri::{AppHandle, Manager, RunEvent, Wry};
+use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 
+/// The keys the window types with: ⌘C, ⌘V, ⌘Z and the rest are the menu's
+/// on a Mac. No 終了 here: ⌘Q quits from the menu bar icon's menu, not by a
+/// slip in the window. Not on Windows, where an app's menu is a bar across
+/// its window, and the keys work without one.
+fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
+    Menu::with_items(
+        app,
+        &[
+            &Submenu::with_items(
+                app,
+                "Memoca",
+                true,
+                &[&PredefinedMenuItem::hide(app, Some("Memoca を隠す"))?],
+            )?,
+            &Submenu::with_items(
+                app,
+                "編集",
+                true,
+                &[
+                    &PredefinedMenuItem::undo(app, Some("取り消す"))?,
+                    &PredefinedMenuItem::redo(app, Some("やり直す"))?,
+                    &PredefinedMenuItem::separator(app)?,
+                    &PredefinedMenuItem::cut(app, Some("カット"))?,
+                    &PredefinedMenuItem::copy(app, Some("コピー"))?,
+                    &PredefinedMenuItem::paste(app, Some("ペースト"))?,
+                    &PredefinedMenuItem::select_all(app, Some("すべてを選択"))?,
+                ],
+            )?,
+        ],
+    )
+}
+
 fn main() {
-    let app = tauri::Builder::default()
+    let builder = tauri::Builder::default()
         // First: a second launch shows this one's window instead, and hands
         // over the link it was opened with.
         .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
@@ -34,38 +69,19 @@ fn main() {
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        // Started at login (the menu's ログイン時に起動), hidden.
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            Some(vec!["--hidden"]),
+        ))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(sign_in::Pending::default())
-        .manage(sign_in::Ready::default())
-        // The keys the window types with: ⌘C, ⌘V, ⌘Z and the rest are the
-        // menu's on a Mac. No 終了 here: ⌘Q quits from the menu bar icon's
-        // menu, not by a slip in the window.
-        .menu(|app| {
-            Menu::with_items(
-                app,
-                &[
-                    &Submenu::with_items(
-                        app,
-                        "Memoca",
-                        true,
-                        &[&PredefinedMenuItem::hide(app, Some("Memoca を隠す"))?],
-                    )?,
-                    &Submenu::with_items(
-                        app,
-                        "編集",
-                        true,
-                        &[
-                            &PredefinedMenuItem::undo(app, Some("取り消す"))?,
-                            &PredefinedMenuItem::redo(app, Some("やり直す"))?,
-                            &PredefinedMenuItem::separator(app)?,
-                            &PredefinedMenuItem::cut(app, Some("カット"))?,
-                            &PredefinedMenuItem::copy(app, Some("コピー"))?,
-                            &PredefinedMenuItem::paste(app, Some("ペースト"))?,
-                            &PredefinedMenuItem::select_all(app, Some("すべてを選択"))?,
-                        ],
-                    )?,
-                ],
-            )
-        })
+        .manage(sign_in::Ready::default());
+    #[cfg(target_os = "macos")]
+    let builder = builder.menu(app_menu);
+    #[cfg(not(target_os = "macos"))]
+    let _ = app_menu;
+    let app = builder
         .invoke_handler(tauri::generate_handler![
             commands::hide,
             commands::open_external,
@@ -110,6 +126,22 @@ fn main() {
                     sign_in::on_link(&handle, &url);
                 }
             });
+            // Started by a link (Windows starts the app with it when it is
+            // not running): taken as one that arrives while it is.
+            if let Ok(Some(urls)) = app.deep_link().get_current() {
+                for url in urls {
+                    sign_in::on_link(app.handle(), &url);
+                }
+            }
+
+            if first_run {
+                // A quick note to hand from the moment the computer is on;
+                // the menu's ログイン時に起動 takes it off.
+                if let Err(error) = app.autolaunch().enable() {
+                    eprintln!("Memoca: could not start at login: {error}");
+                }
+            }
+            updater::watch(app.handle().clone());
 
             // Started by hand for the first time: shown, to sign in. Later
             // it waits, hidden, for the hotkey.
