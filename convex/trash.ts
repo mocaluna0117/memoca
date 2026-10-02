@@ -193,7 +193,7 @@ async function purgeTargets(
 
   if (!more) {
     for (const folder of pendingFolders) {
-      if (folder.system === "inbox") continue;
+      if (folder.system !== null) continue;
       await ctx.db.patch(folder._id, {
         purged: true,
         name: null,

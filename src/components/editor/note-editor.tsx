@@ -3,8 +3,7 @@
 import "@blocknote/core/fonts/inter.css";
 import "@blocknote/shadcn/style.css";
 
-import { ja as blocknoteJa } from "@blocknote/core/locales";
-import { BlockNoteSchema, type BlockNoteEditor, combineByGroup, defaultBlockSpecs } from "@blocknote/core";
+import { type BlockNoteEditor, combineByGroup } from "@blocknote/core";
 import { filterSuggestionItems } from "@blocknote/core/extensions";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
@@ -17,11 +16,7 @@ import {
 } from "@blocknote/react";
 import { flip, offset, shift } from "@floating-ui/react";
 import { NodeSelection } from "prosemirror-state";
-import {
-  getMultiColumnSlashMenuItems,
-  locales as multiColumnLocales,
-  withMultiColumn,
-} from "@blocknote/xl-multi-column";
+import { getMultiColumnSlashMenuItems } from "@blocknote/xl-multi-column";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { useConvex } from "convex/react";
 import { useTheme } from "next-themes";
@@ -59,18 +54,12 @@ import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
-import { memocaFileBlock } from "@/components/editor/pdf-file-block";
-
-/**
- * BlockNote's blocks, with a file block that shows a PDF's pages (see
- * memocaFileBlock), and columns: blocks side by side, in a row of two or
- * more (BlockNote's multi-column, GPL-3.0).
- */
-const SCHEMA = withMultiColumn(
-  BlockNoteSchema.create({
-    blockSpecs: { ...defaultBlockSpecs, file: memocaFileBlock() },
-  }),
-);
+import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
+import { LayoutTemplate } from "lucide-react";
+import { db } from "@/lib/db";
+import { t } from "@/lib/i18n/ja";
+import { noteName } from "@/lib/note-name";
+import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, insertTemplate, isTemplate } from "@/lib/templates";
 
 /** Blocks that are a file, shown as one: an image, a video, a sound, a PDF or any file. */
 const MEDIA = new Set(["image", "video", "audio", "file"]);
@@ -93,9 +82,6 @@ const OVER_MEDIA: FloatingUIOptions = {
     ],
   },
 };
-
-/** BlockNote's words, and its columns', in Japanese. */
-const DICTIONARY = { ...blocknoteJa, multi_column: multiColumnLocales.ja };
 
 /** A link clicked in a note opens apart from the app's window (see openLinkApart). */
 const LINKS = { onClick: (event: MouseEvent) => openLinkApart(event) };
@@ -277,6 +263,29 @@ function EditorSurface({
   );
 
   const editor = useCreateBlockNote(options, [doc]);
+  /** Each template, for the / menu: put where the caret is. Not this note itself. */
+  const templateItems = async () => {
+    const templates = (await db().notes.where("folderId").equals(TEMPLATES_FOLDER_ID).toArray())
+      .filter((note) => isTemplate(note) && note.noteId !== noteId)
+      .sort((a, b) => (a.title ?? "").localeCompare(b.title ?? "", "ja"));
+    return templates.map((template) => {
+      const name = noteName(template.title, template.preview).text;
+      return {
+        title: name,
+        subtext: t.templates.slashSubtext,
+        aliases: ["テンプレート", "template", "てんぷれーと"],
+        group: t.templates.slashGroup,
+        icon: <LayoutTemplate size={18} />,
+        onItemClick: () => {
+          insertTemplate(editor, template.noteId).catch((error: unknown) =>
+            toast.error(
+              error instanceof TemplateUnavailableError ? t.templates.unavailable : "テンプレートを使えませんでした。",
+            ),
+          );
+        },
+      };
+    });
+  };
   const mediaSelected = useEditorState({
     editor,
     selector: ({ editor: current }) => {
@@ -333,10 +342,13 @@ function EditorSurface({
           shouldOpen={(state) => !state.selection.$from.parent.type.isInGroup("tableContent")}
           getItems={async (query) =>
             filterSuggestionItems(
-              combineByGroup(
-                getDefaultReactSlashMenuItems(editor),
-                getMultiColumnSlashMenuItems(editor),
-              ),
+              [
+                ...combineByGroup(
+                  getDefaultReactSlashMenuItems(editor),
+                  getMultiColumnSlashMenuItems(editor),
+                ),
+                ...(await templateItems()),
+              ],
               query,
             )
           }

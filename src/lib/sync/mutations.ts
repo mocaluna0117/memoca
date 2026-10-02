@@ -44,7 +44,7 @@ async function siblingKeyAfterLast(
 export async function topLevelKeys(): Promise<string[]> {
   const database = db();
   const folders = await database.folders
-    .filter((f) => f.parentId === null && f.system !== "inbox" && f.deletedAt === null && !f.purged)
+    .filter((f) => f.parentId === null && f.system === null && f.deletedAt === null && !f.purged)
     .toArray();
   return [...folders.map((f) => f.sortKey), ...(await siblingKeys("notes", null))].sort();
 }
@@ -121,6 +121,51 @@ export async function createFolder(opts: {
   return folderId;
 }
 
+/**
+ * The folder of templates' id: the same on every device, so that two making
+ * it before either has heard of the other's make one folder, not two.
+ */
+export const TEMPLATES_FOLDER_ID = "templates";
+
+/**
+ * The folder whose notes are templates, made if this device has none
+ * (`made`). Kept at the top, below Inbox; like Inbox, never trashed,
+ * moved or locked.
+ */
+export async function ensureTemplatesFolder(): Promise<{ folderId: string; made: boolean }> {
+  const folderId = TEMPLATES_FOLDER_ID;
+  const existing = await db().folders.get(folderId);
+  if (existing && !existing.purged) return { folderId, made: false };
+  const { ts, device } = await now();
+  const name = "テンプレート";
+  const sortKey = "a0";
+  await db().folders.put({
+    folderId,
+    parentId: null,
+    name,
+    icon: null,
+    sortKey,
+    locked: false,
+    system: "templates",
+    deletedAt: null,
+    purged: false,
+    ts: { name: ts, place: ts, trash: zero(device), lock: zero(device) },
+    seq: 0,
+  });
+  await enqueue({
+    kind: "folder",
+    entityId: folderId,
+    payload: {
+      kind: "folder",
+      folderId,
+      create: { parentId: null, sortKey, system: "templates" },
+      name: { value: name, icon: null, ts },
+      place: { parentId: null, sortKey, ts },
+    },
+  });
+  return { folderId, made: true };
+}
+
 export async function renameFolder(folderId: string, name: string): Promise<void> {
   const database = db();
   const folder = await database.folders.get(folderId);
@@ -153,7 +198,7 @@ export async function moveFolder(
 ): Promise<void> {
   const database = db();
   const folder = await database.folders.get(folderId);
-  if (!folder || folder.system === "inbox") return;
+  if (!folder || folder.system !== null) return;
   const { ts } = await now();
   const key = sortKey ?? (await siblingKeyAfterLast("folders", parentId));
 
@@ -175,7 +220,7 @@ export async function setFolderTrashed(
 ): Promise<void> {
   const database = db();
   const folder = await database.folders.get(folderId);
-  if (!folder || folder.system === "inbox") return;
+  if (!folder || folder.system !== null) return;
   const { ts } = await now();
   const deletedAt = trashed ? Date.now() : null;
 

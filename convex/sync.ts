@@ -358,7 +358,7 @@ async function applyFolderOp(
     moved = true;
   }
   if (op.trash && isNewer(op.trash.ts, ts.trash)) {
-    if (existing.system === "inbox" && op.trash.deletedAt !== null) {
+    if (existing.system !== null && op.trash.deletedAt !== null) {
       return reject(op.opId, "systemFolder");
     }
     patch.deletedAt = op.trash.deletedAt;

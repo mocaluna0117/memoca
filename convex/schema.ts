@@ -108,8 +108,12 @@ export default defineSchema({
     icon: v.union(v.string(), v.null()),
     sortKey: v.string(),
     locked: v.boolean(),
-    /** "inbox" marks the undeletable quick-capture folder. */
-    system: v.union(v.literal("inbox"), v.null()),
+    /**
+     * "inbox" marks the undeletable quick-capture folder, "templates" the
+     * one whose notes are the templates new notes are made from. Neither is
+     * trashed or locked.
+     */
+    system: v.union(v.literal("inbox"), v.literal("templates"), v.null()),
     deletedAt: v.union(v.number(), v.null()),
     purged: v.boolean(),
     ts: folderStamps,

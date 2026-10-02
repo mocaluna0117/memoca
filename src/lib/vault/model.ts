@@ -18,7 +18,7 @@ export function lockCoverage(folders: Folder[]): Map<string, string> {
     seen.add(id);
     const folder = byId.get(id);
     if (!folder) return null;
-    const own = folder.locked && folder.system !== "inbox" ? folder.folderId : null;
+    const own = folder.locked && folder.system === null ? folder.folderId : null;
     const cover = own ?? (folder.parentId !== null ? resolve(folder.parentId, seen) : null);
     if (cover) coverage.set(id, cover);
     return cover;
@@ -98,5 +98,5 @@ export function planFolderUnlock(
 }
 
 export function canLockFolder(folder: Folder, coverage: Map<string, string>): boolean {
-  return folder.system !== "inbox" && folderLockKind(folder.folderId, coverage) === "none";
+  return folder.system === null && folderLockKind(folder.folderId, coverage) === "none";
 }

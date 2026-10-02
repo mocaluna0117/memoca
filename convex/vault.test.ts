@@ -232,7 +232,7 @@ describe("folder locks", () => {
     as: ReturnType<ReturnType<typeof setup>["withIdentity"]>,
     folderId: string,
     name: string,
-    system: "inbox" | null = null,
+    system: "inbox" | "templates" | null = null,
   ) {
     await as.mutation(api.sync.push, {
       deviceId: "device-1",
@@ -290,6 +290,30 @@ describe("folder locks", () => {
     expect(
       await as.mutation(api.vault.setFolderLock, { folderId: "inbox", locked: false, ts: stamp(2001) }),
     ).toEqual({ status: "ok" });
+  });
+
+  test("the templates folder cannot be locked, nor trashed, as Inbox cannot", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushFolder(as, "templates", "テンプレート", "templates");
+    expect((await folderRow(t, "templates"))?.system).toBe("templates");
+    expect(
+      await as.mutation(api.vault.setFolderLock, { folderId: "templates", locked: true, ts: stamp(2000) }),
+    ).toEqual({ status: "rejected", reason: "systemFolder" });
+    const pushed = await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [
+        {
+          kind: "folder",
+          opId: "op-trash-templates",
+          folderId: "templates",
+          trash: { deletedAt: 3000, ts: stamp(3000) },
+        },
+      ],
+    });
+    expect(JSON.stringify(pushed)).toContain("systemFolder");
+    expect((await folderRow(t, "templates"))?.deletedAt).toBeNull();
   });
 
   test("an older change arriving late loses", async () => {

@@ -15,6 +15,7 @@ import {
   Circle,
   FileInput,
   FilePlus2,
+  LayoutTemplate,
   ListChecks,
   Lock,
   Pin,
@@ -85,6 +86,9 @@ import { useLockActions } from "@/components/vault/use-lock-actions";
 import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
 import type { Note } from "@/lib/types";
 import { t } from "@/lib/i18n/ja";
+import { TemplatePicker } from "@/components/notes/template-picker";
+import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, fillFromTemplate } from "@/lib/templates";
+import { useWorkspace } from "@/lib/hooks/workspace";
 import { cn } from "@/lib/utils";
 
 function relativeDate(at: number): string {
@@ -462,6 +466,19 @@ export function NoteList({
     const id = await createNoteIn(folderId);
     if (id && pinnedOnly) await setNotePinned(id, true);
     return id;
+  };
+  const { openFolder } = useWorkspace();
+  const [picking, setPicking] = useState(false);
+  /** A new note here, as newNote makes one, with a template's title and body. */
+  const fromTemplate = async (templateId: string) => {
+    const id = await newNote();
+    if (!id) return;
+    onSelectNote(id);
+    try {
+      await fillFromTemplate(id, templateId);
+    } catch (error) {
+      toast.error(error instanceof TemplateUnavailableError ? t.templates.unavailable : "テンプレートを使えませんでした。");
+    }
   };
 
   // Notes chosen to be moved together: with ⌘/Ctrl (⌘ alone on a Mac,
@@ -1031,9 +1048,23 @@ export function NoteList({
             >
               <FilePlus2 className="size-4" aria-hidden />
             </Button>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={t.templates.fromTemplate}
+              onClick={() => setPicking(true)}
+            >
+              <LayoutTemplate className="size-4" aria-hidden />
+            </Button>
           </div>
         </div>
       )}
+      <TemplatePicker
+        open={picking}
+        onOpenChange={setPicking}
+        onPick={(templateId) => void fromTemplate(templateId)}
+        onEdit={() => openFolder(TEMPLATES_FOLDER_ID)}
+      />
 
       {notes.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">

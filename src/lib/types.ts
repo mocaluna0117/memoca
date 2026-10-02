@@ -28,7 +28,8 @@ export type Folder = {
   icon: string | null;
   sortKey: string;
   locked: boolean;
-  system: "inbox" | null;
+  /** Inbox, or the folder of templates (see lib/templates); null for any other. */
+  system: "inbox" | "templates" | null;
   deletedAt: number | null;
   purged: boolean;
   ts: FolderStamps;

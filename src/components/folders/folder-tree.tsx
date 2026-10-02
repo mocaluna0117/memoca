@@ -12,6 +12,7 @@ import {
   FolderOpen,
   FolderPlus,
   Inbox,
+  LayoutTemplate,
   Lock,
   Loader2,
   LockOpen,
@@ -87,7 +88,7 @@ const rowKey = (row: Row) => (row.kind === "folder" ? `f:${row.node.folderId}` :
 export function topLevelOrder(tree: FolderNode[], notes: Note[]): TopItem[] {
   const items: TopItem[] = [
     ...tree
-      .filter((node) => node.system !== "inbox")
+      .filter((node) => node.system === null)
       .map((node) => ({ kind: "folder" as const, node, key: node.sortKey })),
     ...notes.map((note) => ({ kind: "note" as const, note, key: note.sortKey })),
   ];
@@ -197,7 +198,7 @@ export function FolderTree({
     const anchorKey = "noteId" in target ? `n:${target.noteId}` : `f:${target.folderId}`;
     const anchorFolder = "folderId" in target ? findNode(tree, target.folderId) : null;
     if ("folderId" in target && !anchorFolder) return null;
-    if (anchorFolder?.system === "inbox") return null;
+    if (anchorFolder && anchorFolder.system !== null) return null;
     if (!anchorFolder || anchorFolder.parentId === null) {
       const items = top.filter((item) => rowKey(item) !== moving);
       const index = items.findIndex((item) => rowKey(item) === anchorKey);
@@ -207,7 +208,7 @@ export function FolderTree({
     // Not Inbox: it is shown first whatever its key, so it is not the one
     // before the first folder after it.
     const siblings = siblingsOf(tree, anchorFolder.folderId).filter(
-      (f) => `f:${f.folderId}` !== moving && f.system !== "inbox",
+      (f) => `f:${f.folderId}` !== moving && f.system === null,
     );
     const index = siblings.findIndex((f) => f.folderId === anchorFolder.folderId);
     const previous = index > 0 ? siblings[index - 1]!.sortKey : null;
@@ -313,9 +314,9 @@ export function FolderTree({
 
   // Inbox first, then the top level in order, each folder with what is open
   // inside it.
-  const inbox = tree.find((node) => node.system === "inbox");
+  const system = tree.filter((node) => node.system !== null);
   const rows: Row[] = [
-    ...(inbox ? flattenTree([inbox], expanded) : []).map((node) => ({ kind: "folder" as const, node })),
+    ...flattenTree(system, expanded).map((node) => ({ kind: "folder" as const, node })),
     ...top.flatMap((item): Row[] =>
       item.kind === "folder"
         ? flattenTree([item.node], expanded).map((node) => ({ kind: "folder" as const, node }))
@@ -361,7 +362,7 @@ export function FolderTree({
       else setEditingNote(row.note.noteId);
     } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
-      if (row.kind === "note" || row.node.system !== "inbox") {
+      if (row.kind === "note" || row.node.system === null) {
         void nudge(row, event.key === "ArrowUp" ? -1 : 1);
       }
     } else if (!event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
@@ -468,9 +469,10 @@ export function FolderTree({
           const { node } = row;
           const selected = selectedFolderId === node.folderId && selectedNoteId === null;
           const hasChildren = node.children.length > 0;
-          const isInbox = node.system === "inbox";
+          // Inbox and the folder of templates: kept where they are, never locked or trashed.
+          const isSystem = node.system !== null;
           const label = node.name ?? (node.nameSealed ? "ロックされたフォルダ" : null);
-          const lockKind = isInbox ? "none" : folderLockKind(node.folderId, coverage);
+          const lockKind = isSystem ? "none" : folderLockKind(node.folderId, coverage);
           const coverName =
             lockKind === "inherited"
               ? (findNode(tree, coverage.get(node.folderId)!)?.name ?? "ロックされたフォルダ")
@@ -522,7 +524,7 @@ export function FolderTree({
                   // Space and Enter taken by the button.
                   <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
                     <FolderGlyph
-                      inbox={isInbox}
+                      system={node.system}
                       lock={lockKind}
                       busy={busy.has(node.folderId)}
                       open={hasChildren && expanded.has(node.folderId)}
@@ -542,7 +544,7 @@ export function FolderTree({
                   <FolderDragButton
                     owner={owner}
                     folderId={node.folderId}
-                    disabled={!canDrag || isInbox}
+                    disabled={!canDrag || isSystem}
                     onClick={() => onSelect(node.folderId)}
                     // A locked folder's name is unreadable until the vault is
                     // open, and there is nothing to edit in a placeholder.
@@ -553,7 +555,7 @@ export function FolderTree({
                     {/* Every row carries a folder glyph. Without one, plain folders
                     were bare names and read no differently from notes. */}
                     <FolderGlyph
-                      inbox={isInbox}
+                      system={node.system}
                       lock={lockKind}
                       busy={busy.has(node.folderId)}
                       open={hasChildren && expanded.has(node.folderId)}
@@ -589,24 +591,27 @@ export function FolderTree({
                     portalContainer={menuContainer}
                     onCloseAutoFocus={onCloseAutoFocus}
                   >
-                    <DropdownMenuItem
-                      onSelect={async () => {
-                        const id = await createFolder({
-                          parentId: node.folderId,
-                          name: "新しいフォルダ",
-                        });
-                        setExpanded((c) => new Set(c).add(node.folderId));
-                        onCreated(id);
-                      }}
-                    >
-                      <FolderPlus className="size-4" aria-hidden />
-                      サブフォルダを追加
-                    </DropdownMenuItem>
+                    {/* Templates are its notes, not its folders'. */}
+                    {node.system === "templates" ? null : (
+                      <DropdownMenuItem
+                        onSelect={async () => {
+                          const id = await createFolder({
+                            parentId: node.folderId,
+                            name: "新しいフォルダ",
+                          });
+                          setExpanded((c) => new Set(c).add(node.folderId));
+                          onCreated(id);
+                        }}
+                      >
+                        <FolderPlus className="size-4" aria-hidden />
+                        サブフォルダを追加
+                      </DropdownMenuItem>
+                    )}
                     <DropdownMenuItem onSelect={() => openDialog(() => setRenaming(node))}>
                       <Pencil className="size-4" aria-hidden />
                       名前を変更
                     </DropdownMenuItem>
-                    {!isInbox ? (
+                    {!isSystem ? (
                       <DropdownMenuItem onSelect={() => openDialog(() => setMoving(node))}>
                         <FolderInput className="size-4" aria-hidden />
                         別のフォルダへ移動
@@ -614,7 +619,7 @@ export function FolderTree({
                     ) : null}
                     {/* Inbox is where quick notes land, so it is never locked:
                     every new note would have to wait for the vault. */}
-                    {isInbox ? null : busy.has(node.folderId) ? (
+                    {isSystem ? null : busy.has(node.folderId) ? (
                       <DropdownMenuItem disabled>
                         <Loader2 className="size-4 animate-spin" aria-hidden />
                         処理中…
@@ -646,7 +651,7 @@ export function FolderTree({
                         {node.locked ? "ロックを外す…" : "ロックする…"}
                       </DropdownMenuItem>
                     )}
-                    {!isInbox ? (
+                    {!isSystem ? (
                       <>
                         <DropdownMenuSeparator />
                         <DropdownMenuItem
@@ -729,22 +734,23 @@ export function FolderTree({
 }
 
 /**
- * The icon at the start of a folder row: Inbox, locked (its own lock, or a
+ * The icon at the start of a folder row: Inbox, the templates', locked (its own lock, or a
  * small lock for one inherited from a parent), in progress, open or closed.
  */
 function FolderGlyph({
-  inbox,
+  system,
   lock,
   busy = false,
   open,
 }: {
-  inbox: boolean;
+  system: FolderNode["system"];
   lock: FolderLockKind;
   busy?: boolean;
   open: boolean;
 }) {
   if (busy) return <Loader2 className="size-4 shrink-0 animate-spin opacity-70" aria-hidden />;
-  if (inbox) return <Inbox className="size-4 shrink-0 opacity-70" aria-hidden />;
+  if (system === "inbox") return <Inbox className="size-4 shrink-0 opacity-70" aria-hidden />;
+  if (system === "templates") return <LayoutTemplate className="size-4 shrink-0 opacity-70" aria-hidden />;
   if (lock === "own") return <FolderLock className="size-4 shrink-0 opacity-70" aria-hidden />;
   const Icon = open ? FolderOpen : FolderIcon;
   return (

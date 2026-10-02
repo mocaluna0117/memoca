@@ -12,6 +12,7 @@ import {
 import type { Folder, FolderNode, Note } from "@/lib/types";
 import { LOCKED_LABEL } from "@/lib/hooks/use-decrypted";
 import { noteName } from "@/lib/note-name";
+import { TEMPLATES_FOLDER_ID } from "@/lib/sync/mutations";
 
 const EMPTY: never[] = [];
 
@@ -62,7 +63,10 @@ export function useNotes(scope: NoteScope): Note[] {
   );
 
   return useMemo(() => {
-    const live = visibleNotes(notes, trashed);
+    // Templates are not notes of their own: only in their folder.
+    const live = visibleNotes(notes, trashed).filter(
+      (n) => scope.kind === "folder" || n.folderId !== TEMPLATES_FOLDER_ID,
+    );
     const filtered = scope.kind === "pinned" ? live.filter((n) => n.pinned) : live;
     return sortNotes(filtered);
   }, [notes, trashed, scope.kind]);
@@ -80,6 +84,22 @@ export function useTopLevelNotes(): Note[] {
     EMPTY as Note[],
   );
   return useMemo(() => notes.filter((note) => !note.purged && note.deletedAt === null), [notes]);
+}
+
+/** The templates, by their titles: the readable notes of the folder of them. */
+export function useTemplates(): Note[] {
+  const notes = useLiveQuery(
+    () => db().notes.where("folderId").equals(TEMPLATES_FOLDER_ID).toArray(),
+    [],
+    EMPTY as Note[],
+  );
+  return useMemo(
+    () =>
+      notes
+        .filter((note) => !note.locked && note.deletedAt === null && !note.purged)
+        .sort((a, b) => (a.title ?? "").localeCompare(b.title ?? "", "ja")),
+    [notes],
+  );
 }
 
 /** See {@link useFolder}: never return another note's row for this id. */

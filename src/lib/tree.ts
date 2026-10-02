@@ -74,10 +74,12 @@ export function buildTree(folders: Folder[]): FolderNode[] {
       });
 
   const roots = build(null, 0, new Set());
-  // The Inbox always sits at the top, whatever its sort key says.
+  // The Inbox always sits at the top, whatever its sort key says, and the
+  // templates' folder just below it.
   return [
     ...roots.filter((f) => f.system === "inbox"),
-    ...roots.filter((f) => f.system !== "inbox"),
+    ...roots.filter((f) => f.system === "templates"),
+    ...roots.filter((f) => f.system === null),
   ];
 }
 

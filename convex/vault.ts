@@ -585,8 +585,9 @@ export const setFolderLock = mutation({
       .unique();
     if (!folder || folder.purged) return { status: "rejected" as const, reason: "unknownFolder" };
     // Quick notes and shared text land in Inbox; locking it would make every
-    // new note wait for the vault.
-    if (args.locked && folder.system === "inbox") {
+    // new note wait for the vault. Templates are copied into notes that may
+    // not be locked, in plaintext.
+    if (args.locked && folder.system !== null) {
       return { status: "rejected" as const, reason: "systemFolder" };
     }
     // Last writer wins, as for every other field group. An older change

@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   FileDown,
   FolderInput,
+  LayoutTemplate,
   Lock,
   LockOpen,
   MoreHorizontal,
@@ -45,6 +46,8 @@ import { enterFromTitle } from "@/components/editor/title-enter";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 import { downloadBlockFile } from "@/components/editor/file-download-button";
+import { TEMPLATES_FOLDER_ID, saveAsTemplate } from "@/lib/templates";
+import { useWorkspace } from "@/lib/hooks/workspace";
 
 /** Long enough to coalesce typing, short enough not to feel unsaved. */
 const TITLE_DEBOUNCE_MS = 250;
@@ -105,6 +108,7 @@ export function NotePane({
   const menu = useMenuDialog();
   const menuTrigger = useRef<HTMLButtonElement>(null);
   const titleField = useRef<HTMLInputElement>(null);
+  const { navigate } = useWorkspace();
   const [exporting, setExporting] = useState(false);
   // The header's height, for an open toggle's line to stay just below it as
   // the page scrolls on a phone (--memoca-sticky-top, in globals.css).
@@ -329,7 +333,26 @@ export function NotePane({
               <FolderInput className="size-4" aria-hidden />
               {t.action.move}
             </DropdownMenuItem>
-            {coverName ? (
+            <DropdownMenuItem
+              disabled={hidden || note.locked || note.folderId === TEMPLATES_FOLDER_ID}
+              onSelect={async () => {
+                try {
+                  const templateId = await saveAsTemplate(noteId, name.untitled ? "" : name.text);
+                  toast.success(t.templates.saved, {
+                    action: {
+                      label: t.templates.open,
+                      onClick: () => navigate({ folderId: TEMPLATES_FOLDER_ID, noteId: templateId }),
+                    },
+                  });
+                } catch {
+                  toast.error(note.locked ? t.templates.lockedNote : "テンプレートとして保存できませんでした。");
+                }
+              }}
+            >
+              <LayoutTemplate className="size-4" aria-hidden />
+              {t.templates.saveAs}
+            </DropdownMenuItem>
+            {note.folderId === TEMPLATES_FOLDER_ID ? null : coverName ? (
               // Its folder's lock covers it: taking that off, or moving the
               // note out, is what unlocks it.
               <DropdownMenuItem disabled className="flex-col items-start gap-0.5">
