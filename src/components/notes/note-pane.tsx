@@ -2,6 +2,7 @@
 
 import {
   ArrowLeft,
+  FileDown,
   FolderInput,
   Lock,
   LockOpen,
@@ -43,6 +44,7 @@ import { useNotePlace } from "@/components/notes/use-note-place";
 import { enterFromTitle } from "@/components/editor/title-enter";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
+import { downloadBlockFile } from "@/components/editor/file-download-button";
 
 /** Long enough to coalesce typing, short enough not to feel unsaved. */
 const TITLE_DEBOUNCE_MS = 250;
@@ -102,6 +104,8 @@ export function NotePane({
   const coverage = useMemo(() => lockCoverage(folders), [folders]);
   const menu = useMenuDialog();
   const menuTrigger = useRef<HTMLButtonElement>(null);
+  const titleField = useRef<HTMLInputElement>(null);
+  const [exporting, setExporting] = useState(false);
   // The header's height, for an open toggle's line to stay just below it as
   // the page scrolls on a phone (--memoca-sticky-top, in globals.css).
   // Watched from when it is shown: not while the note is still loading.
@@ -240,6 +244,24 @@ export function NotePane({
   };
 
   const hidden = note.locked && !unlocked;
+
+  /** Saves the note as a PDF, as it looks (see noteToPdf), under its name. */
+  const exportPdf = async () => {
+    const editor = body.current?.querySelector<HTMLElement>(".memoca-editor");
+    if (!editor || exporting) return;
+    setExporting(true);
+    try {
+      const { noteToPdf } = await import("@/lib/export/note-pdf");
+      const pdf = await noteToPdf({ body: editor, titleField: titleField.current, title: name.text });
+      const url = URL.createObjectURL(pdf);
+      await downloadBlockFile({}, url, `${name.text}.pdf`);
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch {
+      toast.error(t.exportPdf.failed);
+    } finally {
+      setExporting(false);
+    }
+  };
   // In a locked folder but not yet encrypted: typing more would only add
   // plaintext, so it is read-only until the lock goes on.
   const pendingLock = needsLock(note, coverage);
@@ -277,6 +299,7 @@ export function NotePane({
           }}
           placeholder="タイトル"
           aria-label="メモのタイトル"
+          ref={titleField}
           className="h-9 flex-1 border-0 bg-transparent px-2 text-base font-medium shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
 
@@ -331,6 +354,13 @@ export function NotePane({
                 {note.locked ? t.action.unlock : t.action.lock}
               </DropdownMenuItem>
             )}
+            <DropdownMenuItem
+              disabled={hidden || exporting}
+              onSelect={() => menu.openDialog(() => void exportPdf())}
+            >
+              <FileDown className="size-4" aria-hidden />
+              {t.exportPdf.action}
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"

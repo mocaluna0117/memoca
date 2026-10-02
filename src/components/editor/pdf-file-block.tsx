@@ -19,6 +19,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { db } from "@/lib/db";
 import { t } from "@/lib/i18n/ja";
 import { idFromRef, loadAttachmentBlob } from "@/lib/media/attachments";
+import { EXPORT_EVENT } from "@/lib/export/note-pdf";
 import { aspectOf, closePdf, drawPage, openPdf, wasCancelled } from "@/lib/media/pdf";
 
 type FileProps = Omit<ReactCustomBlockRenderProps<typeof createFileBlockConfig>, "contentRef">;
@@ -88,7 +89,15 @@ function PdfCard({ attachmentId, file }: { attachmentId: string; file: FileProps
   const [loaded, setLoaded] = useState<Loaded>({ kind: "waiting" });
   const [width, setWidth] = useState(0);
   const [viewing, setViewing] = useState(false);
+  const [drawn, setDrawn] = useState(false);
   const { name } = file.block.props;
+
+  // A note being made a PDF draws every PDF in it, near the screen or not.
+  useEffect(() => {
+    const now = () => setNear(true);
+    window.addEventListener(EXPORT_EVENT, now);
+    return () => window.removeEventListener(EXPORT_EVENT, now);
+  }, []);
 
   useEffect(() => {
     const element = root.current;
@@ -145,9 +154,12 @@ function PdfCard({ attachmentId, file }: { attachmentId: string; file: FileProps
     void loaded.doc.getPage(1).then((page) => {
       if (cancelled || !canvas.current) return;
       task = drawPage(page, canvas.current, width);
-      task.promise.catch((error: unknown) => {
-        if (!wasCancelled(error)) setLoaded({ kind: "none" });
-      });
+      task.promise.then(
+        () => setDrawn(true),
+        (error: unknown) => {
+          if (!wasCancelled(error)) setLoaded({ kind: "none" });
+        },
+      );
     });
     return () => {
       cancelled = true;
@@ -166,6 +178,7 @@ function PdfCard({ attachmentId, file }: { attachmentId: string; file: FileProps
       className="memoca-pdf border-border bg-card flex w-full flex-col overflow-hidden rounded-lg border"
       style={{ maxWidth: CARD_WIDTH }}
       data-pages={pages ?? undefined}
+      data-drawn={drawn ? "true" : undefined}
     >
       <div className="relative w-full overflow-hidden bg-white" style={{ aspectRatio: `1 / ${aspect}` }}>
         {loaded.kind === "ready" ? (

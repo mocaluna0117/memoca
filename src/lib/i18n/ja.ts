@@ -147,6 +147,10 @@ export const ja = {
     runFailed: "途中でうまくいかなくなりました。もう一度押すと、残りを変換します。",
     note: "画像は、いま追加したときと同じ画質（WebP）で保存し直します。元の画像は 1 週間ほどで削除され、戻せません。",
   },
+  exportPdf: {
+    action: "PDF で書き出す",
+    failed: "PDF を作れませんでした。もう一度お試しください。",
+  },
   pdf: {
     pages: (count: number) => `${count} ページ`,
     open: "開く",
