@@ -118,6 +118,40 @@ test.describe("notes kept in the sidebar, in no folder", () => {
     await expect(listRow).toHaveCount(0);
   });
 
+  test("renamed as a folder is: Enter on its row, or its menu, and its title is the new name", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await addSidebarNote(page, "旧い名前");
+
+    // In place: focused, Enter, typed, Enter.
+    let panel = await folderPanel(page);
+    await sidebarNote(panel, "旧い名前").focus();
+    await page.keyboard.press("Enter");
+    const field = panel.getByRole("textbox", { name: "メモの名前" });
+    await expect(field).toHaveValue("旧い名前");
+    await field.fill("新しい名前");
+    await page.keyboard.press("Enter");
+    await expect(sidebarNote(panel, "新しい名前")).toBeVisible();
+    // Focus back on the row, as after a folder's.
+    await expect(sidebarNote(panel, "新しい名前")).toBeFocused();
+    // It is the note's own title: its header says so too.
+    await sidebarNote(panel, "新しい名前").click();
+    await hideFolders(page);
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("新しい名前");
+
+    // From its menu, in the dialog.
+    panel = await folderPanel(page);
+    await panel.getByRole("button", { name: "新しい名前 の操作" }).click();
+    await page.getByRole("menuitem", { name: "名前を変更" }).click();
+    const dialog = page.getByRole("dialog", { name: "メモの名前を変更" });
+    await dialog.getByRole("textbox").fill("三つ目の名前");
+    await dialog.getByRole("button", { name: "保存" }).click();
+    panel = await folderPanel(page);
+    await sidebarNote(panel, "三つ目の名前").click();
+    await hideFolders(page);
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("三つ目の名前");
+  });
+
   test("on a phone, one is opened from the folders, which close", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "mobile", "a phone's folder drawer");
     await signUp(page);

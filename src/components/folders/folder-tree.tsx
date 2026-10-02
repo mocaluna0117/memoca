@@ -32,7 +32,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useFolderTree, useTopLevelNotes } from "@/lib/hooks/data";
-import { useNoteTitle } from "@/lib/hooks/use-decrypted";
+import { useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
 import { t } from "@/lib/i18n/ja";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
@@ -48,6 +48,7 @@ import {
   moveFolder,
   moveNote,
   renameFolder,
+  renameNote,
   setFolderTrashed,
   setNotePinned,
   setNoteTrashed,
@@ -121,6 +122,10 @@ export function FolderTree({
   const top = useMemo(() => topLevelOrder(tree, topNotes), [tree, topNotes]);
   const { moveNoteTo } = useLockActions();
   const [movingNote, setMovingNote] = useState<Note | null>(null);
+  // A note kept in the sidebar being renamed: in place (Enter), or in the
+  // dialog its menu opens, as a folder is.
+  const [editingNote, setEditingNote] = useState<string | null>(null);
+  const [renamingNote, setRenamingNote] = useState<{ noteId: string; title: string } | null>(null);
   const { toggleFolderLock, moveFolderTo } = useLockActions();
   const busy = useLockProgress((s) => s.busy);
   // Which lock covers each folder, its own or a parent's.
@@ -148,12 +153,12 @@ export function FolderTree({
   };
   useEffect(() => {
     const key = refocus.current;
-    if (!key || editing !== null) return;
+    if (!key || editing !== null || editingNote !== null) return;
     const row = rowElement(key);
     if (!row) return;
     refocus.current = null;
     row.focus();
-  }, [tree, topNotes, editing]);
+  }, [tree, topNotes, editing, editingNote]);
 
   const { openDialog, onCloseAutoFocus } = useMenuDialog();
 
@@ -348,10 +353,12 @@ export function FolderTree({
 
   const onRowKeyDown = (event: KeyboardEvent<HTMLButtonElement>, row: Row, renamable: boolean) => {
     if (event.nativeEvent.isComposing) return;
-    if (event.key === "Enter" && renamable && row.kind === "folder") {
-      // Stops the button's own Enter, which would open the folder instead.
+    if (event.key === "Enter" && renamable) {
+      // Stops the button's own Enter, which would open the folder (or the
+      // note) instead.
       event.preventDefault();
-      setEditing(row.node.folderId);
+      if (row.kind === "folder") setEditing(row.node.folderId);
+      else setEditingNote(row.note.noteId);
     } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
       if (row.kind === "note" || row.node.system !== "inbox") {
@@ -438,7 +445,14 @@ export function FolderTree({
                 menuContainer={menuContainer}
                 onCloseAutoFocus={onCloseAutoFocus}
                 onOpen={() => onOpenNote(note.noteId)}
-                onKeyDown={(event) => onRowKeyDown(event, row, false)}
+                onKeyDown={(event, renamable) => onRowKeyDown(event, row, renamable)}
+                editing={editingNote === note.noteId}
+                onRename={(value) => renameNote(note.noteId, value)}
+                onRenamed={(byKeyboard) => {
+                  if (byKeyboard) refocus.current = rowKey(row);
+                  setEditingNote(null);
+                }}
+                onRenameInDialog={(title) => openDialog(() => setRenamingNote({ noteId: note.noteId, title }))}
                 onMove={() => openDialog(() => setMovingNote(note))}
                 onTrashed={() => {
                   if (selectedNoteId === note.noteId) onOpenNote(null);
@@ -684,6 +698,17 @@ export function FolderTree({
         />
 
         <RenameDialog
+          open={renamingNote !== null}
+          title="メモの名前を変更"
+          initialValue={renamingNote?.title ?? ""}
+          onOpenChange={(open) => !open && setRenamingNote(null)}
+          onSubmit={async (value) => {
+            if (renamingNote) await renameNote(renamingNote.noteId, value);
+            setRenamingNote(null);
+          }}
+        />
+
+        <RenameDialog
           open={renaming !== null}
           title="フォルダ名を変更"
           initialValue={renaming?.name ?? ""}
@@ -733,9 +758,11 @@ function allNodes(nodes: FolderNode[]): FolderNode[] {
 }
 
 /**
- * A note kept in the sidebar, at the top level: opened by a click (Space or
- * Enter from the keys), dragged among the folders or into one, with a menu
- * of its own.
+ * A note kept in the sidebar, at the top level: opened by a click (Space
+ * from the keys), renamed in place by Enter or from its menu, as a folder
+ * is, dragged among the folders or into one. Its name is its title: renamed
+ * here, the note's own title is. Not while its title cannot be read (a
+ * locked note, the vault closed).
  */
 function TreeNoteRow({
   owner,
@@ -747,6 +774,10 @@ function TreeNoteRow({
   onCloseAutoFocus,
   onOpen,
   onKeyDown,
+  editing,
+  onRename,
+  onRenamed,
+  onRenameInDialog,
   onMove,
   onTrashed,
 }: {
@@ -758,11 +789,19 @@ function TreeNoteRow({
   menuContainer?: HTMLElement | null;
   onCloseAutoFocus: (event: Event) => void;
   onOpen: () => void;
-  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>, renamable: boolean) => void;
+  editing: boolean;
+  onRename: (value: string) => Promise<void> | void;
+  onRenamed: (byKeyboard: boolean) => void;
+  onRenameInDialog: (title: string) => void;
   onMove: () => void;
   onTrashed: () => void;
 }) {
   const title = useNoteTitle(note);
+  const unlocked = useVaultUnlocked();
+  const renamable = !note.locked || unlocked;
+  // Its own title, to be changed: none (無題) is an empty one.
+  const current = note.locked ? title : (note.title ?? "");
   const name = noteName(title, note.locked ? null : note.preview);
   const Icon = note.locked ? FileLock : FileText;
   return (
@@ -776,19 +815,34 @@ function TreeNoteRow({
       >
         {/* Where a folder's chevron is, so names line up. */}
         <span className="size-5 shrink-0" aria-hidden />
-        <NoteDragButton
-          owner={owner}
-          noteId={note.noteId}
-          disabled={!canDrag}
-          onClick={onOpen}
-          onKeyDown={onKeyDown}
-          describedBy={describedBy}
-          className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left outline-none"
-        >
-          <Icon className="size-4 shrink-0 opacity-70" aria-hidden />
-          <span className={cn("truncate", name.standIn && STAND_IN_CLASS)}>{name.text}</span>
-          <span className="sr-only">（メモ{note.locked ? "、ロック中" : ""}）</span>
-        </NoteDragButton>
+        {editing ? (
+          // Not inside the button: a field in a button would have its Space
+          // and Enter taken by the button.
+          <div className="flex min-w-0 flex-1 items-center gap-2 py-1">
+            <Icon className="size-4 shrink-0 opacity-70" aria-hidden />
+            <InlineRename
+              initialValue={current}
+              label="メモの名前"
+              className="h-6"
+              onSubmit={onRename}
+              onDone={onRenamed}
+            />
+          </div>
+        ) : (
+          <NoteDragButton
+            owner={owner}
+            noteId={note.noteId}
+            disabled={!canDrag}
+            onClick={onOpen}
+            onKeyDown={(event) => onKeyDown(event, renamable)}
+            describedBy={describedBy}
+            className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left outline-none"
+          >
+            <Icon className="size-4 shrink-0 opacity-70" aria-hidden />
+            <span className={cn("truncate", name.standIn && STAND_IN_CLASS)}>{name.text}</span>
+            <span className="sr-only">（メモ{note.locked ? "、ロック中" : ""}）</span>
+          </NoteDragButton>
+        )}
         <DropdownMenu modal={false}>
           <DropdownMenuTrigger asChild>
             <Button
@@ -810,6 +864,12 @@ function TreeNoteRow({
               {note.pinned ? <PinOff className="size-4" aria-hidden /> : <Pin className="size-4" aria-hidden />}
               {note.pinned ? t.action.unpin : t.action.pin}
             </DropdownMenuItem>
+            {renamable ? (
+              <DropdownMenuItem onSelect={() => onRenameInDialog(current)}>
+                <Pencil className="size-4" aria-hidden />
+                名前を変更
+              </DropdownMenuItem>
+            ) : null}
             <DropdownMenuItem onSelect={onMove}>
               <FolderInput className="size-4" aria-hidden />
               {t.action.move}
