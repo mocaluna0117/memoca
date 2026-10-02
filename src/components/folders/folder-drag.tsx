@@ -1,6 +1,6 @@
 "use client";
 
-import { useDraggable, useDroppable } from "@dnd-kit/core";
+import { useDndContext, useDraggable, useDroppable } from "@dnd-kit/core";
 import type { KeyboardEvent, ReactNode } from "react";
 import type { DragData } from "@/components/shell/workspace-dnd";
 import { cn } from "@/lib/utils";
@@ -124,8 +124,13 @@ export function FolderDragButton({
   );
 }
 
-/** Drop target for moving a folder back out to the top level. */
-export function RootDropZone({ owner, active }: { owner: string; active: boolean }) {
+/**
+ * Drop target for moving a folder back out to the top level, or a note to
+ * it (into the sidebar, in no folder): shown while anything is dragged, a
+ * note from the list included.
+ */
+export function RootDropZone({ owner }: { owner: string }) {
+  const { active } = useDndContext();
   const { setNodeRef: setRootRef, isOver } = useDroppable({
     id: `${owner}/root`,
     data: { owner, kind: "root" } satisfies DragData,
@@ -141,5 +146,88 @@ export function RootDropZone({ owner, active }: { owner: string; active: boolean
     >
       いちばん上の階層へ移動
     </div>
+  );
+}
+
+/**
+ * A note's row in the sidebar (one at the top level, in no folder): the
+ * strip above it, to put what is dragged before it, round the row.
+ */
+export function NoteRowDropZone({
+  owner,
+  noteId,
+  disabled,
+  children,
+}: {
+  owner: string;
+  noteId: string;
+  disabled: boolean;
+  children: ReactNode;
+}) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: `${owner}/beforeNote/${noteId}`,
+    data: { owner, kind: "beforeNote", noteId } satisfies DragData,
+    disabled,
+  });
+  return (
+    <div className="relative">
+      <div
+        ref={setNodeRef}
+        className={cn(
+          "absolute inset-x-0 -top-1 z-10 h-2",
+          isOver &&
+            "before:bg-primary before:absolute before:inset-x-0 before:top-1 before:h-0.5 before:rounded-full",
+        )}
+        aria-hidden
+      />
+      {children}
+    </div>
+  );
+}
+
+/** A note's own button in the sidebar, which is also what you drag it by (see FolderDragButton). */
+export function NoteDragButton({
+  owner,
+  noteId,
+  disabled,
+  onClick,
+  onKeyDown,
+  describedBy,
+  className,
+  children,
+}: {
+  owner: string;
+  noteId: string;
+  disabled: boolean;
+  onClick: () => void;
+  onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  describedBy?: string;
+  className?: string;
+  children: ReactNode;
+}) {
+  const { listeners, setNodeRef, isDragging } = useDraggable({
+    id: `${owner}/note/${noteId}`,
+    data: { owner, kind: "note", noteId } satisfies DragData,
+    disabled,
+  });
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      data-tree-note={noteId}
+      aria-describedby={describedBy}
+      className={cn(className, isDragging && "opacity-40")}
+      {...listeners}
+      onClick={(event) => {
+        event.currentTarget.focus();
+        onClick();
+      }}
+      onKeyDown={(event) => {
+        onKeyDown?.(event);
+        if (!event.defaultPrevented) listeners?.onKeyDown?.(event);
+      }}
+    >
+      {children}
+    </button>
   );
 }

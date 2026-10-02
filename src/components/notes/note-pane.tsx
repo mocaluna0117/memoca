@@ -430,6 +430,7 @@ export function NotePane({
       <FolderPicker
         open={moving}
         onOpenChange={setMoving}
+        rootLabel={t.action.topLevel}
         onPick={(folderId) => moveNoteTo(note, folderId, menuTrigger.current)}
       />
     </div>

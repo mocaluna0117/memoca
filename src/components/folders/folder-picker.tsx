@@ -36,9 +36,8 @@ export function FolderPicker({
   /** Hidden from the list, along with everything inside it. */
   excludeSubtreeOf,
   /**
-   * Offers "no parent" as a destination, under this label. Right for moving a
-   * folder to the top level; left unset for notes, because a note with no
-   * folder belongs in Inbox, which is already in the list.
+   * Offers "no parent" as a destination, under this label: the top level,
+   * for a folder, or for a note, kept in the sidebar in no folder.
    */
   rootLabel,
   title = t.action.move,

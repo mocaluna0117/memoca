@@ -31,7 +31,7 @@ const ShellContext = createContext<ShellContextValue>({ openDrawer: () => {} });
 export const useShell = () => useContext(ShellContext);
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { selection, openFolder, openPinned } = useWorkspace();
+  const { selection, navigate, openFolder, openPinned } = useWorkspace();
   const drawer = useDrawerSwipe();
   const [sidebarWidth] = usePaneWidth(SIDEBAR);
   const { show: showDrawer, hide: hideDrawer, areaRef, pageRef, barRef } = drawer;
@@ -51,6 +51,17 @@ export function AppShell({ children }: { children: ReactNode }) {
     openPinned();
     hideDrawer();
   }, [openPinned, hideDrawer]);
+
+  // A note kept in the sidebar opens over every note's list, as it is in
+  // no folder; null closes the one open.
+  const openNoteHere = useCallback(
+    (noteId: string | null) => {
+      if (noteId === null) navigate({ noteId: null });
+      else navigate({ folderId: null, pinned: false, noteId });
+      hideDrawer();
+    },
+    [navigate, hideDrawer],
+  );
 
   const selectWithoutClosing = useCallback(
     (folderId: string) => openFolder(folderId),
@@ -79,6 +90,8 @@ export function AppShell({ children }: { children: ReactNode }) {
               onSelectFolder={select}
               pinnedSelected={selection.pinned}
               onSelectPinned={selectPinned}
+              selectedNoteId={selection.noteId}
+              onOpenNote={openNoteHere}
             />
           </div>
           <PaneResizer pane={SIDEBAR} label="サイドバーの幅" />
@@ -91,6 +104,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             pinnedSelected={selection.pinned}
             onSelectPinned={selectPinned}
             onCreatedFolder={selectWithoutClosing}
+            selectedNoteId={selection.noteId}
+            onOpenNote={openNoteHere}
             onNavigate={hideDrawer}
             onClose={hideDrawer}
             menuContainer={drawerElement}

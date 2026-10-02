@@ -758,6 +758,11 @@ export function NoteList({
       void moveTo(dragged(active), target.folderId);
       return;
     }
+    // Into the sidebar, in no folder.
+    if (target?.kind === "root") {
+      void moveTo(dragged(active), null);
+      return;
+    }
     // A finger held on it and let go without moving it: its menu, as a long
     // press anywhere else gives.
     if (activatorEvent && "touches" in activatorEvent && Math.hypot(delta.x, delta.y) < 8) {
@@ -784,7 +789,10 @@ export function NoteList({
         pointerWithin({
           ...args,
           droppableContainers: args.droppableContainers.filter(
-            (container) => dragData(container)?.kind === "into",
+            (container) => {
+              const kind = dragData(container)?.kind;
+              return kind === "into" || kind === "root";
+            },
           ),
         }),
         args,
@@ -829,12 +837,15 @@ export function NoteList({
       },
       onDragOver: ({ over }) => {
         if (!over) return undefined;
-        return dragData(over)?.kind === "into"
+        const kind = dragData(over)?.kind;
+        if (kind === "root") return "いちばん上の階層の上です。";
+        return kind === "into"
           ? "フォルダの上です。"
           : `${nameOf(over.id)}の位置です。`;
       },
       onDragEnd: ({ active, over }) =>
         dragData(over)?.kind === "into" ||
+        dragData(over)?.kind === "root" ||
         (dragged(active).length === 1 && dropOf(active.id, over?.id))
           ? "移動しました。"
           : "移動をやめました。",
@@ -1093,6 +1104,7 @@ export function NoteList({
       <FolderPicker
         open={moving !== null}
         title={moving && moving.length > 1 ? `${moving.length} 件のメモを移動` : "メモを移動"}
+        rootLabel={t.action.topLevel}
         onOpenChange={(open) => !open && setMoving(null)}
         // Back to the row it was opened for (its menu item is gone), or, if
         // that has gone, to where focus goes once rows have (see refocusAt).

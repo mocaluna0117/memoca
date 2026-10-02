@@ -36,9 +36,11 @@ export type DragData =
   | { owner: string; kind: "note"; noteId: string }
   /** A folder's row, to drop into it: a note, or another folder. */
   | { owner: string; kind: "into"; folderId: string }
-  /** The strip above a folder's row, to put a folder before it. */
+  /** The strip above a folder's row, to put a folder (or a note) before it. */
   | { owner: string; kind: "before"; folderId: string }
-  /** Where a folder goes back to the top level. */
+  /** The strip above a note's row in the sidebar, to put a folder or a note before it. */
+  | { owner: string; kind: "beforeNote"; noteId: string }
+  /** Where a folder, or a note, goes to the top level. */
   | { owner: string; kind: "root" };
 
 /** What a drag's owner does with it: where it can go, and what a drop there does. */

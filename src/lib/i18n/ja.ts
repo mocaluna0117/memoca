@@ -27,6 +27,9 @@ export const ja = {
     // Not "新しいフォルダ": that is also the name a fresh folder is given, so the
     // button and the folder it creates read identically.
     addFolder: "フォルダを追加",
+    addNote: "メモを追加",
+    /** Where a note goes to be kept in the sidebar, in no folder. */
+    topLevel: "いちばん上の階層（サイドバー）",
     rename: "名前を変更",
     move: "移動",
     delete: "削除",

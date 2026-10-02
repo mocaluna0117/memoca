@@ -23,12 +23,30 @@ async function now(): Promise<{ ts: Stamp; device: string }> {
 
 const zero = (d: string): Stamp => ({ t: 0, d });
 
-/** A key after every sibling's: where a folder made in a folder, or moved into one, goes. */
+/**
+ * A key after every sibling's: where a folder made in a folder, or moved
+ * into one, goes. At the top level, folders and the notes kept there (in
+ * the sidebar, in no folder) are one order, so after both.
+ */
 async function siblingKeyAfterLast(
   kind: "folders" | "notes",
   parent: string | null,
 ): Promise<string> {
-  return between((await siblingKeys(kind, parent)).at(-1) ?? null, null);
+  const keys = parent === null ? await topLevelKeys() : await siblingKeys(kind, parent);
+  return between(keys.at(-1) ?? null, null);
+}
+
+/**
+ * The sort keys of everything at the top level, in order: the folders (but
+ * Inbox, which is shown first whatever its key) and the notes in no folder,
+ * which the sidebar shows among them.
+ */
+export async function topLevelKeys(): Promise<string[]> {
+  const database = db();
+  const folders = await database.folders
+    .filter((f) => f.parentId === null && f.system !== "inbox" && f.deletedAt === null && !f.purged)
+    .toArray();
+  return [...folders.map((f) => f.sortKey), ...(await siblingKeys("notes", null))].sort();
 }
 
 /**
@@ -206,23 +224,6 @@ export async function inboxFolderId(): Promise<string | null> {
   return inbox && !inbox.purged ? inbox.folderId : null;
 }
 
-/**
- * Files every note that has no folder into Inbox.
- *
- * Catches notes written before Inbox became the default, and any that arrive
- * from a device still running an older version. Uses the ordinary move, so the
- * change syncs like any other and two devices doing it at once simply agree.
- */
-export async function adoptFolderlessNotes(): Promise<number> {
-  const inbox = await inboxFolderId();
-  if (!inbox) return 0;
-  const orphans = await db()
-    .notes.filter((note) => note.folderId === null && !note.purged)
-    .toArray();
-  for (const note of orphans) await moveNote(note.noteId, inbox);
-  return orphans.length;
-}
-
 /* ---------------------------------------------------------------- notes */
 
 /**
@@ -236,13 +237,18 @@ export async function createNote(opts: {
   folderId: string | null;
   title?: string;
   kind?: "note" | "quick";
+  /**
+   * Kept at the top level, in no folder: shown in the sidebar among the
+   * folders, after the last of them. Otherwise no folder chosen means Inbox
+   * (or, on a device that has not received its Inbox yet, the top level).
+   */
+  topLevel?: boolean;
 }): Promise<string> {
   const { ts, device } = await now();
   const noteId = uuidv7();
-  // No folder chosen means Inbox. Null survives only on a device that has not
-  // received its Inbox yet, and adoptFolderlessNotes files it once it has.
-  const folderId = opts.folderId ?? (await inboxFolderId());
-  const sortKey = await siblingKeyBeforeFirst(folderId);
+  const folderId = opts.topLevel ? null : (opts.folderId ?? (await inboxFolderId()));
+  const sortKey =
+    folderId === null ? await siblingKeyAfterLast("notes", null) : await siblingKeyBeforeFirst(folderId);
   const kind = opts.kind ?? "note";
   const title = opts.title ?? "";
 
@@ -420,10 +426,12 @@ export async function moveNote(
   const database = db();
   const note = await database.notes.get(noteId);
   if (!note) return;
-  const target = folderId ?? (await inboxFolderId());
+  // No folder: the top level, in the sidebar, after what is there.
+  const target = folderId;
   if (note.folderId === target && sortKey === undefined) return;
   const { ts } = await now();
-  const key = sortKey ?? (await siblingKeyBeforeFirst(target));
+  const key =
+    sortKey ?? (target === null ? await siblingKeyAfterLast("notes", null) : await siblingKeyBeforeFirst(target));
 
   await database.notes.update(noteId, {
     folderId: target,

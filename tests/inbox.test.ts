@@ -2,13 +2,13 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, test } from "vitest";
 import { db, resetLocalData } from "@/lib/db";
 import {
-  adoptFolderlessNotes,
   createFolder,
   createNote,
   inboxFolderId,
   moveNote,
   setFolderTrashed,
   setNoteTrashed,
+  topLevelKeys,
 } from "@/lib/sync/mutations";
 import { seedInbox } from "./helpers/seed";
 
@@ -41,39 +41,36 @@ describe("Inbox is the home for unfiled notes", () => {
     expect((await db().notes.get(noteId))?.folderId).toBe(folderId);
   });
 
-  test("moving a note to no folder files it in Inbox", async () => {
-    const inbox = await seedInbox();
+  test("moving a note to no folder keeps it at the top level, after what is there", async () => {
+    await seedInbox();
     const folderId = await createFolder({ parentId: null, name: "仕事" });
     const noteId = await createNote({ folderId });
     await moveNote(noteId, null);
-    expect((await db().notes.get(noteId))?.folderId).toBe(inbox);
+    const note = (await db().notes.get(noteId))!;
+    expect(note.folderId).toBeNull();
+    const folder = (await db().folders.get(folderId))!;
+    expect(note.sortKey > folder.sortKey).toBe(true);
+    expect((await placeOps(noteId)).at(-1)?.folderId).toBeNull();
   });
 
-  test("before Inbox has synced, a new note waits with no folder", async () => {
+  test("a note made at the top level stays there, among the folders, after the last", async () => {
+    await seedInbox();
+    const first = await createFolder({ parentId: null, name: "仕事" });
+    const noteId = await createNote({ folderId: null, topLevel: true });
+    const later = await createFolder({ parentId: null, name: "趣味" });
+    const note = (await db().notes.get(noteId))!;
+    expect(note.folderId).toBeNull();
+    expect(note.sortKey > (await db().folders.get(first))!.sortKey).toBe(true);
+    // A folder made after it goes after it too: one order.
+    expect((await db().folders.get(later))!.sortKey > note.sortKey).toBe(true);
+    expect((await topLevelKeys()).length).toBe(3);
+  });
+
+  test("before Inbox has synced, a new note is kept at the top level, where it is seen", async () => {
     // A fresh device offline on first launch has no Inbox yet. The note must
-    // still be created, and is filed as soon as Inbox arrives.
+    // still be created, and is shown in the sidebar until it is moved.
     const noteId = await createNote({ folderId: null });
     expect((await db().notes.get(noteId))?.folderId).toBeNull();
-
-    const inbox = await seedInbox();
-    expect(await adoptFolderlessNotes()).toBe(1);
-    expect((await db().notes.get(noteId))?.folderId).toBe(inbox);
-  });
-
-  test("existing folderless notes are filed, and only those", async () => {
-    const inbox = await seedInbox();
-    const folderId = await createFolder({ parentId: null, name: "仕事" });
-    const filed = await createNote({ folderId });
-    // Written by an older version, which left notes with no folder.
-    const orphan = "orphan";
-    const template = (await db().notes.get(filed))!;
-    await db().notes.put({ ...template, noteId: orphan, folderId: null });
-
-    expect(await adoptFolderlessNotes()).toBe(1);
-    expect((await db().notes.get(orphan))?.folderId).toBe(inbox);
-    expect((await db().notes.get(filed))?.folderId).toBe(folderId);
-    // A second pass finds nothing left to do.
-    expect(await adoptFolderlessNotes()).toBe(0);
   });
 
   test("restoring a note whose folder is still trashed brings it to Inbox", async () => {
@@ -94,10 +91,15 @@ describe("Inbox is the home for unfiled notes", () => {
   });
 
   test("moving a note where it already is queues nothing", async () => {
-    await seedInbox();
+    const inbox = await seedInbox();
     const noteId = await createNote({ folderId: null });
     const before = (await placeOps(noteId)).length;
-    await moveNote(noteId, null);
+    await moveNote(noteId, inbox);
     expect((await placeOps(noteId)).length).toBe(before);
+    // Nor one at the top level moved to the top level.
+    const top = await createNote({ folderId: null, topLevel: true });
+    const already = (await placeOps(top)).length;
+    await moveNote(top, null);
+    expect((await placeOps(top)).length).toBe(already);
   });
 });

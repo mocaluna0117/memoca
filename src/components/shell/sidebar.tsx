@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   FileText,
+  FilePlus,
   FolderPlus,
   Megaphone,
   Pin,
@@ -26,7 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUnreadNews } from "@/lib/hooks/use-news";
-import { createFolder } from "@/lib/sync/mutations";
+import { createFolder, createNote } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
 
@@ -38,6 +39,9 @@ type Props = {
   onSelectPinned: () => void;
   /** Selects a freshly created folder without dismissing the panel. */
   onCreatedFolder?: (folderId: string) => void;
+  /** The note open, and how one kept in the sidebar is opened (null: closed). */
+  selectedNoteId?: string | null;
+  onOpenNote?: (noteId: string | null) => void;
   onNavigate?: () => void;
   /** Shows a close control in the header; set only inside the mobile drawer. */
   onClose?: () => void;
@@ -51,6 +55,8 @@ export function Sidebar({
   pinnedSelected,
   onSelectPinned,
   onCreatedFolder,
+  selectedNoteId = null,
+  onOpenNote,
   onNavigate,
   onClose,
   menuContainer,
@@ -65,9 +71,7 @@ export function Sidebar({
     { href: "/app/trash", label: t.nav.trash, icon: Trash2 },
     { href: "/app/news", label: t.nav.news, icon: Megaphone },
     { href: "/app/settings", label: t.nav.settings, icon: Settings },
-    ...(me?.role === "admin"
-      ? [{ href: "/app/admin", label: t.nav.admin, icon: Shield }]
-      : []),
+    ...(me?.role === "admin" ? [{ href: "/app/admin", label: t.nav.admin, icon: Shield }] : []),
   ];
 
   return (
@@ -100,9 +104,9 @@ export function Sidebar({
         <button
           type="button"
           onClick={openQuickNote}
-          className="hover:bg-accent/60 hidden w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm md:flex"
+          className="hidden w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/60 md:flex"
         >
-          <Zap className="text-primary size-4" aria-hidden />
+          <Zap className="size-4 text-primary" aria-hidden />
           {t.nav.quick}
         </button>
         <button
@@ -144,26 +148,47 @@ export function Sidebar({
       {/* A labelled section with its add button beside the label, where people
           look first, rather than trailing after however many folders exist. */}
       <div className="flex items-center justify-between gap-2 pr-2 pl-4">
-        <h2 className="text-muted-foreground text-xs font-medium">{t.nav.folders}</h2>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="text-muted-foreground hover:text-foreground size-7"
-              aria-label={t.action.addFolder}
-              onClick={async () => {
-                const id = await createFolder({ parentId: null, name: "新しいフォルダ" });
-                // Stay put: the next thing anyone does with a new folder is
-                // rename it, and that control is right here.
-                (onCreatedFolder ?? onSelectFolder)(id);
-              }}
-            >
-              <FolderPlus className="size-4" aria-hidden />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="right">{t.action.addFolder}</TooltipContent>
-        </Tooltip>
+        <h2 className="text-xs font-medium text-muted-foreground">{t.nav.folders}</h2>
+        <div className="flex items-center">
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 text-muted-foreground hover:text-foreground"
+                aria-label={t.action.addNote}
+                onClick={async () => {
+                  // Kept in the sidebar, in no folder, after what is there,
+                  // and opened to be written in.
+                  const id = await createNote({ folderId: null, topLevel: true });
+                  onOpenNote?.(id);
+                }}
+              >
+                <FilePlus className="size-4" aria-hidden />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{t.action.addNote}</TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="size-7 text-muted-foreground hover:text-foreground"
+                aria-label={t.action.addFolder}
+                onClick={async () => {
+                  const id = await createFolder({ parentId: null, name: "新しいフォルダ" });
+                  // Stay put: the next thing anyone does with a new folder is
+                  // rename it, and that control is right here.
+                  (onCreatedFolder ?? onSelectFolder)(id);
+                }}
+              >
+                <FolderPlus className="size-4" aria-hidden />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">{t.action.addFolder}</TooltipContent>
+          </Tooltip>
+        </div>
       </div>
 
       {/* Radix lays the tree out in a table, as wide as its widest row: made a
@@ -177,6 +202,8 @@ export function Sidebar({
             onNavigate?.();
           }}
           onCreated={onCreatedFolder}
+          selectedNoteId={selectedNoteId}
+          onOpenNote={onOpenNote}
           menuContainer={menuContainer}
         />
       </ScrollArea>
@@ -191,9 +218,7 @@ export function Sidebar({
             onClick={onNavigate}
             className={cn(
               "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-              pathname === href
-                ? "bg-accent text-accent-foreground"
-                : "hover:bg-accent/60",
+              pathname === href ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
             )}
           >
             <Icon className="size-4 opacity-70" aria-hidden />

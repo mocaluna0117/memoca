@@ -4,6 +4,8 @@ import { type DragEndEvent, pointerWithin } from "@dnd-kit/core";
 
 import {
   ChevronRight,
+  FileLock,
+  FileText,
   Folder as FolderIcon,
   FolderInput,
   FolderLock,
@@ -15,6 +17,8 @@ import {
   LockOpen,
   MoreHorizontal,
   Pencil,
+  Pin,
+  PinOff,
   Trash2,
 } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
@@ -27,7 +31,10 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useFolderTree } from "@/lib/hooks/data";
+import { useFolderTree, useTopLevelNotes } from "@/lib/hooks/data";
+import { useNoteTitle } from "@/lib/hooks/use-decrypted";
+import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
+import { t } from "@/lib/i18n/ja";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
 import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
 import { useLockProgress } from "@/lib/store/lock-progress";
@@ -36,12 +43,22 @@ import { useLockActions } from "@/components/vault/use-lock-actions";
 import { between } from "@/lib/sortkey";
 import { canMoveFolder, findNode, flattenTree, siblingsOf } from "@/lib/tree";
 import { db } from "@/lib/db";
-import { createFolder, moveFolder, renameFolder, setFolderTrashed } from "@/lib/sync/mutations";
-import type { FolderNode } from "@/lib/types";
+import {
+  createFolder,
+  moveFolder,
+  moveNote,
+  renameFolder,
+  setFolderTrashed,
+  setNotePinned,
+  setNoteTrashed,
+} from "@/lib/sync/mutations";
+import type { FolderNode, Note } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import {
   FolderDragButton,
   FolderRowDropZones,
+  NoteDragButton,
+  NoteRowDropZone,
   RootDropZone,
 } from "@/components/folders/folder-drag";
 import { FolderPicker } from "@/components/folders/folder-picker";
@@ -53,9 +70,38 @@ import { dragData, shownUnderPointer, useWorkspaceDrag } from "@/components/shel
 const FOLDER_KEYS_HINT =
   "上下の矢印キーで移動、右と左の矢印キーで開閉します。Enter で名前を変更、スペースで開きます。Option（Alt）と上下の矢印キーで並べ替えます。";
 
+/** A row of the tree: a folder, or a note kept at the top level, in no folder. */
+type Row = { kind: "folder"; node: FolderNode } | { kind: "note"; note: Note };
+/** What is at the top level, in order, with the sort key that orders it. */
+type TopItem = Row & { key: string };
+
+/** A row's own id among every row's, folders' and notes'. */
+const rowKey = (row: Row) => (row.kind === "folder" ? `f:${row.node.folderId}` : `n:${row.note.noteId}`);
+
+/**
+ * The top level in order: the folders but Inbox (shown first whatever its
+ * key) and the notes kept there, one order by their sort keys, a folder
+ * first where two are the same.
+ */
+export function topLevelOrder(tree: FolderNode[], notes: Note[]): TopItem[] {
+  const items: TopItem[] = [
+    ...tree
+      .filter((node) => node.system !== "inbox")
+      .map((node) => ({ kind: "folder" as const, node, key: node.sortKey })),
+    ...notes.map((note) => ({ kind: "note" as const, note, key: note.sortKey })),
+  ];
+  return items.sort((a, b) =>
+    a.key < b.key ? -1 : a.key > b.key ? 1 : a.kind === b.kind ? 0 : a.kind === "folder" ? -1 : 1,
+  );
+}
+
 type Props = {
   selectedFolderId: string | null;
   onSelect: (folderId: string | null) => void;
+  /** The note open, to show which of those kept in the sidebar it is. */
+  selectedNoteId?: string | null;
+  /** Opens a note kept in the sidebar; with null, closes the one open. */
+  onOpenNote?: (noteId: string | null) => void;
   /** Selects a new folder without dismissing the panel it was created in. */
   onCreated?: (folderId: string) => void;
   /** Set when this tree lives inside the mobile drawer. */
@@ -65,10 +111,16 @@ type Props = {
 export function FolderTree({
   selectedFolderId,
   onSelect,
+  selectedNoteId = null,
+  onOpenNote = () => {},
   onCreated = onSelect,
   menuContainer,
 }: Props) {
   const tree = useFolderTree();
+  const topNotes = useTopLevelNotes();
+  const top = useMemo(() => topLevelOrder(tree, topNotes), [tree, topNotes]);
+  const { moveNoteTo } = useLockActions();
+  const [movingNote, setMovingNote] = useState<Note | null>(null);
   const { toggleFolderLock, moveFolderTo } = useLockActions();
   const busy = useLockProgress((s) => s.busy);
   // Which lock covers each folder, its own or a parent's.
@@ -87,14 +139,21 @@ export function FolderTree({
   // change is waiting for the move to land.
   const list = useRef<HTMLDivElement>(null);
   const refocus = useRef<string | null>(null);
+  /** A row's button, by its row key. */
+  const rowElement = (key: string) => {
+    const [kind, id] = [key.slice(0, 1), key.slice(2)];
+    return list.current?.querySelector<HTMLElement>(
+      kind === "f" ? `[data-folder-row="${id}"]` : `[data-tree-note="${id}"]`,
+    );
+  };
   useEffect(() => {
-    const folderId = refocus.current;
-    if (!folderId || editing !== null) return;
-    const row = list.current?.querySelector<HTMLElement>(`[data-folder-row="${folderId}"]`);
+    const key = refocus.current;
+    if (!key || editing !== null) return;
+    const row = rowElement(key);
     if (!row) return;
     refocus.current = null;
     row.focus();
-  }, [tree, editing]);
+  }, [tree, topNotes, editing]);
 
   const { openDialog, onCloseAutoFocus } = useMenuDialog();
 
@@ -107,52 +166,111 @@ export function FolderTree({
   const owner = useId();
   const nameOf = (folderId: string | undefined) =>
     (folderId && findNode(tree, folderId)?.name) || "フォルダ";
+  const noteOf = (noteId: string | undefined) => topNotes.find((note) => note.noteId === noteId);
   const draggedFolder = (active: { data: { current?: unknown } }) => {
     const data = dragData(active);
     return data?.kind === "folder" ? data.folderId : undefined;
   };
+  const draggedNote = (active: { data: { current?: unknown } }) => {
+    const data = dragData(active);
+    return data?.kind === "note" ? data.noteId : undefined;
+  };
+  const dragName = (active: { data: { current?: unknown } }) => {
+    const note = noteOf(draggedNote(active));
+    return note ? noteName(note.title, note.locked ? null : note.preview).text : nameOf(draggedFolder(active));
+  };
+
+  /**
+   * Where something put just above `target` (a folder's or a note's row)
+   * goes: among the target's siblings, `moving` (its own row key) left out.
+   * At the top level, folders and notes are one order.
+   */
+  const placeBefore = (
+    target: { folderId: string } | { noteId: string },
+    moving: string,
+  ): { parentId: string | null; sortKey: string } | null => {
+    const anchorKey = "noteId" in target ? `n:${target.noteId}` : `f:${target.folderId}`;
+    const anchorFolder = "folderId" in target ? findNode(tree, target.folderId) : null;
+    if ("folderId" in target && !anchorFolder) return null;
+    if (anchorFolder?.system === "inbox") return null;
+    if (!anchorFolder || anchorFolder.parentId === null) {
+      const items = top.filter((item) => rowKey(item) !== moving);
+      const index = items.findIndex((item) => rowKey(item) === anchorKey);
+      if (index < 0) return null;
+      return { parentId: null, sortKey: between(items[index - 1]?.key ?? null, items[index]!.key) };
+    }
+    // Not Inbox: it is shown first whatever its key, so it is not the one
+    // before the first folder after it.
+    const siblings = siblingsOf(tree, anchorFolder.folderId).filter(
+      (f) => `f:${f.folderId}` !== moving && f.system !== "inbox",
+    );
+    const index = siblings.findIndex((f) => f.folderId === anchorFolder.folderId);
+    const previous = index > 0 ? siblings[index - 1]!.sortKey : null;
+    return { parentId: anchorFolder.parentId, sortKey: between(previous, anchorFolder.sortKey) };
+  };
 
   const onDragEnd = async ({ active, over }: DragEndEvent) => {
     setDragging(null);
-    const sourceId = draggedFolder(active);
     const target = dragData(over);
-    if (!sourceId || !target) return;
+    if (!target) return;
+    const noteId = draggedNote(active);
+    if (noteId) {
+      await dropNote(noteId, target);
+      return;
+    }
+    const sourceId = draggedFolder(active);
+    if (!sourceId) return;
 
     const folders = await db().folders.toArray();
     if (target.kind === "root") {
       if (canMoveFolder(folders, sourceId, null)) await moveFolderTo(sourceId, null);
       return;
     }
-    if (target.kind !== "into" && target.kind !== "before") return;
-    const targetId = target.folderId;
-    if (targetId === sourceId) return;
-
     if (target.kind === "into") {
-      if (!canMoveFolder(folders, sourceId, targetId!)) {
+      const targetId = target.folderId;
+      if (targetId === sourceId) return;
+      if (!canMoveFolder(folders, sourceId, targetId)) {
         toast.error("そのフォルダの中には移動できません。");
         return;
       }
-      await moveFolderTo(sourceId, targetId!);
-      setExpanded((current) => new Set(current).add(targetId!));
+      await moveFolderTo(sourceId, targetId);
+      setExpanded((current) => new Set(current).add(targetId));
       return;
     }
-
-    // "before": become a sibling of the target, just above it.
-    const anchor = findNode(tree, targetId!);
-    if (!anchor) return;
-    const parentId = anchor.parentId;
-    if (!canMoveFolder(folders, sourceId, parentId)) {
+    if (target.kind !== "before" && target.kind !== "beforeNote") return;
+    if (target.kind === "before" && target.folderId === sourceId) return;
+    // Become a sibling of the target, just above it.
+    const place = placeBefore(target, `f:${sourceId}`);
+    if (!place) return;
+    if (!canMoveFolder(folders, sourceId, place.parentId)) {
       toast.error("そのフォルダの中には移動できません。");
       return;
     }
-    // Not Inbox: it is shown first whatever its key, so it is not the one
-    // before the first folder after it.
-    const siblings = siblingsOf(tree, targetId!).filter(
-      (f) => f.folderId !== sourceId && f.system !== "inbox",
-    );
-    const index = siblings.findIndex((f) => f.folderId === targetId);
-    const previous = index > 0 ? siblings[index - 1]!.sortKey : null;
-    await moveFolderTo(sourceId, parentId, between(previous, anchor.sortKey));
+    await moveFolderTo(sourceId, place.parentId, place.sortKey);
+  };
+
+  /**
+   * A note kept in the sidebar, dropped: into a folder (locked first, as a
+   * move there does), or among the top level's folders and notes.
+   */
+  const dropNote = async (noteId: string, target: NonNullable<ReturnType<typeof dragData>>) => {
+    const note = noteOf(noteId);
+    if (!note) return;
+    if (target.kind === "into") {
+      await moveNoteTo(note, target.folderId);
+      return;
+    }
+    if (target.kind === "root") {
+      await moveNote(noteId, null);
+      return;
+    }
+    if (target.kind !== "before" && target.kind !== "beforeNote") return;
+    if (target.kind === "beforeNote" && target.noteId === noteId) return;
+    const place = placeBefore(target, `n:${noteId}`);
+    if (!place) return;
+    // Above a folder inside another: into that one, as the move would be.
+    if (place.parentId !== null) await moveNoteTo(note, place.parentId);
+    else await moveNote(noteId, null, place.sortKey);
   };
 
   // A small threshold so a plain click still selects the folder (see
@@ -171,55 +289,76 @@ export function FolderTree({
         }),
         args,
       ),
-    onDragStart: ({ active }) => setDragging(draggedFolder(active) ?? null),
+    onDragStart: ({ active }) => setDragging(draggedFolder(active) ?? draggedNote(active) ?? null),
     onDragEnd: (event) => void onDragEnd(event),
     onDragCancel: () => setDragging(null),
     // dnd-kit announces drag progress to screen readers in English by default.
     announcements: {
-      onDragStart: ({ active }) => `${nameOf(draggedFolder(active))} をつかみました。`,
+      onDragStart: ({ active }) => `${dragName(active)} をつかみました。`,
       onDragOver: ({ over }) => (over ? "移動先の上にいます。" : undefined),
       onDragEnd: ({ over }) => (over ? "移動しました。" : "移動をやめました。"),
       onDragCancel: () => "移動をやめました。",
     },
     overlay: (active) => (
       <div className="rounded-md border bg-card px-2 py-1.5 text-sm shadow-lg">
-        {nameOf(draggedFolder(active))}
+        {dragName(active)}
       </div>
     ),
   });
 
-  const rows = flattenTree(tree, expanded);
+  // Inbox first, then the top level in order, each folder with what is open
+  // inside it.
+  const inbox = tree.find((node) => node.system === "inbox");
+  const rows: Row[] = [
+    ...(inbox ? flattenTree([inbox], expanded) : []).map((node) => ({ kind: "folder" as const, node })),
+    ...top.flatMap((item): Row[] =>
+      item.kind === "folder"
+        ? flattenTree([item.node], expanded).map((node) => ({ kind: "folder" as const, node }))
+        : [{ kind: "note", note: item.note }],
+    ),
+  ];
 
-  /** Moves a folder one place up or down among its siblings. */
-  const nudge = async (node: FolderNode, direction: -1 | 1) => {
-    const siblings = siblingsOf(tree, node.folderId);
-    const index = siblings.findIndex((f) => f.folderId === node.folderId);
-    const neighbour = siblings[index + direction];
+  /** Moves a row one place up or down among its siblings: at the top level, folders and notes alike. */
+  const nudge = async (row: Row, direction: -1 | 1) => {
+    if (row.kind === "folder" && row.node.parentId !== null) {
+      const node = row.node;
+      const siblings = siblingsOf(tree, node.folderId);
+      const index = siblings.findIndex((f) => f.folderId === node.folderId);
+      const neighbour = siblings[index + direction];
+      if (index < 0 || !neighbour) return;
+      const beyond = siblings[index + direction * 2];
+      const [before, after] =
+        direction < 0
+          ? [beyond?.sortKey ?? null, neighbour.sortKey]
+          : [neighbour.sortKey, beyond?.sortKey ?? null];
+      refocus.current = rowKey(row);
+      await moveFolder(node.folderId, node.parentId, between(before, after));
+      return;
+    }
+    const index = top.findIndex((item) => rowKey(item) === rowKey(row));
+    const neighbour = top[index + direction];
     if (index < 0 || !neighbour) return;
-    const beyond = siblings[index + direction * 2];
+    const beyond = top[index + direction * 2];
     const [before, after] =
-      direction < 0
-        ? [beyond?.sortKey ?? null, neighbour.sortKey]
-        : [neighbour.sortKey, beyond?.sortKey ?? null];
-    refocus.current = node.folderId;
-    await moveFolder(node.folderId, node.parentId, between(before, after));
+      direction < 0 ? [beyond?.key ?? null, neighbour.key] : [neighbour.key, beyond?.key ?? null];
+    refocus.current = rowKey(row);
+    if (row.kind === "folder") await moveFolder(row.node.folderId, null, between(before, after));
+    else await moveNote(row.note.noteId, null, between(before, after));
   };
 
-  const onRowKeyDown = (
-    event: KeyboardEvent<HTMLButtonElement>,
-    node: FolderNode,
-    renamable: boolean,
-  ) => {
+  const onRowKeyDown = (event: KeyboardEvent<HTMLButtonElement>, row: Row, renamable: boolean) => {
     if (event.nativeEvent.isComposing) return;
-    if (event.key === "Enter" && renamable) {
+    if (event.key === "Enter" && renamable && row.kind === "folder") {
       // Stops the button's own Enter, which would open the folder instead.
       event.preventDefault();
-      setEditing(node.folderId);
+      setEditing(row.node.folderId);
     } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
       event.preventDefault();
-      if (node.system !== "inbox") void nudge(node, event.key === "ArrowUp" ? -1 : 1);
+      if (row.kind === "note" || row.node.system !== "inbox") {
+        void nudge(row, event.key === "ArrowUp" ? -1 : 1);
+      }
     } else if (!event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
-      if (navigate(event.key, node)) event.preventDefault();
+      if (navigate(event.key, row)) event.preventDefault();
     }
   };
 
@@ -227,25 +366,29 @@ export function FolderTree({
    * Arrow keys walk the tree as VS Code's explorer does: up and down move
    * between visible rows, right opens a folder and then steps into it, and
    * left closes it and then steps out to its parent. They move focus only;
-   * Space is what shows a folder's notes.
+   * Space is what shows a folder's notes, or opens a note.
    */
-  const navigate = (key: string, node: FolderNode): boolean => {
-    const index = rows.findIndex((row) => row.folderId === node.folderId);
+  const navigate = (key: string, row: Row): boolean => {
+    const index = rows.findIndex((each) => rowKey(each) === rowKey(row));
+    switch (key) {
+      case "ArrowUp":
+        focusKey(rows[index - 1]);
+        return true;
+      case "ArrowDown":
+        focusKey(rows[index + 1]);
+        return true;
+      case "Home":
+        focusKey(rows[0]);
+        return true;
+      case "End":
+        focusKey(rows.at(-1));
+        return true;
+    }
+    if (row.kind === "note") return key === "ArrowRight" || key === "ArrowLeft";
+    const node = row.node;
     const hasChildren = node.children.length > 0;
     const isOpen = expanded.has(node.folderId);
     switch (key) {
-      case "ArrowUp":
-        focusRow(rows[index - 1]?.folderId);
-        return true;
-      case "ArrowDown":
-        focusRow(rows[index + 1]?.folderId);
-        return true;
-      case "Home":
-        focusRow(rows[0]?.folderId);
-        return true;
-      case "End":
-        focusRow(rows.at(-1)?.folderId);
-        return true;
       case "ArrowRight":
         if (hasChildren && !isOpen) toggle(node.folderId);
         else if (hasChildren) focusRow(node.children[0]?.folderId);
@@ -259,9 +402,11 @@ export function FolderTree({
     }
   };
 
+  const focusKey = (row: Row | undefined) => {
+    if (row) rowElement(rowKey(row))?.focus();
+  };
   const focusRow = (folderId: string | undefined) => {
-    if (!folderId) return;
-    list.current?.querySelector<HTMLElement>(`[data-folder-row="${folderId}"]`)?.focus();
+    if (folderId) rowElement(`f:${folderId}`)?.focus();
   };
 
   const toggle = (folderId: string) => {
@@ -279,8 +424,30 @@ export function FolderTree({
         {FOLDER_KEYS_HINT}
       </p>
       <div ref={list} className="flex flex-col gap-0.5">
-        {rows.map((node) => {
-          const selected = selectedFolderId === node.folderId;
+        {rows.map((row) => {
+          if (row.kind === "note") {
+            const { note } = row;
+            return (
+              <TreeNoteRow
+                key={note.noteId}
+                owner={owner}
+                note={note}
+                selected={selectedNoteId === note.noteId}
+                canDrag={canDrag && dragging !== note.noteId}
+                describedBy={hintId}
+                menuContainer={menuContainer}
+                onCloseAutoFocus={onCloseAutoFocus}
+                onOpen={() => onOpenNote(note.noteId)}
+                onKeyDown={(event) => onRowKeyDown(event, row, false)}
+                onMove={() => openDialog(() => setMovingNote(note))}
+                onTrashed={() => {
+                  if (selectedNoteId === note.noteId) onOpenNote(null);
+                }}
+              />
+            );
+          }
+          const { node } = row;
+          const selected = selectedFolderId === node.folderId && selectedNoteId === null;
           const hasChildren = node.children.length > 0;
           const isInbox = node.system === "inbox";
           const label = node.name ?? (node.nameSealed ? "ロックされたフォルダ" : null);
@@ -347,7 +514,7 @@ export function FolderTree({
                       className="h-6"
                       onSubmit={(value) => renameFolder(node.folderId, value)}
                       onDone={(byKeyboard) => {
-                        if (byKeyboard) refocus.current = node.folderId;
+                        if (byKeyboard) refocus.current = rowKey(row);
                         setEditing(null);
                       }}
                     />
@@ -360,7 +527,7 @@ export function FolderTree({
                     onClick={() => onSelect(node.folderId)}
                     // A locked folder's name is unreadable until the vault is
                     // open, and there is nothing to edit in a placeholder.
-                    onKeyDown={(event) => onRowKeyDown(event, node, node.name !== null)}
+                    onKeyDown={(event) => onRowKeyDown(event, row, node.name !== null)}
                     describedBy={hintId}
                     className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left outline-none"
                   >
@@ -488,7 +655,19 @@ export function FolderTree({
           );
         })}
 
-        <RootDropZone owner={owner} active={dragging !== null} />
+        <RootDropZone owner={owner} />
+
+        <FolderPicker
+          open={movingNote !== null}
+          title="メモを移動"
+          rootLabel={t.action.topLevel}
+          onOpenChange={(open) => !open && setMovingNote(null)}
+          onPick={async (folderId) => {
+            const note = movingNote;
+            setMovingNote(null);
+            if (note) await moveNoteTo(note, folderId);
+          }}
+        />
 
         <FolderPicker
           open={moving !== null}
@@ -551,4 +730,107 @@ function FolderGlyph({
 /** Every node of the tree, open or not. */
 function allNodes(nodes: FolderNode[]): FolderNode[] {
   return nodes.flatMap((node) => [node, ...allNodes(node.children)]);
+}
+
+/**
+ * A note kept in the sidebar, at the top level: opened by a click (Space or
+ * Enter from the keys), dragged among the folders or into one, with a menu
+ * of its own.
+ */
+function TreeNoteRow({
+  owner,
+  note,
+  selected,
+  canDrag,
+  describedBy,
+  menuContainer,
+  onCloseAutoFocus,
+  onOpen,
+  onKeyDown,
+  onMove,
+  onTrashed,
+}: {
+  owner: string;
+  note: Note;
+  selected: boolean;
+  canDrag: boolean;
+  describedBy: string;
+  menuContainer?: HTMLElement | null;
+  onCloseAutoFocus: (event: Event) => void;
+  onOpen: () => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onMove: () => void;
+  onTrashed: () => void;
+}) {
+  const title = useNoteTitle(note);
+  const name = noteName(title, note.locked ? null : note.preview);
+  const Icon = note.locked ? FileLock : FileText;
+  return (
+    <NoteRowDropZone owner={owner} noteId={note.noteId} disabled={!canDrag}>
+      <div
+        className={cn(
+          "group flex items-center gap-1 rounded-md pr-1 text-sm",
+          "has-[[data-tree-note]:focus-visible]:ring-ring has-[[data-tree-note]:focus-visible]:ring-2",
+          selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
+        )}
+      >
+        {/* Where a folder's chevron is, so names line up. */}
+        <span className="size-5 shrink-0" aria-hidden />
+        <NoteDragButton
+          owner={owner}
+          noteId={note.noteId}
+          disabled={!canDrag}
+          onClick={onOpen}
+          onKeyDown={onKeyDown}
+          describedBy={describedBy}
+          className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left outline-none"
+        >
+          <Icon className="size-4 shrink-0 opacity-70" aria-hidden />
+          <span className={cn("truncate", name.standIn && STAND_IN_CLASS)}>{name.text}</span>
+          <span className="sr-only">（メモ{note.locked ? "、ロック中" : ""}）</span>
+        </NoteDragButton>
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+              aria-label={`${name.text} の操作`}
+            >
+              <MoreHorizontal className="size-3.5" aria-hidden />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent
+            align="end"
+            className="w-44"
+            portalContainer={menuContainer}
+            onCloseAutoFocus={onCloseAutoFocus}
+          >
+            <DropdownMenuItem onSelect={() => void setNotePinned(note.noteId, !note.pinned)}>
+              {note.pinned ? <PinOff className="size-4" aria-hidden /> : <Pin className="size-4" aria-hidden />}
+              {note.pinned ? t.action.unpin : t.action.pin}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onMove}>
+              <FolderInput className="size-4" aria-hidden />
+              {t.action.move}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              variant="destructive"
+              onSelect={async () => {
+                await setNoteTrashed(note.noteId, true);
+                onTrashed();
+                toast("ゴミ箱に移動しました", {
+                  action: { label: "元に戻す", onClick: () => void setNoteTrashed(note.noteId, false) },
+                });
+              }}
+            >
+              <Trash2 className="size-4" aria-hidden />
+              {t.action.delete}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </NoteRowDropZone>
+  );
 }

@@ -68,6 +68,20 @@ export function useNotes(scope: NoteScope): Note[] {
   }, [notes, trashed, scope.kind]);
 }
 
+/**
+ * The notes kept at the top level, in no folder, which the sidebar shows
+ * among the folders: not trashed, in no particular order (the sidebar orders
+ * them with the folders).
+ */
+export function useTopLevelNotes(): Note[] {
+  const notes = useLiveQuery(
+    () => db().notes.filter((note) => note.folderId === null).toArray(),
+    [],
+    EMPTY as Note[],
+  );
+  return useMemo(() => notes.filter((note) => !note.purged && note.deletedAt === null), [notes]);
+}
+
 /** See {@link useFolder}: never return another note's row for this id. */
 export function useNote(noteId: string | null): Note | null | undefined {
   const row = useLiveQuery(

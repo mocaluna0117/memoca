@@ -51,7 +51,6 @@ export class SyncEngine {
   private unwatch: (() => void) | null = null;
   private unwatchOutbox: (() => void) | null = null;
   private lastReadingPass = 0;
-  private lastInboxPass = 0;
   private lastRefsPass = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private interval = IDLE_INTERVAL_MS;
@@ -252,7 +251,6 @@ export class SyncEngine {
     await setMeta(META.lastSyncAt, Date.now());
     this.set({ state: "idle", lastSyncAt: Date.now(), catchingUp: !batch.complete });
     void this.refreshReadings();
-    if (batch.complete) void this.fileUnfiledNotes();
 
     if (!batch.complete) await this.resubscribe();
   }
@@ -606,20 +604,6 @@ export class SyncEngine {
     this.lastRefsPass = Date.now();
     const { reportAttachmentRefs } = await import("@/lib/media/report-refs");
     await reportAttachmentRefs(this.client, (noteIds) => this.fetchBodies(noteIds)).catch(() => 0);
-  }
-
-  /**
-   * Moves any note with no folder into Inbox.
-   *
-   * Waits for a complete sync so this device has its Inbox and every note the
-   * server knows about, and is throttled because notes only become folderless
-   * through an older client, which is rare.
-   */
-  private async fileUnfiledNotes(): Promise<void> {
-    if (Date.now() - this.lastInboxPass < 30_000) return;
-    this.lastInboxPass = Date.now();
-    const { adoptFolderlessNotes } = await import("./mutations");
-    await adoptFolderlessNotes().catch(() => 0);
   }
 
   /** Warms the cache with the notes the person is most likely to open. */
