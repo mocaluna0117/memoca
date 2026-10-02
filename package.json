@@ -28,6 +28,7 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@floating-ui/react": "0.27.20",
     "@jsquash/webp": "1.5.0",
     "@sglkc/kuromoji": "^1.1.0",
     "@simplewebauthn/browser": "^14.0.0",
@@ -92,7 +93,8 @@
     "patchedDependencies": {
       "@handlewithcare/prosemirror-inputrules@0.1.4": "patches/@handlewithcare__prosemirror-inputrules@0.1.4.patch",
       "@blocknote/react@0.55.0": "patches/@blocknote__react@0.55.0.patch",
-      "@blocknote/xl-multi-column@0.55.0": "patches/@blocknote__xl-multi-column@0.55.0.patch"
+      "@blocknote/xl-multi-column@0.55.0": "patches/@blocknote__xl-multi-column@0.55.0.patch",
+      "y-prosemirror@1.3.7": "patches/y-prosemirror@1.3.7.patch"
     },
     "overrides": {
       "browserslist": "4.29.0",

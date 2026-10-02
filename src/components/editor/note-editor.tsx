@@ -9,10 +9,14 @@ import { filterSuggestionItems } from "@blocknote/core/extensions";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
   DesktopFormattingToolbarController,
+  type FloatingUIOptions,
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
   useCreateBlockNote,
+  useEditorState,
 } from "@blocknote/react";
+import { flip, offset, shift } from "@floating-ui/react";
+import { NodeSelection } from "prosemirror-state";
 import {
   getMultiColumnSlashMenuItems,
   locales as multiColumnLocales,
@@ -67,6 +71,28 @@ const SCHEMA = withMultiColumn(
     blockSpecs: { ...defaultBlockSpecs, file: memocaFileBlock() },
   }),
 );
+
+/** Blocks that are a file, shown as one: an image, a video, a sound, a PDF or any file. */
+const MEDIA = new Set(["image", "video", "audio", "file"]);
+
+/**
+ * The toolbar of an image, a video or a file selected: inside it, along its
+ * top, rather than above it, where it covered the line before it (an image
+ * pasted is selected, and has its toolbar, at once). Above it, as for text,
+ * when it is not twice as tall as the toolbar (a file shown by its name, a
+ * small image): inside, it would hide what it is for.
+ */
+const OVER_MEDIA: FloatingUIOptions = {
+  useFloatingOptions: {
+    middleware: [
+      offset(({ rects }) =>
+        rects.reference.height >= rects.floating.height * 2 + 16 ? -rects.floating.height - 8 : 10,
+      ),
+      shift(),
+      flip(),
+    ],
+  },
+};
 
 /** BlockNote's words, and its columns', in Japanese. */
 const DICTIONARY = { ...blocknoteJa, multi_column: multiColumnLocales.ja };
@@ -251,6 +277,15 @@ function EditorSurface({
   );
 
   const editor = useCreateBlockNote(options, [doc]);
+  const mediaSelected = useEditorState({
+    editor,
+    selector: ({ editor: current }) => {
+      const { selection } = current.prosemirrorState;
+      if (!(selection instanceof NodeSelection)) return false;
+      const { node } = selection;
+      return MEDIA.has(node.type.name) || MEDIA.has(node.firstChild?.type.name ?? "");
+    },
+  });
   // As Memoca's own parts take it: they need none of the columns' types.
   const plain = editor as unknown as BlockNoteEditor;
   useEffect(() => {
@@ -310,7 +345,10 @@ function EditorSurface({
         {/* The floating one only, on a phone too: BlockNote's own for a phone
             (from 0.55) is pinned above the keyboard, where Memoca's block bar
             (MobileBlockToolbar) is, and covered it. */}
-        <DesktopFormattingToolbarController formattingToolbar={MemocaFormattingToolbar} />
+        <DesktopFormattingToolbarController
+          formattingToolbar={MemocaFormattingToolbar}
+          floatingUIOptions={mediaSelected ? OVER_MEDIA : undefined}
+        />
         <ToolbarOnImageTap />
         <MobileBlockToolbar />
       </BlockNoteView>

@@ -187,6 +187,15 @@
   border-top: 2px solid var(--foreground);
 }
 
+/* No tooltips where there is no pointer to hover with (a phone): a touch
+   opened one with nothing to close it, and BlockNote's toolbar's, from 0.55,
+   stayed over the very block it was for, squeezed a character a line. */
+@media (pointer: coarse) {
+  [data-slot="tooltip-content"] {
+    display: none !important;
+  }
+}
+
 /* Columns, side by side where the note is wide enough, one under another
    where it is not (a phone): too narrow, each would be a word a line. By
    the note's own width rather than the screen's, so a note made a PDF,
@@ -194,6 +203,13 @@
    too. */
 .memoca-editor {
   container: memoca-note / inline-size;
+}
+/* A column after another keeps the side menu of its blocks (the + and the
+   handle, 54 pixels or so, drawn left of a block) inside itself: at
+   BlockNote's 25 pixels it lay over the line between the columns, all of
+   the 20 pixels either side of it where a column is made wider. */
+.memoca-editor .bn-block-column + .bn-block-column {
+  padding-left: 56px;
 }
 @container memoca-note (max-width: 36rem) {
   .memoca-editor .bn-block-column-list {
@@ -209,6 +225,7 @@
      at all. */
   .memoca-editor .bn-block-column + .bn-block-column {
     border-top: 1px dashed var(--border);
+    padding-left: 0;
   }
 }
 

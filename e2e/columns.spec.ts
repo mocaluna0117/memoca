@@ -117,4 +117,42 @@ test.describe("columns", () => {
       .toEqual(["一行目", "三行目", "二行目", ""]);
     await expect(editor(page).locator(".bn-block-column")).toHaveCount(0);
   });
+
+  test("a column made wider by dragging the line between it and the next, and kept so", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "a mouse");
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "幅");
+    await editor(page).click();
+    await page.keyboard.type("/二列");
+    await expect(page.getByRole("option", { name: /二列/ })).toBeVisible();
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("左");
+    const left = editor(page).locator(".bn-block-column").nth(0);
+    const right = editor(page).locator(".bn-block-column").nth(1);
+    const before = { left: (await left.boundingBox())!, right: (await right.boundingBox())! };
+
+    // By the right edge of the left column, where the line between them is.
+    const x = before.left.x + before.left.width - 3;
+    const y = before.left.y + before.left.height / 2;
+    await page.mouse.move(x - 40, y);
+    await page.mouse.move(x, y, { steps: 4 });
+    await page.mouse.down();
+    await page.mouse.move(x + 120, y, { steps: 12 });
+    await page.mouse.up();
+
+    await expect.poll(async () => (await left.boundingBox())!.width).toBeGreaterThan(before.left.width + 60);
+    expect((await right.boundingBox())!.width).toBeLessThan(before.right.width - 60);
+    const widened = (await left.boundingBox())!.width;
+
+    await waitForSynced(page);
+    await page.reload();
+    await expect
+      .poll(async () => Math.round((await editor(page).locator(".bn-block-column").nth(0).boundingBox())?.width ?? 0), {
+        timeout: 30_000,
+      })
+      .toBe(Math.round(widened));
+  });
 });

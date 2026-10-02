@@ -28,6 +28,10 @@ async function lockTheNote(page: Page) {
   await page.getByRole("menuitem", { name: "ロックする", exact: true }).click();
   await enterVaultPassword(page, "ロックする");
   await expect(page.getByText("メモをロックしました")).toBeVisible({ timeout: 30_000 });
+  // Put away: on a phone it lies over the top of the note, where the file
+  // goes, and a tap held on it keeps it there.
+  await page.getByRole("button", { name: "Close toast" }).first().click();
+  await expect(page.getByText("メモをロックしました")).toBeHidden();
   await waitForSynced(page);
 }
 

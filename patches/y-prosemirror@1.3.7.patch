@@ -1,0 +1,58 @@
+diff --git a/dist/y-prosemirror.cjs b/dist/y-prosemirror.cjs
+index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..8d34eb04a47246f5086d0ce9bfdca075ca6d0ea7 100644
+--- a/dist/y-prosemirror.cjs
++++ b/dist/y-prosemirror.cjs
+@@ -2166,6 +2166,16 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+   view: view => {
+     const ystate = ySyncPluginKey.getState(view.state);
+     const undoManager = yUndoPluginKey.getState(view.state).undoManager;
++    // Memoca: the plugins reconfigured (an extension added after the editor
++    // is made), this view is made again for the same state, whose undo
++    // manager the last view's destroy stopped listening. Listening again,
++    // the edits from here on can be undone; otherwise none ever could.
++    if (undoManager._memocaStopped) {
++      undoManager._memocaStopped = false;
++      undoManager.trackedOrigins.add(undoManager);
++      undoManager.doc.on('afterTransaction', undoManager.afterTransactionHandler);
++      undoManager.doc.on('destroy', undoManager.destroy);
++    }
+     undoManager.on('stack-item-added', ({ stackItem }) => {
+       const binding = ystate.binding;
+       if (binding) {
+@@ -2181,6 +2191,7 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+     return {
+       destroy: () => {
+         undoManager.destroy();
++        undoManager._memocaStopped = true;
+       }
+     }
+   }
+diff --git a/src/plugins/undo-plugin.js b/src/plugins/undo-plugin.js
+index 7c9448ba4215a9904390468d8d22d5d7b6656435..ad35c61d5e3d5a27965b90af9faa7cee041a99ba 100644
+--- a/src/plugins/undo-plugin.js
++++ b/src/plugins/undo-plugin.js
+@@ -104,6 +104,16 @@ export const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOri
+   view: view => {
+     const ystate = ySyncPluginKey.getState(view.state)
+     const undoManager = yUndoPluginKey.getState(view.state).undoManager
++    // Memoca: the plugins reconfigured (an extension added after the editor
++    // is made), this view is made again for the same state, whose undo
++    // manager the last view's destroy stopped listening. Listening again,
++    // the edits from here on can be undone; otherwise none ever could.
++    if (undoManager._memocaStopped) {
++      undoManager._memocaStopped = false
++      undoManager.trackedOrigins.add(undoManager)
++      undoManager.doc.on('afterTransaction', undoManager.afterTransactionHandler)
++      undoManager.doc.on('destroy', undoManager.destroy)
++    }
+     undoManager.on('stack-item-added', ({ stackItem }) => {
+       const binding = ystate.binding
+       if (binding) {
+@@ -119,6 +129,7 @@ export const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOri
+     return {
+       destroy: () => {
+         undoManager.destroy()
++        undoManager._memocaStopped = true
+       }
+     }
+   }
