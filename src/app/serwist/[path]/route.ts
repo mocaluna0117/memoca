@@ -15,7 +15,8 @@ export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
     // rule in sw.ts caches them on first fetch instead.
     // The WebP encoder (about 300 KB) is only for browsers whose canvas cannot
     // write WebP, and cached by a runtime rule on first use too.
-    globIgnores: ["**/kuromoji/**", "**/webp/**"],
+    // So is pdf.js's (about 6 MB), for notes with a PDF.
+    globIgnores: ["**/kuromoji/**", "**/webp/**", "**/pdfjs/**"],
     additionalPrecacheEntries: [
       { url: "/offline", revision: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev" },
     ],

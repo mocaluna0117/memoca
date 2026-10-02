@@ -4,7 +4,7 @@ import "@blocknote/core/fonts/inter.css";
 import "@blocknote/shadcn/style.css";
 
 import { ja as blocknoteJa } from "@blocknote/core/locales";
-import type { BlockNoteEditor } from "@blocknote/core";
+import { BlockNoteSchema, type BlockNoteEditor, defaultBlockSpecs } from "@blocknote/core";
 import { withCollaboration } from "@blocknote/core/yjs";
 import { FormattingToolbarController, useCreateBlockNote } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
@@ -44,6 +44,12 @@ import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
+import { memocaFileBlock } from "@/components/editor/pdf-file-block";
+
+/** BlockNote's blocks, with a file block that shows a PDF's pages (see memocaFileBlock). */
+const SCHEMA = BlockNoteSchema.create({
+  blockSpecs: { ...defaultBlockSpecs, file: memocaFileBlock() },
+});
 
 /** A link clicked in a note opens apart from the app's window (see openLinkApart). */
 const LINKS = { onClick: (event: MouseEvent) => openLinkApart(event) };
@@ -196,6 +202,7 @@ function EditorSurface({
           // remote cursors, but undo/redo stays Yjs-aware.
           user: { name: me?.name ?? "自分", color: "#0ea5e9" },
         },
+        schema: SCHEMA,
         dictionary: blocknoteJa,
         // BlockNote's animations mark a block whose type just changed with
         // what it was (data-prev-type), and its list markers are drawn only

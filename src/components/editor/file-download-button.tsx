@@ -51,27 +51,35 @@ export function FileDownloadButton() {
       label={label}
       mainTooltip={label}
       icon={<DownloadIcon />}
-      onClick={async () => {
+      onClick={() => {
         editor.focus();
-        const url = block.props.url as string;
-        try {
-          const opened = await downloadFile(
-            editor.resolveFileUrl ? editor.resolveFileUrl(url) : url,
-            name,
-          );
-          if (opened.kind === "unavailable") toast.error(t.download.unavailable);
-          if (opened.kind === "ready") {
-            toast(t.download.ready, {
-              id: "download-ready",
-              duration: 15_000,
-              action: { label: t.download.share, onClick: () => void opened.share() },
-            });
-          }
-        } catch {
-          // Could not be looked up (the vault closed on the way, say).
-          toast.error(t.download.unavailable);
-        }
+        void downloadBlockFile(editor, block.props.url as string, name);
       }}
     />
   );
+}
+
+/**
+ * Downloads a block's file with {@link downloadFile}, and says so when it
+ * cannot, or, on an iPhone, when it is ready to hand on at a press of its own.
+ */
+export async function downloadBlockFile(
+  editor: { resolveFileUrl?: (url: string) => Promise<string> },
+  url: string,
+  name: string,
+): Promise<void> {
+  try {
+    const opened = await downloadFile(editor.resolveFileUrl ? editor.resolveFileUrl(url) : url, name);
+    if (opened.kind === "unavailable") toast.error(t.download.unavailable);
+    if (opened.kind === "ready") {
+      toast(t.download.ready, {
+        id: "download-ready",
+        duration: 15_000,
+        action: { label: t.download.share, onClick: () => void opened.share() },
+      });
+    }
+  } catch {
+    // Could not be looked up (the vault closed on the way, say).
+    toast.error(t.download.unavailable);
+  }
 }

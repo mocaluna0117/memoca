@@ -15,6 +15,7 @@ import {
 import { PAGES_CACHE, SHELL_CACHE } from "@/lib/db/caches";
 import { MEDIA_CACHE } from "@/lib/media/media-cache";
 import webpAsset from "@/lib/media/webp-asset.json";
+import { version as pdfjsVersion } from "pdfjs-dist/package.json";
 import { SHARED } from "@/lib/quick/text";
 
 declare global {
@@ -153,6 +154,23 @@ const serwist: Serwist = new Serwist({
       },
     },
     {
+      // pdf.js's worker and what it reads (character maps, fonts), only for
+      // notes with a PDF: cached on first use, under a path that changes
+      // with each version, so a PDF seen once is seen again offline.
+      matcher: ({ url }) =>
+        url.origin === self.location.origin && url.pathname.startsWith("/pdfjs/"),
+      handler: {
+        handle: async ({ request, event }) => {
+          const cache = await caches.open("memoca-pdfjs");
+          const cached = await cache.match(request);
+          if (cached) return cached;
+          const response = await fetch(request);
+          if (response.ok) event.waitUntil(cache.put(request, response.clone()));
+          return response;
+        },
+      },
+    },
+    {
       // The WebP encoder, only for browsers whose canvas cannot write WebP,
       // so not precached for everyone: cached on first use, under a path that
       // changes with each version.
@@ -274,6 +292,19 @@ self.addEventListener("activate", (event) => {
     (async () => {
       const cache = await caches.open("memoca-webp");
       const current = `/webp/${webpAsset.version}/`;
+      for (const request of await cache.keys()) {
+        if (!new URL(request.url).pathname.startsWith(current)) await cache.delete(request);
+      }
+    })(),
+  );
+});
+
+// The same for pdf.js of an earlier version.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open("memoca-pdfjs");
+      const current = `/pdfjs/${pdfjsVersion}/`;
       for (const request of await cache.keys()) {
         if (!new URL(request.url).pathname.startsWith(current)) await cache.delete(request);
       }

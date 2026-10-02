@@ -62,6 +62,7 @@ next-env.d.ts
 /public/kuromoji
 # WebP のエンコーダーもビルド時に作ります（scripts/build-webp-worker.mjs）
 /public/webp
+/public/pdfjs
 
 # the desktop app (desktop/, a package of its own): its tools and Rust's output
 /desktop/node_modules

@@ -18,6 +18,8 @@ const eslintConfig = defineConfig([
     "public/kuromoji/**",
     // Built from a dependency at build time by scripts/build-webp-worker.mjs.
     "public/webp/**",
+    // Copied in from a dependency at build time by scripts/copy-pdfjs.mjs.
+    "public/pdfjs/**",
     // The desktop app: a package of its own, in Rust (docs/DESKTOP.md).
     "desktop/**",
   ]),

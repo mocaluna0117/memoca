@@ -147,6 +147,17 @@ export const ja = {
     runFailed: "途中でうまくいかなくなりました。もう一度押すと、残りを変換します。",
     note: "画像は、いま追加したときと同じ画質（WebP）で保存し直します。元の画像は 1 週間ほどで削除され、戻せません。",
   },
+  pdf: {
+    pages: (count: number) => `${count} ページ`,
+    open: "開く",
+    openLabel: (name: string) => `${name} を開く`,
+    zoomIn: "拡大",
+    zoomOut: "縮小",
+    fit: "幅に合わせる",
+    download: "ダウンロード",
+    close: "閉じる",
+    unreadable: "この PDF は表示できません。ダウンロードして開いてください。",
+  },
   download: {
     ready: "ファイルの準備ができました",
     share: "共有",
