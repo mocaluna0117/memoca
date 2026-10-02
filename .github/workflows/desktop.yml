@@ -125,16 +125,6 @@ jobs:
           releaseBody: 署名なしの Mac 版と Windows 版です。初めて開くときの手順は docs/DESKTOP.md を見てください。
           releaseDraft: true
 
-      # What drives the window: tauri-driver, and Edge's driver for the
-      # WebView2 the runner has.
-      - name: Get the window's drivers
-        shell: pwsh
-        run: |
-          cargo install tauri-driver --locked
-          cargo install --git https://github.com/chippers/msedgedriver-tool
-          & "$env:USERPROFILE\.cargo\bin\msedgedriver-tool.exe"
-          Get-ChildItem msedgedriver.exe
-
       - name: Install, run and check it, as a person would
         shell: pwsh
         run: |

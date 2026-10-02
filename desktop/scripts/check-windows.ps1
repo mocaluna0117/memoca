@@ -2,8 +2,8 @@
 # one there (CI, .github/workflows/desktop.yml), and checks it: installed for
 # this user, memoca:// links handed to it, started (hidden) and still
 # running, one only however often it is started or a link opened, and gone
-# again once uninstalled. Then checks its window (e2e/window.mjs) unless
-# -NoWindow.
+# again once uninstalled; and, unless -NoWindow, that its window loads
+# Memoca's site as the Windows shell (e2e/window.mjs).
 param(
   [Parameter(Mandatory = $true)][string]$Installer,
   [switch]$NoWindow
@@ -39,24 +39,39 @@ Start-Sleep -Seconds 5
 Check ((Running).Count -eq 1) "a memoca:// link goes to the one running"
 
 Stop-Process -Name "Memoca" -Force
-# And its WebView2's processes: one still there for the app's data folder
-# is used again by the next start, and would not take the debugging port
-# the window is driven through.
+# And its WebView2's processes, which would otherwise be used again by the
+# next start, without the debugging port it is started with below.
 Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force
 for ($i = 0; $i -lt 15 -and @(Get-Process -Name "msedgewebview2", "Memoca" -ErrorAction SilentlyContinue).Count -gt 0; $i++) {
   Start-Sleep -Seconds 1
 }
-Write-Host "Left running: $(@(Get-Process -Name 'msedgewebview2', 'Memoca' -ErrorAction SilentlyContinue).Count)"
 
 if (-not $NoWindow) {
-  Write-Host "Checking the window through tauri-driver"
-  $driver = Start-Process -FilePath "tauri-driver" -ArgumentList "--native-driver", (Resolve-Path "msedgedriver.exe") -PassThru
-  Start-Sleep -Seconds 3
+  # Started as at login, hidden, its WebView2 with a debugging port the
+  # window's checks drive it through.
+  Write-Host "Checking the window, through its WebView2's debugging port"
+  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+  Start-Process -FilePath $exe.FullName -ArgumentList "--hidden"
+  Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+  $open = $false
+  for ($i = 0; $i -lt 60 -and -not $open; $i++) {
+    try {
+      Invoke-RestMethod "http://127.0.0.1:9222/json/version" -TimeoutSec 2 | Out-Null
+      $open = $true
+    } catch {
+      Start-Sleep -Seconds 1
+    }
+  }
   try {
-    node e2e/window.mjs $exe.FullName
+    if (-not $open) {
+      # What was started, and with what, for whoever reads the log.
+      Get-CimInstance Win32_Process -Filter "Name = 'Memoca.exe' OR Name = 'msedgewebview2.exe'" |
+        ForEach-Object { Write-Host "$($_.ProcessId) $($_.CommandLine)" }
+    }
+    Check $open "its WebView2 opens the debugging port it is started with"
+    node e2e/window.mjs 9222
     if ($LASTEXITCODE -ne 0) { throw "the window's checks failed" }
   } finally {
-    Stop-Process -Id $driver.Id -Force -ErrorAction SilentlyContinue
     Stop-Process -Name "Memoca" -Force -ErrorAction SilentlyContinue
     Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force
   }

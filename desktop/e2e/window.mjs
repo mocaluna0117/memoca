@@ -1,42 +1,45 @@
-// The window of the installed app, driven through tauri-driver (WebDriver)
-// on Windows (CI, .github/workflows/desktop.yml): it loads Memoca's site,
-// which takes it for the Windows shell, and shows the shell's sign-in.
-// Usage: node e2e/window.mjs <path to Memoca.exe>, with tauri-driver on 4444.
-import { Builder, By, until } from "selenium-webdriver";
+// The window of the installed app, on Windows (CI, .github/workflows/
+// desktop.yml): it loads Memoca's site, which takes it for the Windows
+// shell, and shows the shell's sign-in. Driven through its WebView2's
+// debugging port, as Playwright drives WebView2 apps: the app started with
+// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<port>.
+// Usage: node e2e/window.mjs [port, 9222 if none]
+import { chromium } from "playwright-core";
 
-const application = process.argv[2];
-if (!application) throw new Error("usage: node e2e/window.mjs <Memoca.exe>");
-
-const driver = await new Builder()
-  .usingServer("http://127.0.0.1:4444/")
-  // webviewOptions: tells Edge's driver the app is a WebView2 one, not
-  // Edge itself, whose own folder it would wait in for the debugging port.
-  .withCapabilities({ browserName: "wry", "tauri:options": { application, webviewOptions: {} } })
-  .build();
+const port = process.argv[2] ?? "9222";
+const ORIGIN = "https://memoca-app.vercel.app/";
 
 const check = (ok, what) => {
   if (!ok) throw new Error(`not so: ${what}`);
   console.log(`ok: ${what}`);
 };
 
+const browser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
 try {
-  await driver.wait(
-    async () => (await driver.getCurrentUrl()).startsWith("https://memoca-app.vercel.app/"),
-    60_000,
-  );
-  check(true, "the window loads Memoca's site");
-  await driver.wait(until.elementLocated(By.xpath("//*[contains(., 'ブラウザでログイン')]")), 60_000);
+  // The window's one page, once it is there and on the site.
+  let page;
+  for (const until = Date.now() + 60_000; !page && Date.now() < until; ) {
+    page = browser
+      .contexts()
+      .flatMap((context) => context.pages())
+      .find((each) => each.url().startsWith(ORIGIN));
+    if (!page) await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  check(page, "the window loads Memoca's site");
+
+  await page.getByText("ブラウザでログイン").first().waitFor({ timeout: 60_000 });
   check(true, "signed out, it shows the shell's sign-in (ブラウザでログイン)");
-  const url = await driver.getCurrentUrl();
-  check(new URL(url).pathname === "/sign-in", `on /sign-in (${url})`);
-  const agent = await driver.executeScript("return navigator.userAgent");
+  check(new URL(page.url()).pathname === "/sign-in", `on /sign-in (${page.url()})`);
+
+  const agent = await page.evaluate(() => navigator.userAgent);
   check(/MemocaShell\/\S+ \(windows\)/.test(agent), `it says it is the Windows shell (${agent})`);
-  const platform = await driver.executeScript("return window.memocaShell && window.memocaShell.platform");
+  const platform = await page.evaluate(() => window.memocaShell?.platform);
   check(platform === "windows", "the page is given the shell's bridge, for Windows");
-  const keys = await driver.executeScript(
-    "return typeof window.memocaShell.hide === 'function' && typeof window.memocaShell.beginSignIn === 'function'",
+  const commands = await page.evaluate(
+    () => typeof window.memocaShell?.hide === "function" && typeof window.memocaShell?.beginSignIn === "function",
   );
-  check(keys === true, "the bridge has its commands");
+  check(commands, "the bridge has its commands");
 } finally {
-  await driver.quit();
+  // Leaves the app running: connected to, not started by, this.
+  await browser.close();
 }
