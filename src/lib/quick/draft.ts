@@ -8,7 +8,24 @@ import { META } from "@/lib/db/meta";
  * saved, with the account it was written in: another account signed in on
  * the same device is never shown it.
  */
-export type QuickDraft = { text: string; updatedAt: number; userKey: string };
+export type QuickDraft = {
+  text: string;
+  /** The images added to it, made ready (compressed) already. Missing on drafts from before. */
+  images?: DraftImage[];
+  updatedAt: number;
+  userKey: string;
+};
+
+/** An image added to the quick note, as it will be stored. */
+export type DraftImage = {
+  /** Which one it is, among those of the draft. */
+  key: string;
+  name: string;
+  blob: Blob;
+  mime: string;
+  width: number;
+  height: number;
+};
 
 /** How long typing has to pause before the draft is written. */
 export const DRAFT_DELAY_MS = 300;
@@ -34,10 +51,10 @@ export function clearDraft(userKey: string): Promise<void> {
 }
 
 /** Writes the draft, or forgets it once there is nothing in it. */
-function writeDraft(text: string, userKey: string): Promise<void> {
-  return text.trim() === ""
+function writeDraft(text: string, images: DraftImage[], userKey: string): Promise<void> {
+  return text.trim() === "" && images.length === 0
     ? clearDraft(userKey)
-    : setMeta(META.quickDraft, { text, updatedAt: Date.now(), userKey } satisfies QuickDraft);
+    : setMeta(META.quickDraft, { text, images, updatedAt: Date.now(), userKey } satisfies QuickDraft);
 }
 
 /**
@@ -51,6 +68,8 @@ function writeDraft(text: string, userKey: string): Promise<void> {
  */
 export function keepDraft(userKey: string): {
   update(text: string): void;
+  /** The images added, as they now are. */
+  images(images: DraftImage[]): void;
   /** The draft on the device has been read: writing may start. */
   release(): void;
   /** Writes what the field holds now; `always`, even if it was written already. */
@@ -62,8 +81,11 @@ export function keepDraft(userKey: string): {
   let held = true;
   /** What the field holds, as last told; null once it has been saved. */
   let latest: string | null = null;
+  /** The images, as last told. */
+  let pictures: DraftImage[] = [];
   /** What this window last wrote. */
   let written: string | null = null;
+  let writtenPictures: DraftImage[] = [];
   let timer: ReturnType<typeof setTimeout> | null = null;
   const stop = () => {
     if (timer) clearTimeout(timer);
@@ -71,10 +93,11 @@ export function keepDraft(userKey: string): {
   };
   const flush = async (always = false) => {
     stop();
-    if (held || latest === null || (!always && latest === written)) return;
+    if (held || latest === null || (!always && latest === written && pictures === writtenPictures)) return;
     const text = latest;
     written = text;
-    await writeDraft(text, userKey);
+    writtenPictures = pictures;
+    await writeDraft(text, pictures, userKey);
   };
   const schedule = () => {
     stop();
@@ -91,15 +114,23 @@ export function keepDraft(userKey: string): {
       latest = text;
       schedule();
     },
+    images(images) {
+      pictures = images;
+      // Images alone are a draft too.
+      latest ??= "";
+      schedule();
+    },
     release() {
       held = false;
-      if (latest !== null && latest !== written) schedule();
+      if (latest !== null && (latest !== written || pictures !== writtenPictures)) schedule();
     },
     flush,
     cancel() {
       stop();
       latest = null;
       written = null;
+      pictures = [];
+      writtenPictures = [];
     },
     dispose() {
       document.removeEventListener("visibilitychange", onHidden);

@@ -1,7 +1,7 @@
 import { blocksToYDoc, yXmlFragmentToBlocks } from "@blocknote/core/yjs";
 import { describe, expect, test } from "vitest";
 import * as Y from "yjs";
-import { appendParagraphs } from "@/lib/quick/body";
+import { appendBlocks, appendParagraphs } from "@/lib/quick/body";
 import { FRAGMENT, bodyFragment } from "@/lib/sync/ydoc";
 import { editor, shape, valid } from "./helpers/blocknote";
 
@@ -72,3 +72,32 @@ describe("appendParagraphs", () => {
     expect(() => valid(doc)).toThrow();
   });
 });
+
+describe("appendBlocks", () => {
+  test("writes an image exactly as BlockNote writes one, after the lines, ids apart", () => {
+    const ours = new Y.Doc();
+    appendBlocks(ours, [
+      { kind: "line", text: "写真のメモ" },
+      { kind: "image", url: "memoca://att/one", name: "景色.webp" },
+      { kind: "image", url: "memoca://att/two", name: "スクショ.webp" },
+    ]);
+    const theirs = blocksToYDoc(
+      editor,
+      [
+        { type: "paragraph", content: "写真のメモ" },
+        { type: "image", props: { url: "memoca://att/one", name: "景色.webp" } },
+        { type: "image", props: { url: "memoca://att/two", name: "スクショ.webp" } },
+      ],
+      FRAGMENT,
+    );
+    expect(shape(bodyFragment(ours))).toBe(shape(bodyFragment(theirs)));
+    expect(valid(ours)).toBe(true);
+    const blocks = yXmlFragmentToBlocks(editor, bodyFragment(ours));
+    expect(blocks.map((block) => [block.type, (block.props as { url?: string }).url ?? ""])).toEqual([
+      ["paragraph", ""],
+      ["image", "memoca://att/one"],
+      ["image", "memoca://att/two"],
+    ]);
+  });
+});
+

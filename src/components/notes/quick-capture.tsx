@@ -1,6 +1,7 @@
 "use client";
 
-import { ArrowLeft, Check, X } from "lucide-react";
+import { ArrowLeft, Check, ImagePlus, X } from "lucide-react";
+import { uuidv7 } from "uuidv7";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useSync } from "@/components/providers/sync-provider";
@@ -10,8 +11,10 @@ import { newBuildOut } from "@/lib/build";
 import { t } from "@/lib/i18n/ja";
 import { useVisibleArea } from "@/lib/hooks/use-visible-area";
 import { useModKeyLabel } from "@/lib/platform";
-import { appendParagraphs } from "@/lib/quick/body";
-import { clearDraft, keepDraft, loadDraft } from "@/lib/quick/draft";
+import { type Allowance, prepareUpload, stageUpload } from "@/lib/media/attachments";
+import { uploadRefusal } from "@/lib/media/refusal";
+import { type QuickPart, appendBlocks } from "@/lib/quick/body";
+import { type DraftImage, clearDraft, keepDraft, loadDraft } from "@/lib/quick/draft";
 import { useQuickMode } from "@/lib/quick/mode";
 import { SHELL_HIDDEN, closeQuickWindow, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, joinShared, quickLines } from "@/lib/quick/text";
@@ -26,7 +29,30 @@ type Status =
   | { kind: "failed" }
   | { kind: "restored" }
   | { kind: "appended"; before: string }
+  /** A file turned away, and why. */
+  | { kind: "refused"; message: string }
   | null;
+
+/** An image added, with a URL of this tab's to show it by. */
+type QuickImage = DraftImage & { url: string };
+
+/** The most images one quick note takes. */
+const MAX_IMAGES = 10;
+
+/** Whether a file is an image, or one a phone sends as a HEIC photo with no type. */
+const isImage = (file: File) => file.type.startsWith("image/") || /\.(heic|heif)$/i.test(file.name);
+
+/** An image of the draft, shown again. */
+const shown = (image: DraftImage): QuickImage => ({ ...image, url: URL.createObjectURL(image.blob) });
+/** An image as the draft keeps it, its URL left out. */
+const keptImage = (image: QuickImage): DraftImage => ({
+  key: image.key,
+  name: image.name,
+  blob: image.blob,
+  mime: image.mime,
+  width: image.width,
+  height: image.height,
+});
 
 /** Both keys the save is on, for whatever keyboard: ⌘ on a Mac, Ctrl elsewhere. */
 const SAVE_KEYS = "Meta+Enter Control+Enter";
@@ -73,6 +99,7 @@ export function QuickCapture() {
       key={me?.userKey ?? ""}
       userKey={me?.userKey ?? ""}
       inbox={me?.inboxFolderId ?? null}
+      allowance={me ?? null}
       shared={shared}
     />
   );
@@ -81,10 +108,13 @@ export function QuickCapture() {
 function Capture({
   userKey,
   inbox,
+  allowance,
   shared,
 }: {
   userKey: string;
   inbox: string | null;
+  /** The account's figures, for an image to be checked against before it is added. */
+  allowance: Allowance | null;
   shared: string;
 }) {
   const router = useRouter();
@@ -126,6 +156,27 @@ function Capture({
     setText(next);
   };
 
+  // Images added, each with a URL of this tab's to show it by, let go of
+  // once it is gone (removed, saved, or the page left).
+  const [images, setImages] = useState<QuickImage[]>([]);
+  const imagesRef = useRef<QuickImage[]>([]);
+  const picker = useRef<HTMLInputElement>(null);
+  /** The images a save staged already, by key: one tried again stages none twice. */
+  const staged = useRef(new Map<string, string>());
+  const showImages = (next: QuickImage[]) => {
+    for (const image of imagesRef.current) {
+      if (!next.includes(image)) URL.revokeObjectURL(image.url);
+    }
+    imagesRef.current = next;
+    setImages(next);
+  };
+  useEffect(
+    () => () => {
+      for (const image of imagesRef.current) URL.revokeObjectURL(image.url);
+    },
+    [],
+  );
+
   useEffect(() => {
     const kept = keepDraft(userKey);
     draft.current = kept;
@@ -139,7 +190,16 @@ function Capture({
       .then((left) => {
         if (!current) return;
         const now = textRef.current;
-        if (!left || left.text.trim() === "" || now.includes(left.text)) return;
+        // Its images, under any added meanwhile.
+        const pictures = (left?.images ?? []).map(shown);
+        if (pictures.length > 0) {
+          showImages([...imagesRef.current, ...pictures]);
+          kept.images(imagesRef.current.map(keptImage));
+        }
+        if (!left || left.text.trim() === "" || now.includes(left.text)) {
+          if (pictures.length > 0) setStatus({ kind: "restored" });
+          return;
+        }
         if (now.trim() === "") {
           show(left.text);
           setStatus({ kind: "restored" });
@@ -176,6 +236,45 @@ function Capture({
     show(next);
     setStatus(null);
     draft.current?.update(next);
+  };
+
+  const editImages = (next: QuickImage[]) => {
+    showImages(next);
+    setStatus(null);
+    draft.current?.images(next.map(keptImage));
+  };
+
+  /**
+   * Adds files as images, each made ready (compressed) and checked as one
+   * added to a note is; one that cannot be is said so, the others added.
+   */
+  const addFiles = async (files: File[]) => {
+    for (const file of files) {
+      if (!isImage(file)) {
+        setStatus({ kind: "refused", message: t.quick.imagesOnly });
+        continue;
+      }
+      if (imagesRef.current.length >= MAX_IMAGES) {
+        setStatus({ kind: "refused", message: t.quick.tooManyImages(MAX_IMAGES) });
+        return;
+      }
+      try {
+        const prepared = await prepareUpload(file, allowance);
+        editImages([
+          ...imagesRef.current,
+          shown({
+            key: uuidv7(),
+            name: file.name || "image",
+            blob: prepared.blob,
+            mime: prepared.mime,
+            width: prepared.width,
+            height: prepared.height,
+          }),
+        ]);
+      } catch (error) {
+        setStatus({ kind: "refused", message: uploadRefusal(error) });
+      }
+    }
   };
 
   /** Waits for a save under way, keeps what is written, and puts the window away. */
@@ -217,7 +316,8 @@ function Capture({
 
   const save = async () => {
     const body = quickLines(textRef.current);
-    if (body.length === 0 || saving) return;
+    const pictures = imagesRef.current;
+    if ((body.length === 0 && pictures.length === 0) || saving) return;
     setSaving(true);
     setStatus(null);
     const run = (async () => {
@@ -230,19 +330,36 @@ function Capture({
         // All of it goes straight into the note's document, so the full editor
         // opens on exactly what was typed here, over whatever a save that did
         // not finish may have written.
+        // Its images under its lines, each staged to go up as one added to a
+        // note is (offline too), into the note made for them.
+        const parts: QuickPart[] = body.map((text) => ({ kind: "line", text }));
+        for (const image of pictures) {
+          let ref = staged.current.get(image.key);
+          if (!ref) {
+            ref = await stageUpload({
+              noteId,
+              file: new File([image.blob], image.name, { type: image.mime }),
+              prepared: { blob: image.blob, mime: image.mime, width: image.width, height: image.height },
+            });
+            staged.current.set(image.key, ref);
+          }
+          parts.push({ kind: "image", url: ref, name: image.name });
+        }
         const doc = await acquireDoc(noteId);
         try {
           const fragment = bodyFragment(doc);
           if (fragment.length > 0) doc.transact(() => fragment.delete(0, fragment.length));
-          appendParagraphs(doc, body);
+          appendBlocks(doc, parts);
         } finally {
           await releaseDoc(noteId);
         }
         unfinished.current = null;
+        staged.current.clear();
 
         draft.current?.cancel();
         // A draft left behind only comes back next time: not a failed save.
         await clearDraft(userKey).catch(() => undefined);
+        showImages([]);
         if (windowed) {
           show("");
           setStatus({ kind: "saved", noteId });
@@ -279,6 +396,8 @@ function Capture({
           {t.quick.openNote}
         </button>
       </>
+    ) : status?.kind === "refused" ? (
+      status.message
     ) : status?.kind === "failed" ? (
       t.quick.failed
     ) : status?.kind === "restored" ? (
@@ -341,9 +460,30 @@ function Capture({
             {t.nav.quick}
           </h1>
           <Button
+            variant="ghost"
+            size="icon"
+            onClick={() => picker.current?.click()}
+            disabled={saving}
+            aria-label={t.quick.addImage}
+          >
+            <ImagePlus className="size-4" aria-hidden />
+          </Button>
+          <input
+            ref={picker}
+            type="file"
+            accept="image/*,.heic,.heif"
+            multiple
+            hidden
+            onChange={(event) => {
+              const files = [...(event.target.files ?? [])];
+              event.target.value = "";
+              void addFiles(files);
+            }}
+          />
+          <Button
             size="sm"
             onClick={save}
-            disabled={saving || text.trim().length === 0}
+            disabled={saving || (text.trim().length === 0 && images.length === 0)}
             aria-keyshortcuts={SAVE_KEYS}
           >
             <Check className="size-4" aria-hidden />
@@ -370,6 +510,22 @@ function Capture({
         value={text}
         readOnly={saving}
         onChange={(event) => edit(event.target.value)}
+        onPaste={(event) => {
+          const files = [...event.clipboardData.files];
+          if (files.length === 0) return;
+          // Text that comes with them (an image copied from a page) is pasted as text too.
+          if (!event.clipboardData.types.includes("text/plain")) event.preventDefault();
+          void addFiles(files);
+        }}
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes("Files")) event.preventDefault();
+        }}
+        onDrop={(event) => {
+          const files = [...event.dataTransfer.files];
+          if (files.length === 0) return;
+          event.preventDefault();
+          void addFiles(files);
+        }}
         onKeyDown={(event) => {
           if (composing(event.nativeEvent)) return;
           if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
@@ -395,6 +551,25 @@ function Capture({
             : { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }
         }
       />
+
+      {images.length > 0 ? (
+        <ul aria-label={t.quick.images} className="flex shrink-0 gap-2 overflow-x-auto border-t px-4 py-2">
+          {images.map((image) => (
+            <li key={image.key} className="relative shrink-0 pt-1.5 pr-1.5">
+              {/* eslint-disable-next-line @next/next/no-img-element -- a URL of this tab's */}
+              <img src={image.url} alt={image.name} className="size-14 rounded-md border object-cover" />
+              <button
+                type="button"
+                aria-label={t.quick.removeImage(image.name)}
+                className="absolute top-0 right-0 flex size-5 items-center justify-center rounded-full bg-foreground text-background"
+                onClick={() => editImages(imagesRef.current.filter((each) => each.key !== image.key))}
+              >
+                <X className="size-3" aria-hidden />
+              </button>
+            </li>
+          ))}
+        </ul>
+      ) : null}
 
       {windowed ? (
         // One line in the window's width: what was said, or else the keys.

@@ -92,6 +92,11 @@ export const ja = {
     discard: "消す",
     takeOut: "外す",
     hint: (modKey: string, windowed: boolean) => `${modKey} + Enter で保存${windowed ? " ・ Esc で閉じる" : ""}`,
+    addImage: "画像を追加",
+    images: "追加した画像",
+    removeImage: (name: string) => `${name} を外す`,
+    imagesOnly: "即席メモに入れられるのは、文字と画像だけです。",
+    tooManyImages: (max: number) => `画像は、1 つの即席メモに ${max} 枚までです。`,
   },
   storage: {
     title: "内訳",

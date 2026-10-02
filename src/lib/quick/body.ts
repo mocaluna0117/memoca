@@ -12,18 +12,34 @@ const PARAGRAPH_PROPS = {
 } as const;
 
 /**
- * Adds a paragraph for each line at the end of a note's body, shaped exactly
- * as BlockNote writes one: in the body's one block group, a container with an
- * id of its own, and in it the paragraph with all its props. The editor then
- * opens on them as they are, rather than on something it has to repair first.
+ * BlockNote's props for an image, all but its url and name, as it writes
+ * them out: no width set (null) shows it at its own, within the note's.
  */
-export function appendParagraphs(doc: Y.Doc, lines: string[]): void {
-  if (lines.length === 0) return;
+const IMAGE_PROPS = {
+  textAlignment: "left",
+  backgroundColor: "default",
+  caption: "",
+  showPreview: true,
+  previewWidth: null,
+} as const;
+
+/** What a quick note is written as: a line of text, or an image by its `memoca://` reference. */
+export type QuickPart = { kind: "line"; text: string } | { kind: "image"; url: string; name: string };
+
+/**
+ * Adds a block for each part at the end of a note's body, shaped exactly as
+ * BlockNote writes one: in the body's one block group, a container with an
+ * id of its own, and in it the paragraph (or the image) with all its props.
+ * The editor then opens on them as they are, rather than on something it
+ * has to repair first.
+ */
+export function appendBlocks(doc: Y.Doc, parts: QuickPart[]): void {
+  if (parts.length === 0) return;
   const fragment = bodyFragment(doc);
   // Made before anything is written, so that failing to make one changes
   // nothing. Not with crypto.randomUUID, which only a secure context has: a
   // phone trying the app over plain http on the LAN would fail here.
-  const ids = lines.map(() => uuidv4());
+  const ids = parts.map(() => uuidv4());
   doc.transact(() => {
     let group = fragment
       .toArray()
@@ -35,23 +51,41 @@ export function appendParagraphs(doc: Y.Doc, lines: string[]): void {
       group = new Y.XmlElement("blockGroup");
       fragment.insert(fragment.length, [group]);
     }
-    for (const [at, line] of lines.entries()) {
+    for (const [at, part] of parts.entries()) {
       const container = new Y.XmlElement("blockContainer");
       group.insert(group.length, [container]);
       container.setAttribute("id", ids[at]!);
+      if (part.kind === "image") {
+        const image = new Y.XmlElement("image");
+        container.insert(0, [image]);
+        const props = { ...IMAGE_PROPS, name: part.name, url: part.url };
+        for (const [name, value] of Object.entries(props)) {
+          // A boolean and a null, as BlockNote keeps them: Yjs's typings say strings only.
+          image.setAttribute(name, value as string);
+        }
+        continue;
+      }
       const paragraph = new Y.XmlElement("paragraph");
       container.insert(0, [paragraph]);
       for (const [name, value] of Object.entries(PARAGRAPH_PROPS)) {
         paragraph.setAttribute(name, value);
       }
       // An empty paragraph has no text in it at all, as BlockNote leaves it.
-      if (line.length > 0) {
+      if (part.text.length > 0) {
         const text = new Y.XmlText();
         paragraph.insert(0, [text]);
-        text.insert(0, line);
+        text.insert(0, part.text);
       }
     }
   });
+}
+
+/** Adds a paragraph for each line at the end of a note's body (see {@link appendBlocks}). */
+export function appendParagraphs(doc: Y.Doc, lines: string[]): void {
+  appendBlocks(
+    doc,
+    lines.map((text) => ({ kind: "line", text })),
+  );
 }
 
 /**
