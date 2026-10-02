@@ -253,6 +253,8 @@ export class SyncEngine {
     void this.refreshReadings();
 
     if (!batch.complete) await this.resubscribe();
+    // Inbox may just have arrived, for a note made before it did.
+    else void import("./mutations").then(({ fileAwaitingInbox }) => fileAwaitingInbox()).catch(() => 0);
   }
 
   /** Pulls snapshots and updates for notes this device is behind on. */

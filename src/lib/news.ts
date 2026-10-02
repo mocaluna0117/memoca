@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-02-first-note-inbox",
+    date: "2026-10-02",
+    title: "最初のメモが Inbox に入るように",
+    details: [
+      "作ったばかりのアカウントで最初に作ったメモが、Inbox ではなくサイドバーに置かれることがあったのを直しました。こうしたメモは、Inbox の準備ができしだい Inbox に入ります。",
+    ],
+  },
+  {
     id: "2026-10-02-lock-sidebar-notes",
     date: "2026-10-02",
     title: "サイドバーのメモもロック",

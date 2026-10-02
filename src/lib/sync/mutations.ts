@@ -1,8 +1,8 @@
 "use client";
 
 import { uuidv7 } from "uuidv7";
-import { db } from "@/lib/db";
-import { deviceId } from "@/lib/db/meta";
+import { db, getMeta, setMeta } from "@/lib/db";
+import { META, deviceId } from "@/lib/db/meta";
 import { between } from "@/lib/sortkey";
 import { byPinPlace, placeAt } from "@/lib/note-order";
 import type { Folder, Note, Stamp } from "@/lib/types";
@@ -224,6 +224,27 @@ export async function inboxFolderId(): Promise<string | null> {
   return inbox && !inbox.purged ? inbox.folderId : null;
 }
 
+/**
+ * Files into Inbox the notes made here for it before this device had it
+ * (see createNote), now that it does: those still at the top level where
+ * they were made. One moved since, by hand, stays where it was put.
+ */
+export async function fileAwaitingInbox(): Promise<number> {
+  const waiting = await getMeta<string[]>(META.awaitingInbox, []);
+  if (waiting.length === 0) return 0;
+  const inbox = await inboxFolderId();
+  if (!inbox) return 0;
+  let filed = 0;
+  for (const noteId of waiting) {
+    const note = await db().notes.get(noteId);
+    if (!note || note.folderId !== null || note.purged) continue;
+    await moveNote(noteId, inbox);
+    filed += 1;
+  }
+  await setMeta(META.awaitingInbox, []);
+  return filed;
+}
+
 /* ---------------------------------------------------------------- notes */
 
 /**
@@ -247,6 +268,11 @@ export async function createNote(opts: {
   const { ts, device } = await now();
   const noteId = uuidv7();
   const folderId = opts.topLevel ? null : (opts.folderId ?? (await inboxFolderId()));
+  // For Inbox, which this device has not received yet: filed there once it
+  // has (fileAwaitingInbox), not left in the sidebar.
+  if (folderId === null && !opts.topLevel) {
+    await setMeta(META.awaitingInbox, [...(await getMeta<string[]>(META.awaitingInbox, [])), noteId]);
+  }
   const sortKey =
     folderId === null ? await siblingKeyAfterLast("notes", null) : await siblingKeyBeforeFirst(folderId);
   const kind = opts.kind ?? "note";

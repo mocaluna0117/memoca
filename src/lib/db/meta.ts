@@ -38,6 +38,11 @@ export const META = {
   replacedToTell: "replacedToTell",
   /** Images that, written again as WebP, came to no less (or are animated): not offered again. */
   convertKept: "convertKept",
+  /**
+   * Notes made here for Inbox before this device had it (a new account's
+   * first, say): kept at the top level meanwhile, filed once it arrives.
+   */
+  awaitingInbox: "awaitingInbox",
 } as const;
 
 /**

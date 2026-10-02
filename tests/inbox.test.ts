@@ -9,6 +9,7 @@ import {
   setFolderTrashed,
   setNoteTrashed,
   topLevelKeys,
+  fileAwaitingInbox,
 } from "@/lib/sync/mutations";
 import { seedInbox } from "./helpers/seed";
 
@@ -66,10 +67,27 @@ describe("Inbox is the home for unfiled notes", () => {
     expect((await topLevelKeys()).length).toBe(3);
   });
 
-  test("before Inbox has synced, a new note is kept at the top level, where it is seen", async () => {
-    // A fresh device offline on first launch has no Inbox yet. The note must
-    // still be created, and is shown in the sidebar until it is moved.
+  test("before Inbox has synced, a new note waits at the top level, and is filed once Inbox arrives", async () => {
+    // A fresh device (a new account's first note) has no Inbox yet. The
+    // note must still be created, and goes to Inbox as soon as it is here.
     const noteId = await createNote({ folderId: null });
+    // Made for the sidebar on purpose: not filed.
+    const kept = await createNote({ folderId: null, topLevel: true });
+    // Made for Inbox too, then put in a folder by hand meanwhile: left there.
+    const moved = await createNote({ folderId: null });
+    expect((await db().notes.get(noteId))?.folderId).toBeNull();
+    expect(await fileAwaitingInbox()).toBe(0);
+
+    const inbox = await seedInbox();
+    const folderId = await createFolder({ parentId: null, name: "仕事" });
+    await moveNote(moved, folderId);
+    expect(await fileAwaitingInbox()).toBe(1);
+    expect((await db().notes.get(noteId))?.folderId).toBe(inbox);
+    expect((await db().notes.get(kept))?.folderId).toBeNull();
+    expect((await db().notes.get(moved))?.folderId).toBe(folderId);
+    // Once is enough.
+    await moveNote(noteId, null);
+    expect(await fileAwaitingInbox()).toBe(0);
     expect((await db().notes.get(noteId))?.folderId).toBeNull();
   });
 
