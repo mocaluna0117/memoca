@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-02-lock-sidebar-notes",
+    date: "2026-10-02",
+    title: "サイドバーのメモもロック",
+    details: [
+      "サイドバーに置いたメモを、行の「…」のメニューの「ロックする…」でロックできるようになりました。「ロックを外す…」で元に戻せます。金庫のパスワード（または Face ID・Touch ID）を求められます。",
+      "ロックしたメモは、サイドバーで鍵の付いたアイコンになります。金庫が閉じているあいだは、名前が「ロックされたメモ」と表示されます。",
+    ],
+  },
+  {
     id: "2026-10-02-export-pdf-sharper",
     date: "2026-10-02",
     title: "PDF 書き出しをきれいに",

@@ -9,6 +9,7 @@ import {
   signUp,
   waitForSynced,
 } from "./helpers";
+import { createVaultInSettings, enterVaultPassword, vaultPrompt } from "./vault-helpers";
 
 /** A note kept in the sidebar, by its row's button. */
 const sidebarNote = (panel: Locator, name: string) =>
@@ -150,6 +151,38 @@ test.describe("notes kept in the sidebar, in no folder", () => {
     await sidebarNote(panel, "三つ目の名前").click();
     await hideFolders(page);
     await expect(page.getByLabel("メモのタイトル")).toHaveValue("三つ目の名前");
+  });
+
+  test("locked from its menu, and its lock taken off again", async ({ page }) => {
+    test.slow();
+    await signUp(page);
+    await openApp(page);
+    await createVaultInSettings(page);
+    // A full navigation closes the vault; locking asks for it again.
+    await openApp(page);
+    await addSidebarNote(page, "秘密のメモ");
+
+    let panel = await folderPanel(page);
+    await panel.getByRole("button", { name: "秘密のメモ の操作" }).click();
+    await page.getByRole("menuitem", { name: "ロックする…" }).click();
+    await enterVaultPassword(page, "ロックする");
+    await expect(page.getByText("メモをロックしました")).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(async () =>
+        (await readTable<{ title: string | null; locked: boolean }>(page, "notes")).map((n) => n.locked),
+      )
+      .toEqual([true]);
+    panel = await folderPanel(page);
+    await expect(sidebarNote(panel, "秘密のメモ")).toContainText("ロック中");
+
+    await panel.getByRole("button", { name: "秘密のメモ の操作" }).click();
+    await page.getByRole("menuitem", { name: "ロックを外す…" }).click();
+    await vaultPrompt(page).getByRole("button", { name: "ロックを外す", exact: true }).click();
+    await expect(page.getByText("メモのロックを外しました")).toBeVisible({ timeout: 30_000 });
+    await expect
+      .poll(async () => (await readTable<{ locked: boolean }>(page, "notes")).map((n) => n.locked))
+      .toEqual([false]);
+    await expect(sidebarNote(await folderPanel(page), "秘密のメモ")).not.toContainText("ロック中");
   });
 
   test("on a phone, one is opened from the folders, which close", async ({ page }, testInfo) => {

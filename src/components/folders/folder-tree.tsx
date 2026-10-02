@@ -120,7 +120,7 @@ export function FolderTree({
   const tree = useFolderTree();
   const topNotes = useTopLevelNotes();
   const top = useMemo(() => topLevelOrder(tree, topNotes), [tree, topNotes]);
-  const { moveNoteTo } = useLockActions();
+  const { moveNoteTo, toggleNoteLock } = useLockActions();
   const [movingNote, setMovingNote] = useState<Note | null>(null);
   // A note kept in the sidebar being renamed: in place (Enter), or in the
   // dialog its menu opens, as a folder is.
@@ -454,6 +454,11 @@ export function FolderTree({
                 }}
                 onRenameInDialog={(title) => openDialog(() => setRenamingNote({ noteId: note.noteId, title }))}
                 onMove={() => openDialog(() => setMovingNote(note))}
+                onToggleLock={(title, returnFocus) =>
+                  new Promise<void>((done) =>
+                    openDialog(() => void toggleNoteLock(note, title, returnFocus).finally(done)),
+                  )
+                }
                 onTrashed={() => {
                   if (selectedNoteId === note.noteId) onOpenNote(null);
                 }}
@@ -762,7 +767,8 @@ function allNodes(nodes: FolderNode[]): FolderNode[] {
  * from the keys), renamed in place by Enter or from its menu, as a folder
  * is, dragged among the folders or into one. Its name is its title: renamed
  * here, the note's own title is. Not while its title cannot be read (a
- * locked note, the vault closed).
+ * locked note, the vault closed). Locked, or its lock taken off, from its
+ * menu, as from the note's own: it is in no folder, so its lock is its own.
  */
 function TreeNoteRow({
   owner,
@@ -779,6 +785,7 @@ function TreeNoteRow({
   onRenamed,
   onRenameInDialog,
   onMove,
+  onToggleLock,
   onTrashed,
 }: {
   owner: string;
@@ -795,18 +802,23 @@ function TreeNoteRow({
   onRenamed: (byKeyboard: boolean) => void;
   onRenameInDialog: (title: string) => void;
   onMove: () => void;
+  /** Asks for the vault and locks the note, or takes its lock off; done when it has. */
+  onToggleLock: (title: string | null, returnFocus: HTMLElement | null) => Promise<void>;
   onTrashed: () => void;
 }) {
+  const [locking, setLocking] = useState(false);
+  const button = useRef<HTMLDivElement>(null);
   const title = useNoteTitle(note);
   const unlocked = useVaultUnlocked();
   const renamable = !note.locked || unlocked;
   // Its own title, to be changed: none (無題) is an empty one.
   const current = note.locked ? title : (note.title ?? "");
   const name = noteName(title, note.locked ? null : note.preview);
-  const Icon = note.locked ? FileLock : FileText;
+  const Icon = locking ? Loader2Note : note.locked ? FileLock : FileText;
   return (
     <NoteRowDropZone owner={owner} noteId={note.noteId} disabled={!canDrag}>
       <div
+        ref={button}
         className={cn(
           "group flex items-center gap-1 rounded-md pr-1 text-sm",
           "has-[[data-tree-note]:focus-visible]:ring-ring has-[[data-tree-note]:focus-visible]:ring-2",
@@ -874,6 +886,26 @@ function TreeNoteRow({
               <FolderInput className="size-4" aria-hidden />
               {t.action.move}
             </DropdownMenuItem>
+            {locking ? (
+              <DropdownMenuItem disabled>
+                <Loader2 className="size-4 animate-spin" aria-hidden />
+                処理中…
+              </DropdownMenuItem>
+            ) : (
+              <DropdownMenuItem
+                onSelect={() => {
+                  setLocking(true);
+                  void onToggleLock(
+                    // The title is only known while it is readable.
+                    renamable ? name.text : null,
+                    button.current?.querySelector<HTMLElement>("[data-tree-note]") ?? null,
+                  ).finally(() => setLocking(false));
+                }}
+              >
+                {note.locked ? <LockOpen className="size-4" aria-hidden /> : <Lock className="size-4" aria-hidden />}
+                {note.locked ? "ロックを外す…" : "ロックする…"}
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem
               variant="destructive"
@@ -893,4 +925,9 @@ function TreeNoteRow({
       </div>
     </NoteRowDropZone>
   );
+}
+
+/** The note row's icon while its lock is being put on or taken off. */
+function Loader2Note({ className }: { className?: string }) {
+  return <Loader2 className={cn(className, "animate-spin")} aria-hidden />;
 }
