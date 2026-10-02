@@ -197,6 +197,13 @@ function EditorSurface({
           user: { name: me?.name ?? "自分", color: "#0ea5e9" },
         },
         dictionary: blocknoteJa,
+        // BlockNote's animations mark a block whose type just changed with
+        // what it was (data-prev-type), and its list markers are drawn only
+        // where that mark is absent or says the same. Every note opens with
+        // its first block seen to change, from the empty line a new editor
+        // starts with (both are initialBlockId), and the mark, if it is not
+        // taken off, leaves a first bullet with no • until the next edit.
+        animations: false,
         uploadFile,
         resolveFileUrl,
         links: LINKS,

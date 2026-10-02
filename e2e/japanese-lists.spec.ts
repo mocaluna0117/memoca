@@ -1,5 +1,5 @@
 import { expect, type Locator, type Page, test } from "@playwright/test";
-import { createNote, editor, openApp, signUp } from "./helpers";
+import { createNote, editor, openApp, showList, signUp, waitForSynced } from "./helpers";
 import { raiseKeyboard } from "./image-helpers";
 
 /** The caret to the start of its line, arrow by arrow (Home is not that on a Mac). */
@@ -285,4 +285,35 @@ test("on a phone, the bar's 箇条書き makes every line selected an item, and 
       "bulletListItem:卵",
       "bulletListItem:パン",
     ]);
+});
+
+test("a note whose first line is a bullet shows its • when opened, with the caret elsewhere", async ({ page }) => {
+  // Every mark BlockNote ever puts on a block for what it was before, kept:
+  // the list markers are drawn only where there is none.
+  await page.addInitScript(() => {
+    const marked: string[] = [];
+    (window as unknown as { marked: string[] }).marked = marked;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.attributeName?.startsWith("data-prev-")) marked.push(record.attributeName);
+      }
+    }).observe(document, { subtree: true, attributes: true });
+  });
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "買い物");
+  await editor(page).click();
+  // The note's first line, the one every new note starts with.
+  await page.keyboard.type("- 牛乳");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("卵");
+  await waitForSynced(page);
+  await createNote(page, "ほか");
+  await showList(page);
+  await page.getByRole("button", { name: /買い物/ }).filter({ visible: true }).first().click();
+  const first = editor(page).locator('[data-content-type="bulletListItem"]').first();
+  await expect(first).toContainText("牛乳");
+  await page.waitForTimeout(500);
+  expect(await first.evaluate((line) => getComputedStyle(line, "::before").content)).toBe('"•"');
+  expect(await page.evaluate(() => (window as unknown as { marked: string[] }).marked)).toEqual([]);
 });
