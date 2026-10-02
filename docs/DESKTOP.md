@@ -167,7 +167,7 @@ cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 
 1. インストーラーを無人で入れ、自分のユーザー（`AppData\Local`）に入ったか、`memoca://` のリンクがアプリに結び付いたかを見る
 2. 隠れたまま起動して、動き続けるかを見る。もう一度起動しても、`memoca://` のリンクを開いても、アプリが 1 つのままかを見る
-3. WebView2 のデバッグ用のポートを開いて起動し、そこから Playwright で窓を動かして、本番のサイトを読み込んで、殻用のログイン画面（「ブラウザでログイン」）が出るか、Windows の殻として名乗っているかを見る（`desktop/e2e/window.mjs`）
+3. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9222` を付けて起動し（アプリがこれを窓の WebView2 に渡す。`window.rs` の `browser_args`）、そのポートから Playwright で窓を動かして、本番のサイトを読み込んで、殻用のログイン画面（「ブラウザでログイン」）が出るか、Windows の殻として名乗っているかを見る（`desktop/e2e/window.mjs`）
 4. 無人でアンインストールして、消えたかを見る
 
 できた `.dmg` とインストーラーは、その実行の成果物（Artifacts）からダウンロードできます。ホットキー、トレイ、ホットコーナー、自動更新など、画面と手で確かめることは、実機で確かめます。

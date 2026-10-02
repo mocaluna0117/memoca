@@ -25,7 +25,7 @@
 | — | 第 2 段と D0 のレビュー（2 回、Opus 3 人ずつ） | 済み（2026-09-27）。下の「第 2 段のレビューで直したこと」と「第 2 段と D0 の 2 回目のレビューで直したこと」 |
 | D1 | Mac 版（Tauri）と、殻のログインの作り直し | 済み（2026-09-28）。本番でも殻のログインを有効にした。下の「D1 の実装で決めたこと」。使い方は [`DESKTOP.md`](DESKTOP.md) |
 | D3 | 即席メモに画像 | 済み（2026-10-03）。オーナーの判断で D2 より先に。下の「D3 の実装で決めたこと」。Apple の署名の項目は、Apple Developer Program に入らないため外した（2026-09-30） |
-| D2 | Windows 版（GitHub Actions でインストーラーと自動の動作確認）、ログイン時の自動起動、自動更新、窓の位置の記憶 | 進行中（2026-10-03 再開）。実機の確認はオーナーの Windows PC で |
+| D2 | Windows 版（GitHub Actions でインストーラーと自動の動作確認）、ログイン時の自動起動、自動更新、窓の位置の記憶 | 実装と CI の確認は済み（2026-10-03。Windows のジョブでインストールから窓の読み込み・アンインストールまで通る）。`desktop-v0.2.0` を下書きのリリースに。残りは、オーナーが下書きを公開することと、実機での確認（Windows PC と Mac：ホットキー・トレイ・ホットコーナー・ログイン時の起動・自動更新） |
 
 ### S1 の実装で決めたこと（2026-09-26）
 
@@ -339,7 +339,7 @@ Q4〜D0 と、1 回目のレビューで直したもの（Opus 3 人：安全、
   - トレイのアイコンが画面の下半分にあれば（タスクバーが下）、窓をアイコンの上に出す（両方の OS で同じ判断）。
   - 画面とポインタ：Windows は、ポインタも画面もトレイのアイコンも、画面ごとのピクセルで届く。ポインタのある画面をピクセルのまま探し、その画面の倍率で点にそろえ、窓はその倍率でピクセルに戻して置く（`screen::position`）。Mac は D1 のまま。
   - アプリが閉じているときにログインのリンク（`memoca://`）で起動されたら、そのリンクを、起動中に届いたときと同じに受け取る（`get_current`）。
-- **CI での自動の確認**（`.github/workflows/desktop.yml` の windows のジョブ）：`desktop/` を変えて main に push すると、Windows の環境で、インストーラーを無人で入れる → `AppData\Local` に入ったか、`HKCU\Software\Classes\memoca` があるか → 隠れたまま起動して 10 秒後も動いているか → 2 回目の起動と `memoca://` のリンクでアプリが増えないか → WebView2 のデバッグ用のポートを開いて起動し、Playwright でそのポートから窓を動かして（WebDriver の tauri-driver は、CI では Edge のドライバーがデバッグ用のポートを見つけられず動かなかった）、本番のサイトの殻用のログイン画面（「ブラウザでログイン」）が出て、Windows の殻として名乗り、橋渡し（`memocaShell`）があるか → 無人でアンインストールして消えたか、を確かめる（`desktop/scripts/check-windows.ps1`、`desktop/e2e/window.mjs`）。ホットキー・トレイ・ホットコーナー・自動更新は、画面と手が要るので実機で。
+- **CI での自動の確認**（`.github/workflows/desktop.yml` の windows のジョブ）：`desktop/` を変えて main に push すると、Windows の環境で、インストーラーを無人で入れる → `AppData\Local` に入ったか、`HKCU\Software\Classes\memoca` があるか → 隠れたまま起動して 10 秒後も動いているか → 2 回目の起動と `memoca://` のリンクでアプリが増えないか → WebView2 のデバッグ用のポートを開いて起動し、Playwright でそのポートから窓を動かして（WebView2 は `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` やレジストリのポリシーをアプリ自身の引数に足すはずだが、CI では足されず、ポートが開かなかった。tauri-driver（WebDriver）も同じ理由で動かなかった。そこで、アプリがこの変数を読んで wry の既定の引数に足し、窓の WebView2 に渡す。WebView2 の説明どおりの動きをアプリの側でそろえるだけで、できることは増えない）、本番のサイトの殻用のログイン画面（「ブラウザでログイン」）が出て、Windows の殻として名乗り、橋渡し（`memocaShell`）があるか → 無人でアンインストールして消えたか、を確かめる（`desktop/scripts/check-windows.ps1`、`desktop/e2e/window.mjs`）。ホットキー・トレイ・ホットコーナー・自動更新は、画面と手が要るので実機で。
 - **ログイン時に起動**（`tauri-plugin-autostart`、`--hidden` で起動）：初めて起動したときにオンにする（即席メモはパソコンをつけたときからあってほしいため）。メニューの「ログイン時に起動」で切り替える。Mac は LaunchAgent。
 - **自動更新**（`tauri-plugin-updater`）：起動して 1 分後と 6 時間ごと、またはメニューの「アップデートを確認」で、GitHub の最新の公開リリースの `latest.json` を見る。署名の鍵の組は 2026-10-03 に作り、秘密の鍵と合言葉はリポジトリの外（`~/memoca-backups/desktop-updater/`）と GitHub の Secrets（`TAURI_SIGNING_PRIVATE_KEY`、`TAURI_SIGNING_PRIVATE_KEY_PASSWORD`、オーナーの了承のうえで gh で登録）に置き、公開鍵を `tauri.conf.json` に書いた。窓が出ているあいだは入れず、5 分ごとに見直す（書いている途中で起動し直さないため）。メニューから頼んだときは、窓を隠して下書きを残してから入れる。結果はメニューの「バージョン」の行に出す。リリースは下書きのまま作り、オーナーが公開したときに届く。Windows はインストーラーを passive で動かす。
   - Mac の ad-hoc 署名のままでも更新できる：アプリが自分で取ってきたファイルには、Gatekeeper の「ダウンロードした印」が付かない。
