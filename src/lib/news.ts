@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-02-export-pdf-sharper",
+    date: "2026-10-02",
+    title: "PDF 書き出しをきれいに",
+    details: [
+      "「PDF で書き出す」で作る PDF の解像度を 2 倍に上げました（約 200 dpi から約 400 dpi へ）。拡大したり印刷したりしても、文字がにじまずくっきり見えます。",
+    ],
+  },
+  {
     id: "2026-10-02-rename-sidebar-notes",
     date: "2026-10-02",
     title: "サイドバーのメモの名前を変更",

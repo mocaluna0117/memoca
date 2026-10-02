@@ -55,7 +55,7 @@ test("a note is saved as a PDF that looks as it does, light whatever the theme, 
   // Two sheets or more, each its picture at the width of a sheet.
   const found = pictures(pdf);
   expect(found.length).toBeGreaterThanOrEqual(2);
-  for (const picture of found) expect(picture.width).toBe(1440);
+  for (const picture of found) expect(picture.width).toBe(2880);
   // Light: the first sheet's corner is white, not the dark theme's.
   const first = found[0]!;
   expect([...first.rgb!.subarray(0, 3)].every((channel) => channel > 240)).toBe(true);

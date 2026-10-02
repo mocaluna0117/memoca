@@ -4,10 +4,18 @@ import { A4, type PageImage, writePdf } from "./pdf-writer";
 
 /** The margin round each sheet, in points: about 14 mm. */
 const MARGIN = 40;
-/** How sharp the pictures are: twice the screen's pixels, as a phone shows them. */
-const SCALE = 2;
-/** The most a page's picture is wide, in pixels, whatever the note's width. */
-const MAX_WIDTH = 2000;
+/**
+ * How sharp the pictures are: four pixels to each of the screen's, about
+ * 400 dpi on the sheet (720 pixels across 515 points), as sharp as print
+ * asks for. Twice, 200 dpi, read soft when zoomed in or printed.
+ */
+const SCALE = 4;
+/**
+ * The most a page's picture is wide, in pixels, whatever the note's width:
+ * 2,880 by about 4,070 is 11.7 million pixels, within the 16.7 million a
+ * canvas may have on an iPhone.
+ */
+const MAX_WIDTH = 2880;
 /** A JPEG is kept only when it is this much smaller than the lossless picture. */
 const JPEG_GAIN = 0.6;
 /**
