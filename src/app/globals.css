@@ -187,6 +187,31 @@
   border-top: 2px solid var(--foreground);
 }
 
+/* Columns, side by side where the note is wide enough, one under another
+   where it is not (a phone): too narrow, each would be a word a line. By
+   the note's own width rather than the screen's, so a note made a PDF,
+   laid out at a sheet's width, has its columns side by side from a phone
+   too. */
+.memoca-editor {
+  container: memoca-note / inline-size;
+}
+@container memoca-note (max-width: 36rem) {
+  .memoca-editor .bn-block-column-list {
+    flex-direction: column;
+  }
+  .memoca-editor .bn-block-column {
+    /* Over the width each is given, as its share of the row. */
+    flex: none !important;
+    width: 100%;
+    padding: 4px 0;
+  }
+  /* Where one ends and the next begins: an empty one is otherwise not seen
+     at all. */
+  .memoca-editor .bn-block-column + .bn-block-column {
+    border-top: 1px dashed var(--border);
+  }
+}
+
 /* Text colours brighter than BlockNote's own, which are Notion's, muted
    enough that green and blue read almost as grey (green #4d6461, blue
    #0b6e99): vivid, while still to be read on the note's background. Over

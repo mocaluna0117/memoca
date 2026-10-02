@@ -91,7 +91,8 @@
     ],
     "patchedDependencies": {
       "@handlewithcare/prosemirror-inputrules@0.1.4": "patches/@handlewithcare__prosemirror-inputrules@0.1.4.patch",
-      "@blocknote/react@0.55.0": "patches/@blocknote__react@0.55.0.patch"
+      "@blocknote/react@0.55.0": "patches/@blocknote__react@0.55.0.patch",
+      "@blocknote/xl-multi-column@0.55.0": "patches/@blocknote__xl-multi-column@0.55.0.patch"
     },
     "overrides": {
       "browserslist": "4.29.0",

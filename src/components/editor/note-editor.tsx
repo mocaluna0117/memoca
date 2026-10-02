@@ -4,9 +4,20 @@ import "@blocknote/core/fonts/inter.css";
 import "@blocknote/shadcn/style.css";
 
 import { ja as blocknoteJa } from "@blocknote/core/locales";
-import { BlockNoteSchema, type BlockNoteEditor, defaultBlockSpecs } from "@blocknote/core";
+import { BlockNoteSchema, type BlockNoteEditor, combineByGroup, defaultBlockSpecs } from "@blocknote/core";
+import { filterSuggestionItems } from "@blocknote/core/extensions";
 import { withCollaboration } from "@blocknote/core/yjs";
-import { DesktopFormattingToolbarController, useCreateBlockNote } from "@blocknote/react";
+import {
+  DesktopFormattingToolbarController,
+  SuggestionMenuController,
+  getDefaultReactSlashMenuItems,
+  useCreateBlockNote,
+} from "@blocknote/react";
+import {
+  getMultiColumnSlashMenuItems,
+  locales as multiColumnLocales,
+  withMultiColumn,
+} from "@blocknote/xl-multi-column";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { useConvex } from "convex/react";
 import { useTheme } from "next-themes";
@@ -46,10 +57,19 @@ import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
 import { memocaFileBlock } from "@/components/editor/pdf-file-block";
 
-/** BlockNote's blocks, with a file block that shows a PDF's pages (see memocaFileBlock). */
-const SCHEMA = BlockNoteSchema.create({
-  blockSpecs: { ...defaultBlockSpecs, file: memocaFileBlock() },
-});
+/**
+ * BlockNote's blocks, with a file block that shows a PDF's pages (see
+ * memocaFileBlock), and columns: blocks side by side, in a row of two or
+ * more (BlockNote's multi-column, GPL-3.0).
+ */
+const SCHEMA = withMultiColumn(
+  BlockNoteSchema.create({
+    blockSpecs: { ...defaultBlockSpecs, file: memocaFileBlock() },
+  }),
+);
+
+/** BlockNote's words, and its columns', in Japanese. */
+const DICTIONARY = { ...blocknoteJa, multi_column: multiColumnLocales.ja };
 
 /** A link clicked in a note opens apart from the app's window (see openLinkApart). */
 const LINKS = { onClick: (event: MouseEvent) => openLinkApart(event) };
@@ -203,7 +223,7 @@ function EditorSurface({
           user: { name: me?.name ?? "自分", color: "#0ea5e9" },
         },
         schema: SCHEMA,
-        dictionary: blocknoteJa,
+        dictionary: DICTIONARY,
         // BlockNote's animations mark a block whose type just changed with
         // what it was (data-prev-type), and its list markers are drawn only
         // where that mark is absent or says the same. Every note opens with
@@ -231,10 +251,12 @@ function EditorSurface({
   );
 
   const editor = useCreateBlockNote(options, [doc]);
+  // As Memoca's own parts take it: they need none of the columns' types.
+  const plain = editor as unknown as BlockNoteEditor;
   useEffect(() => {
-    editorRef.current = editor as unknown as BlockNoteEditor;
-  }, [editor]);
-  useRelockCopies({ client, noteId, editor, locked, enabled: !readOnly, allowance: me });
+    editorRef.current = plain;
+  }, [plain]);
+  useRelockCopies({ client, noteId, editor: plain, locked, enabled: !readOnly, allowance: me });
   const loadImage = useCallback(
     async (url: string) => {
       const id = idFromRef(url);
@@ -243,7 +265,7 @@ function EditorSurface({
     },
     [client],
   );
-  usePlainTextCopy(editor, loadImage);
+  usePlainTextCopy(plain, loadImage);
   // Enter in the title: down into the note's first line (a new one above an
   // image the note starts with).
   useEffect(
@@ -259,7 +281,7 @@ function EditorSurface({
   );
 
   return (
-    <ImageCrop editor={editor} noteId={noteId} editable={!readOnly}>
+    <ImageCrop editor={plain} noteId={noteId} editable={!readOnly}>
       <BlockNoteView
         editor={editor}
         editable={!readOnly}
@@ -267,7 +289,23 @@ function EditorSurface({
         className="memoca-editor min-h-[50vh] py-4"
         data-locked={locked ? "true" : undefined}
         formattingToolbar={false}
+        slashMenu={false}
       >
+        {/* BlockNote's / menu, with 二列 and 三列 among its basic blocks. Not
+            in a table's cells, as BlockNote's own is not. */}
+        <SuggestionMenuController
+          triggerCharacter="/"
+          shouldOpen={(state) => !state.selection.$from.parent.type.isInGroup("tableContent")}
+          getItems={async (query) =>
+            filterSuggestionItems(
+              combineByGroup(
+                getDefaultReactSlashMenuItems(editor),
+                getMultiColumnSlashMenuItems(editor),
+              ),
+              query,
+            )
+          }
+        />
         {/* BlockNote's own toolbar, with トリミング added for images. */}
         {/* The floating one only, on a phone too: BlockNote's own for a phone
             (from 0.55) is pinned above the keyboard, where Memoca's block bar

@@ -1,0 +1,35 @@
+diff --git a/dist/blocknote-xl-multi-column.js b/dist/blocknote-xl-multi-column.js
+index 53c7d740548cf31b3ade8aaf77e0e78c3a82d3cb..bc806b7026cd5b46d52c7f7e220d5d76864fa20d 100644
+--- a/dist/blocknote-xl-multi-column.js
++++ b/dist/blocknote-xl-multi-column.js
+@@ -372,7 +372,7 @@ function j(e, t, n) {
+ 		node: s.node
+ 	};
+ 	let l = c.getBoundingClientRect(), u = "regular";
+-	return e.clientX <= l.left ? u = "left" : e.clientX >= l.right - l.width * A && (u = "right"), {
++	return e.clientX > l.left && e.clientX <= l.left + l.width * A ? u = "left" : e.clientX >= l.right - l.width * A && (u = "right"), {
+ 		position: u,
+ 		posBeforeNode: s.posBeforeNode,
+ 		node: s.node
+diff --git a/src/extensions/DropCursor/multiColumnDropCursor.ts b/src/extensions/DropCursor/multiColumnDropCursor.ts
+index 77d93b7f4aae687b0e60d2d93f9c3caafcb7237d..e379bdaf697e2e33316f6c4076f8b3b0bf284676 100644
+--- a/src/extensions/DropCursor/multiColumnDropCursor.ts
++++ b/src/extensions/DropCursor/multiColumnDropCursor.ts
+@@ -55,8 +55,15 @@ export function detectEdgePosition(
+ 
+   let position: "regular" | "left" | "right" = "regular";
+ 
+-  if (event.clientX <= blockRect.left) {
+-    // for left edge, there's no margin to consider (drop must be to left of the block)
++  if (
++    event.clientX > blockRect.left &&
++    event.clientX <= blockRect.left + blockRect.width * PERCENTAGE_OF_BLOCK_WIDTH_CONSIDERED_SIDE_DROP
++  ) {
++    // Memoca: inside the block's left edge, as for the right one. Left of
++    // the block is the margin the side menu's handle is in, and a drag there
++    // reaches the editor at its left edge exactly (the side menu moves it
++    // there): a block dragged straight down it is being moved, not put
++    // beside another.
+     position = "left";
+   } else if (
+     event.clientX >=

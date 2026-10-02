@@ -14,6 +14,7 @@ import {
   type Transaction,
 } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
+import { detectEdgePosition, multiColumnDropCursor } from "@blocknote/xl-multi-column";
 import { uncover } from "@/components/editor/stuck-toggles";
 
 /**
@@ -361,12 +362,23 @@ function light(view: EditorView | null, button: Element | null) {
  * toggle with nothing inside has its "add a block" button lit, as the
  * cursor alone, below its line, looks as it does for a drop after it.
  */
-export function computeDropPosition({ view, event, defaultPosition }: ComputeDropPositionContext) {
+export function computeDropPosition(context: ComputeDropPositionContext) {
+  const { view, event, defaultPosition } = context;
+  const side = sideOf(view, event);
   const { dragging } = view;
   const dragged = dragging?.move ? draggedFrom(view.state.doc, dragging.slice) : null;
-  const drop = dragged
-    ? toggleDropTarget(view, event.target, event.clientX, event.clientY, dragged)
-    : null;
+  const drop =
+    dragged && side !== "right"
+      ? toggleDropTarget(view, event.target, event.clientX, event.clientY, dragged)
+      : null;
+  // By a block's right edge, or left of one where no toggle takes it:
+  // beside it, in a column of its own, as BlockNote's columns place it (and
+  // their cursor, upright, says so). Down the margin the handle is in, into
+  // a toggle, as before.
+  if (!drop && side !== null) {
+    light(view, null);
+    return multiColumnDropCursor.hooks.computeDropPosition!(context);
+  }
   const empty = drop?.where === "inside" && drop.block.node.childCount < 2;
   const content = empty ? view.nodeDOM(drop.block.pos + 1) : null;
   light(
@@ -374,6 +386,12 @@ export function computeDropPosition({ view, event, defaultPosition }: ComputeDro
     content instanceof HTMLElement ? content.querySelector(".bn-toggle-add-block-button") : null,
   );
   return drop ? { pos: dropPos(drop), orientation: "block-horizontal" as const } : defaultPosition;
+}
+
+/** Which edge of a block a drag is by, where it may go beside it in a column; null for neither. */
+function sideOf(view: EditorView, event: DragEvent): "left" | "right" | null {
+  const edge = detectEdgePosition(event, view, view.state);
+  return edge === null || edge.position === "regular" ? null : edge.position;
 }
 
 /**
@@ -692,7 +710,9 @@ export const toggles = createExtension(({ editor }) => ({
       props: {
         handleDrop(view, event, slice, moved) {
           light(null, null);
-          if (!moved) return false;
+          // By a block's right edge: the columns' to place, as anywhere no
+          // toggle takes it.
+          if (!moved || sideOf(view, event) === "right") return false;
           const dragged = draggedFrom(view.state.doc, slice);
           const drop =
             dragged && toggleDropTarget(view, event.target, event.clientX, event.clientY, dragged);

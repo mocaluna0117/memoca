@@ -2,6 +2,9 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import type { Node } from "prosemirror-model";
 import { NodeSelection, type Selection, TextSelection } from "prosemirror-state";
 
+/** What holds blocks without being one: a block's group, a row of columns, a column. */
+const CONTAINERS = new Set(["blockGroup", "columnList", "column"]);
+
 /**
  * The image a selection takes and nothing else (no text, no other block):
  * its url, or null. Selected by a click, or with Shift and the arrow keys
@@ -19,8 +22,9 @@ export function imageAlone(doc: Node, selection: Selection): string | null {
   const found: Node[] = [];
   let other = false;
   doc.nodesBetween(from, to, (node, pos) => {
-    if (node.type.name !== "blockContainer" && node.type.name !== "blockGroup") return false;
-    if (node.type.name === "blockGroup") return true;
+    // Groups, and columns and the rows of them, hold blocks: looked into.
+    if (CONTAINERS.has(node.type.name)) return true;
+    if (node.type.name !== "blockContainer") return false;
     const content = node.firstChild!;
     const whole = from <= pos + 1 && pos + 1 + content.nodeSize <= to;
     if (whole && content.type.name === "image") found.push(content);

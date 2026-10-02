@@ -98,7 +98,10 @@ function headOver(doc: Node, block: Found, dir: "down" | "up"): number | null {
 /** Each image or file a range takes whole, by where its content node is. */
 function eachMedia(doc: Node, from: number, to: number, f: (pos: number, content: Node) => void) {
   doc.nodesBetween(from, to, (node, pos) => {
-    if (node.type.name === "blockGroup") return true;
+    // Groups, and columns and the rows of them, hold blocks: looked into.
+    if (node.type.name === "blockGroup" || node.type.name === "columnList" || node.type.name === "column") {
+      return true;
+    }
     if (node.type.name !== "blockContainer") return false;
     const content = node.firstChild!;
     if (isMedia(node) && from <= pos + 1 && pos + 1 + content.nodeSize <= to) f(pos + 1, content);
