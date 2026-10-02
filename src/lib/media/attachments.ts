@@ -49,7 +49,7 @@ export class QuotaError extends Error {
   }
 }
 
-/** A file of a type the server does not take in an ordinary note, such as a PDF. */
+/** A file of a type the server does not take in an ordinary note, such as a Word file. */
 export class UnsupportedFileError extends Error {
   constructor(readonly type: string) {
     super(`unsupported file: ${type}`);
@@ -59,13 +59,14 @@ export class UnsupportedFileError extends Error {
 
 /**
  * The types, other than images, the server takes in an ordinary note: videos,
- * and a file of no known type. A locked note's file goes up encrypted, with no
- * type the server can see, so it takes any.
+ * PDFs, and a file of no known type. A locked note's file goes up encrypted,
+ * with no type the server can see, so it takes any.
  */
 export const UPLOADABLE_FILE_TYPES = [
   "video/mp4",
   "video/webm",
   "video/quicktime",
+  "application/pdf",
   "application/octet-stream",
 ] as const;
 

@@ -368,11 +368,14 @@ describe("giving a note that is not locked its own copy of an encrypted file", (
   });
 
   test("a file of a type only a locked note can hold is left as it is", async () => {
-    await sealedFile("pdf", "a", { mime: "application/pdf", name: "資料.pdf" });
+    await sealedFile("docx", "a", {
+      mime: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      name: "資料.docx",
+    });
     await db().notes.put(note("d"));
-    await writeBody("d", [refFor("pdf")]);
+    await writeBody("d", [refFor("docx")]);
     expect(await plainCopies(server.client, "d")).toEqual(NONE);
-    expect(await refsOf("d")).toEqual(["pdf"]);
+    expect(await refsOf("d")).toEqual(["docx"]);
     expect(await db().pendingUploads.count()).toBe(0);
   });
 

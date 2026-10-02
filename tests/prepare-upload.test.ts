@@ -142,11 +142,21 @@ describe("getting a file ready to add", () => {
   });
 
   test("a file of a type the server does not take is refused in an ordinary note", async () => {
-    await expect(prepareUpload(file("application/pdf", 500), me())).rejects.toBeInstanceOf(UnsupportedFileError);
+    const docx = file("application/vnd.openxmlformats-officedocument.wordprocessingml.document", 500, "資料.docx");
+    await expect(prepareUpload(docx, me())).rejects.toBeInstanceOf(UnsupportedFileError);
     await expect(prepareUpload(file("audio/mpeg", 500), me())).rejects.toBeInstanceOf(UnsupportedFileError);
     // One of no known type, the server takes.
     const unknown = file("", 500, "memo.bin");
     expect((await prepareUpload(unknown, me())).blob).toBe(unknown);
+  });
+
+  test("a PDF goes up as it is in an ordinary note, held to the limit for files other than images", async () => {
+    const pdf = file("application/pdf", 500, "見積書.pdf");
+    expect(await prepareUpload(pdf, me())).toMatchObject({ blob: pdf, mime: "application/pdf" });
+    await expect(prepareUpload(file("application/pdf", 6_000, "大きい.pdf"), me())).rejects.toMatchObject({
+      message: "tooLarge",
+      kind: "other",
+    });
   });
 
   test("a locked note takes any file, and an image it cannot read as it is: both go up encrypted", async () => {

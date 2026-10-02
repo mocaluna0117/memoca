@@ -162,7 +162,7 @@ export const ja = {
       "HEIC 形式の画像は、このブラウザでは読み込めません。JPEG か PNG にするか、iPhone や Mac の Safari から追加してください。",
     unsupportedImage:
       "この形式の画像は追加できません。JPEG・PNG・WebP・GIF のいずれかにしてから、もう一度お試しください。",
-    unsupportedFile: "この種類のファイルは追加できません。追加できるのは画像と動画（MP4・MOV・WebM）です。",
+    unsupportedFile: "この種類のファイルは追加できません。追加できるのは画像・動画（MP4・MOV・WebM）・PDF です。",
   },
 } as const;
 

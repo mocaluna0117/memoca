@@ -1,7 +1,7 @@
 import { expect, type Page, test } from "@playwright/test";
-import { createNote, openApp, signUp } from "./helpers";
-import { pasteFile } from "./image-helpers";
-import { readTable } from "./local-db";
+import { createNote, openApp, signUp, waitForSynced } from "./helpers";
+import { pasteFile, uploadsDrained } from "./image-helpers";
+import { clearTable, readTable } from "./local-db";
 
 /** Nothing of a refused file is kept: no file waiting, no row, no block left loading. */
 async function nothingKept(page: Page) {
@@ -38,8 +38,39 @@ test.describe("adding a file to a note", () => {
     await signUp(page);
     await openApp(page);
     await createNote(page, "資料を貼る");
-    await pasteFile(page, { name: "資料.pdf", type: "application/pdf", size: 4096 });
+    await pasteFile(page, {
+      name: "資料.docx",
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      size: 4096,
+    });
     await expect(page.getByText("この種類のファイルは追加できません", { exact: false })).toBeVisible();
     await nothingKept(page);
+  });
+
+  test("a PDF goes into an ordinary note, is stored on the server, and is saved again under its name", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "the download is pressed for with a mouse");
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "見積もり");
+    await pasteFile(page, { name: "見積書.pdf", type: "application/pdf", size: 4096 });
+    const block = page.locator('[data-content-type="file"]').first();
+    await expect(block).toContainText("見積書.pdf", { timeout: 30_000 });
+    await uploadsDrained(page);
+    await waitForSynced(page);
+    await expect
+      .poll(async () => (await readTable(page, "attachments")).map((row) => [row.mime, row.locked]))
+      .toEqual([["application/pdf", false]]);
+
+    // Not kept on this device: fetched from the server.
+    await clearTable(page, "blobs");
+    await page.reload();
+    await expect(block).toContainText("見積書.pdf", { timeout: 30_000 });
+    const saving = page.waitForEvent("download", { timeout: 20_000 });
+    await block.click();
+    await page.getByRole("button", { name: "ファイルをダウンロード", exact: true }).click();
+    const saved = await saving;
+    expect(saved.suggestedFilename()).toBe("見積書.pdf");
   });
 });

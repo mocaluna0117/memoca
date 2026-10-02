@@ -355,7 +355,7 @@ async function planCopies(
       }
       // An encrypted file's name and type are sealed with it, and a plain
       // copy takes them over. It has to be of a type a plain note can hold:
-      // one only a locked note takes, such as a PDF, is not copied out.
+      // one only a locked note takes, such as a Word file, is not copied out.
       const meta = plain ? await sealedMeta(row).catch(() => null) : null;
       if (meta && !PLAIN_TYPES.includes(meta.mime)) continue;
       const known = row.mime ?? meta?.mime ?? null;

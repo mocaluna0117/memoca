@@ -92,6 +92,7 @@ export const ALLOWED_MIME = [
   "video/mp4",
   "video/webm",
   "video/quicktime",
+  "application/pdf",
   /** Locked attachments are uploaded as opaque ciphertext. */
   "application/octet-stream",
 ] as const;
