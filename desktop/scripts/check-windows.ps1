@@ -38,42 +38,73 @@ Start-Process "memoca://auth?code=not-a-code&state=not-a-state"
 Start-Sleep -Seconds 5
 Check ((Running).Count -eq 1) "a memoca:// link goes to the one running"
 
-Stop-Process -Name "Memoca" -Force
-# And its WebView2's processes, which would otherwise be used again by the
-# next start, without the debugging port it is started with below.
-Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force
-for ($i = 0; $i -lt 15 -and @(Get-Process -Name "msedgewebview2", "Memoca" -ErrorAction SilentlyContinue).Count -gt 0; $i++) {
-  Start-Sleep -Seconds 1
+# Every Memoca and WebView2 process there is: started with, from, when.
+function Show-Running($why) {
+  Write-Host "-- running, $($why):"
+  Get-CimInstance Win32_Process |
+    Where-Object { $_.Name -in "memoca.exe", "msedgewebview2.exe" } |
+    ForEach-Object { Write-Host "$($_.ProcessId) (from $($_.ParentProcessId), $($_.CreationDate)) $($_.CommandLine)" }
 }
 
-if (-not $NoWindow) {
-  # Started as at login, hidden, its WebView2 with a debugging port the
-  # window's checks drive it through.
-  Write-Host "Checking the window, through its WebView2's debugging port"
-  $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
-  Start-Process -FilePath $exe.FullName -ArgumentList "--hidden"
-  Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-  $open = $false
-  for ($i = 0; $i -lt 60 -and -not $open; $i++) {
+# Stops the app and its WebView2's processes. One of these still there for
+# the app's data folder is shared by the next start, and that start's
+# WebView2 then fails for being asked with other arguments.
+function Stop-All {
+  for ($i = 0; $i -lt 15; $i++) {
+    $left = @(Get-Process -Name "Memoca", "msedgewebview2" -ErrorAction SilentlyContinue)
+    if ($left.Count -eq 0) { return }
+    $left | Stop-Process -Force -ErrorAction SilentlyContinue
+    Start-Sleep -Seconds 1
+  }
+  Show-Running "still, once stopped"
+}
+
+# Starts it hidden, as at login, and waits for its WebView2's debugging
+# port; if it does not open, says what was running and what the app said.
+function Start-Debuggable($how) {
+  Write-Host "Starting it with its WebView2's debugging port, $how"
+  $said = Join-Path ([IO.Path]::GetTempPath()) "memoca-said.txt"
+  $app = Start-Process -FilePath $exe.FullName -ArgumentList "--hidden" -PassThru `
+    -RedirectStandardOutput "$said.out" -RedirectStandardError "$said.err"
+  for ($i = 0; $i -lt 45; $i++) {
     try {
       Invoke-RestMethod "http://127.0.0.1:9222/json/version" -TimeoutSec 2 | Out-Null
-      $open = $true
+      return $true
     } catch {
       Start-Sleep -Seconds 1
     }
   }
+  Show-Running "the port not open"
+  if ($app.HasExited) { Write-Host "-- the app ended, with $($app.ExitCode)" } else { Write-Host "-- the app is running ($($app.Id))" }
+  Get-Content "$said.out", "$said.err" -ErrorAction SilentlyContinue | ForEach-Object { Write-Host "app: $_" }
+  return $false
+}
+
+Stop-All
+
+if (-not $NoWindow) {
+  # Its window driven through its WebView2's debugging port, opened by
+  # either of WebView2's ways of being given more arguments: an environment
+  # variable, or (if that is not taken) a policy in the registry.
+  Write-Host "Checking the window"
+  Show-Running "before it is started"
+  $policy = "HKCU:\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
   try {
+    $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+    $open = Start-Debuggable "from WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
+    Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     if (-not $open) {
-      # What was started, and with what, for whoever reads the log.
-      Get-CimInstance Win32_Process -Filter "Name = 'Memoca.exe' OR Name = 'msedgewebview2.exe'" |
-        ForEach-Object { Write-Host "$($_.ProcessId) $($_.CommandLine)" }
+      Stop-All
+      New-Item -Path $policy -Force | Out-Null
+      New-ItemProperty -Path $policy -Name "memoca.exe" -Value "--remote-debugging-port=9222" -Force | Out-Null
+      $open = Start-Debuggable "from the AdditionalBrowserArguments policy"
     }
     Check $open "its WebView2 opens the debugging port it is started with"
     node e2e/window.mjs 9222
     if ($LASTEXITCODE -ne 0) { throw "the window's checks failed" }
   } finally {
-    Stop-Process -Name "Memoca" -Force -ErrorAction SilentlyContinue
-    Get-Process -Name "msedgewebview2" -ErrorAction SilentlyContinue | Stop-Process -Force
+    Remove-Item -Path $policy -Recurse -ErrorAction SilentlyContinue
+    Stop-All
   }
 }
 
