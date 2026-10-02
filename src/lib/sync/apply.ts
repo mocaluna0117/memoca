@@ -85,6 +85,10 @@ function mergeNote(local: Note, remote: RemoteNote): Note {
     next.pinned = remote.pinned;
     next.ts = { ...next.ts, pin: remote.ts.pin };
   }
+  if (isNewer(remote.ts.pinPlace ?? ZERO_STAMP, local.ts.pinPlace ?? ZERO_STAMP)) {
+    next.pinKey = remote.pinKey;
+    next.ts = { ...next.ts, pinPlace: remote.ts.pinPlace };
+  }
   if (isNewer(remote.ts.trash, local.ts.trash)) {
     next.deletedAt = remote.deletedAt;
     next.ts = { ...next.ts, trash: remote.ts.trash };

@@ -31,7 +31,7 @@ const ShellContext = createContext<ShellContextValue>({ openDrawer: () => {} });
 export const useShell = () => useContext(ShellContext);
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { selection, openFolder } = useWorkspace();
+  const { selection, openFolder, openPinned } = useWorkspace();
   const drawer = useDrawerSwipe();
   const [sidebarWidth] = usePaneWidth(SIDEBAR);
   const { show: showDrawer, hide: hideDrawer, areaRef, pageRef, barRef } = drawer;
@@ -46,6 +46,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     },
     [openFolder, hideDrawer],
   );
+
+  const selectPinned = useCallback(() => {
+    openPinned();
+    hideDrawer();
+  }, [openPinned, hideDrawer]);
 
   const selectWithoutClosing = useCallback(
     (folderId: string) => openFolder(folderId),
@@ -72,6 +77,8 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Sidebar
               selectedFolderId={selection.folderId}
               onSelectFolder={select}
+              pinnedSelected={selection.pinned}
+              onSelectPinned={selectPinned}
             />
           </div>
           <PaneResizer pane={SIDEBAR} label="サイドバーの幅" />
@@ -81,6 +88,8 @@ export function AppShell({ children }: { children: ReactNode }) {
           <Sidebar
             selectedFolderId={selection.folderId}
             onSelectFolder={select}
+            pinnedSelected={selection.pinned}
+            onSelectPinned={selectPinned}
             onCreatedFolder={selectWithoutClosing}
             onNavigate={hideDrawer}
             onClose={hideDrawer}

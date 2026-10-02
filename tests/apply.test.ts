@@ -114,3 +114,49 @@ describe("a file locked on another device", () => {
     expect(remove).not.toHaveBeenCalled();
   });
 });
+
+describe("a pin from another device", () => {
+  /** Notes as a pull brings them. */
+  const pulled = (...notes: Note[]) => notes as unknown as PullBatch["notes"];
+  const later = (t: number) => ({ t, d: "other" });
+
+  test("its place among the pinned comes on its own stamp, apart from the pin", async () => {
+    await db().notes.put(note("n1"));
+    const base = note("n1").ts;
+    await applyBatch(
+      batch({
+        notes: pulled(
+          note("n1", {
+            pinned: true,
+            pinKey: "m",
+            ts: { ...base, pin: later(5), pinPlace: later(5) },
+            seq: 2,
+          }),
+        ),
+      }),
+    );
+    expect(await db().notes.get("n1")).toMatchObject({ pinned: true, pinKey: "m" });
+    // Unpinned there, its place as it was.
+    await applyBatch(
+      batch({
+        notes: pulled(
+          note("n1", { pinned: false, pinKey: "m", ts: { ...base, pin: later(6), pinPlace: later(5) }, seq: 3 }),
+        ),
+        cursor: 3,
+      }),
+    );
+    expect(await db().notes.get("n1")).toMatchObject({ pinned: false, pinKey: "m" });
+    // A place written here later than the one that comes: kept.
+    const local = (await db().notes.get("n1"))!;
+    await db().notes.put({ ...local, pinKey: "g", ts: { ...local.ts, pinPlace: later(9) } });
+    await applyBatch(
+      batch({
+        notes: pulled(
+          note("n1", { pinKey: "z", ts: { ...base, pin: later(6), pinPlace: later(7) }, seq: 4 }),
+        ),
+        cursor: 4,
+      }),
+    );
+    expect((await db().notes.get("n1"))?.pinKey).toBe("g");
+  });
+});

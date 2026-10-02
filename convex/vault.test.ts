@@ -506,6 +506,29 @@ describe("note locks", () => {
     expect(result).toMatchObject({ status: "rejected", reason: "lockMismatch" });
   });
 
+  test("a note created locked, pinned before it was sent, comes with its place", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "born-locked", {
+      create: {
+        noteKind: "note",
+        folderId: null,
+        sortKey: "m",
+        lock: { keyEpoch: 1, wrappedKey: sealed(), ts: stamp(1000) },
+      },
+      title: { value: null, sealed: sealed(), preview: null, ts: stamp(1000) },
+      pin: { pinned: true, ts: stamp(1000) },
+      pinPlace: { key: "g", ts: stamp(1000) },
+    });
+    expect(await noteRow(t, "born-locked")).toMatchObject({
+      locked: true,
+      pinned: true,
+      pinKey: "g",
+      ts: { pinPlace: stamp(1000) },
+    });
+  });
+
   test("a note created locked is stored locked, and takes only encrypted writes", async () => {
     const t = setup();
     await seedUser(t, AUTH_A);

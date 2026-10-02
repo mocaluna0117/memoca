@@ -160,6 +160,7 @@ export function publicNote(n: Doc<"notes">) {
     titleSealed: n.titleSealed,
     preview: n.preview,
     pinned: n.pinned,
+    pinKey: n.pinKey,
     sortKey: n.sortKey,
     locked: n.locked,
     keyEpoch: n.keyEpoch,
@@ -419,6 +420,7 @@ async function applyNoteOp(
       op.preview?.ts,
       op.place?.ts,
       op.pin?.ts,
+      op.pinPlace?.ts,
       op.trash?.ts,
       op.create?.lock?.ts,
     )
@@ -441,6 +443,7 @@ async function applyNoteOp(
       titleSealed: op.title?.sealed,
       preview: null,
       pinned: op.pin?.pinned ?? false,
+      pinKey: op.pinPlace?.key,
       sortKey: op.place?.sortKey ?? op.create.sortKey,
       locked: true,
       keyEpoch: lock.keyEpoch,
@@ -459,6 +462,7 @@ async function applyNoteOp(
         preview: op.preview?.ts ?? base,
         place: op.place?.ts ?? base,
         pin: op.pin?.ts ?? base,
+        pinPlace: op.pinPlace?.ts,
         trash: op.trash?.ts ?? base,
         lock: lock.ts,
       },
@@ -481,6 +485,7 @@ async function applyNoteOp(
       titleSealed: op.title?.sealed,
       preview: op.title?.preview ?? null,
       pinned: op.pin?.pinned ?? false,
+      pinKey: op.pinPlace?.key,
       sortKey: op.place?.sortKey ?? op.create.sortKey,
       locked: false,
       keyEpoch: 0,
@@ -497,6 +502,7 @@ async function applyNoteOp(
         preview: op.preview?.ts ?? base,
         place: op.place?.ts ?? base,
         pin: op.pin?.ts ?? base,
+        pinPlace: op.pinPlace?.ts,
         trash: op.trash?.ts ?? base,
         lock: base,
       },
@@ -543,6 +549,11 @@ async function applyNoteOp(
   if (op.pin && isNewer(op.pin.ts, ts.pin)) {
     patch.pinned = op.pin.pinned;
     ts.pin = op.pin.ts;
+    changed = true;
+  }
+  if (op.pinPlace && isNewer(op.pinPlace.ts, ts.pinPlace ?? ZERO_STAMP)) {
+    patch.pinKey = op.pinPlace.key;
+    ts.pinPlace = op.pinPlace.ts;
     changed = true;
   }
   if (op.trash && isNewer(op.trash.ts, ts.trash)) {

@@ -24,7 +24,7 @@ import { useLockActions } from "@/components/vault/use-lock-actions";
 import { useSearch } from "@/lib/hooks/use-search";
 import { lockedSearchNote } from "@/lib/search/rows";
 import { useWorkspace } from "@/lib/hooks/workspace";
-import { createFolder } from "@/lib/sync/mutations";
+import { createFolder, setNotePinned } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 import { NoteName } from "@/components/search/note-name";
 
@@ -119,6 +119,8 @@ export function CommandPalette() {
                 onSelect={() =>
                   run(async () => {
                     const noteId = await createNoteIn(selection.folderId);
+                    // Made in the pinned view: pinned, to be in it.
+                    if (noteId && selection.pinned) await setNotePinned(noteId, true);
                     if (noteId) navigate({ noteId });
                   })
                 }

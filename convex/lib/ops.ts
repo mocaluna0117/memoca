@@ -82,6 +82,8 @@ export const noteOpV = v.object({
     }),
   ),
   pin: v.optional(v.object({ pinned: v.boolean(), ts: stampV })),
+  /** Its place among the pinned: on its own stamp, apart from whether it is pinned. */
+  pinPlace: v.optional(v.object({ key: v.string(), ts: stampV })),
   trash: v.optional(
     v.object({ deletedAt: v.union(v.number(), v.null()), ts: stampV }),
   ),

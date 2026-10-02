@@ -7,6 +7,12 @@ export const META = {
   userKey: "userKey",
   clockOffset: "clockOffset",
   lastSyncAt: "lastSyncAt",
+  /**
+   * Pulled everything again once since pinned notes got places of their own:
+   * a version from before kept no place for one changed meanwhile, which a
+   * pull from where it left off would not bring again.
+   */
+  pinPlacesPulled: "pinPlacesPulled",
   lastHlc: "lastHlc",
   /** Last known account snapshot, so the app renders before Convex answers. */
   profile: "profile",

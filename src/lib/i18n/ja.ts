@@ -19,6 +19,7 @@ export const ja = {
     inbox: "Inbox",
     admin: "管理",
     allNotes: "すべてのメモ",
+    pinned: "ピン留め",
     folders: "フォルダ",
   },
   action: {

@@ -768,6 +768,65 @@ describe("last updated", () => {
     expect(note.updatedAt).toBe(before);
   });
 
+  test("a note's place among the pinned is kept on a stamp of its own, apart from its pin", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.sync.push, { deviceId: DEVICE_1, ops: [noteOp("n", "note-1")] });
+    const push = (opId: string, change: Record<string, unknown>) =>
+      as.mutation(api.sync.push, {
+        deviceId: DEVICE_1,
+        ops: [{ kind: "note", opId, noteId: "note-1", ...change }],
+      });
+    const pinOf = async () => {
+      const { notes } = await pull(as, { since: 0 });
+      const note = notes.find((n) => n.noteId === "note-1")!;
+      return { pinned: note.pinned, pinKey: note.pinKey };
+    };
+    const at = Date.now();
+    await push("pin", {
+      pin: { pinned: true, ts: stamp(at, DEVICE_1) },
+      pinPlace: { key: "m", ts: stamp(at, DEVICE_1) },
+    });
+    expect(await pinOf()).toEqual({ pinned: true, pinKey: "m" });
+    // Placed again among the pinned.
+    await push("place", { pinPlace: { key: "g", ts: stamp(at + 1, DEVICE_1) } });
+    expect(await pinOf()).toEqual({ pinned: true, pinKey: "g" });
+    // An older place from another device: left as it is.
+    await push("old", { pinPlace: { key: "z", ts: stamp(at - 10, DEVICE_1) } });
+    expect(await pinOf()).toEqual({ pinned: true, pinKey: "g" });
+    // Unpinned on one device; placed again, later, on another, which had
+    // not heard of it: still unpinned, as a place is no pin.
+    await push("unpin", { pin: { pinned: false, ts: stamp(at + 2, DEVICE_1) } });
+    await push("re-place", { pinPlace: { key: "c", ts: stamp(at + 3, DEVICE_1) } });
+    expect(await pinOf()).toEqual({ pinned: false, pinKey: "c" });
+    // From an app from before there were places: pinned, its place as it was.
+    await push("old-app", { pin: { pinned: true, ts: stamp(at + 4, DEVICE_1) } });
+    expect(await pinOf()).toEqual({ pinned: true, pinKey: "c" });
+  });
+
+  test("a note made and pinned before it was sent comes with its place", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    const at = Date.now();
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        noteOp("n", "note-1", {
+          pin: { pinned: true, ts: stamp(at, DEVICE_1) },
+          pinPlace: { key: "m", ts: stamp(at, DEVICE_1) },
+        }),
+      ],
+    });
+    const { notes } = await pull(as, { since: 0 });
+    expect(notes.find((n) => n.noteId === "note-1")).toMatchObject({
+      pinned: true,
+      pinKey: "m",
+      ts: { pinPlace: stamp(at, DEVICE_1) },
+    });
+  });
+
   test("renaming a note does count as an edit", async () => {
     const t = setup();
     await seedUser(t, AUTH_A);

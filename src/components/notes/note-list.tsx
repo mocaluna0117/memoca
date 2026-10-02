@@ -18,6 +18,7 @@ import {
   ListChecks,
   Lock,
   Pin,
+  PinOff,
   X,
 } from "lucide-react";
 import {
@@ -73,7 +74,13 @@ import {
   placeAt,
 } from "@/lib/note-order";
 import { db } from "@/lib/db";
-import { moveNote, renameNote } from "@/lib/sync/mutations";
+import {
+  moveNote,
+  placePinned,
+  renameNote,
+  setNotePinned,
+  setNotesPinned,
+} from "@/lib/sync/mutations";
 import { useLockActions } from "@/components/vault/use-lock-actions";
 import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
 import type { Note } from "@/lib/types";
@@ -410,17 +417,27 @@ function NoteRow({
 
 export function NoteList({
   folderId,
+  pinnedOnly = false,
   selectedNoteId,
   onSelectNote,
 }: {
   folderId: string | null;
+  /** With no folder: the pinned notes, of every folder, rather than all. */
+  pinnedOnly?: boolean;
   selectedNoteId: string | null;
   onSelectNote: (noteId: string) => void;
 }) {
   const folder = useFolder(folderId);
   const folderName = useFolderName(folder);
-  const listed = useNotes(folderId ? { kind: "folder", folderId } : { kind: "all" });
-  const [order, setOrder] = useNoteOrder(folderId);
+  const listed = useNotes(
+    folderId ? { kind: "folder", folderId } : pinnedOnly ? { kind: "pinned" } : { kind: "all" },
+  );
+  /** Which list this is: a folder's, the pinned notes, or all. */
+  const listKey = folderId ?? (pinnedOnly ? "@pinned" : null);
+  const [chosenOrder, setOrder] = useNoteOrder(folderId);
+  // The pinned, in their own order, show when each was last changed, as
+  // they did: not whatever all notes are set to show.
+  const order: NoteOrder = pinnedOnly ? "updated" : chosenOrder;
   const manual = order === "manual";
   // By name, as each row shows it: a locked note's title decrypted, with the
   // vault open, and a note with no title by its first line.
@@ -438,8 +455,14 @@ export function NoteList({
     return orderNotes(listed, order, names);
   }, [listed, order, lockedTitles]);
 
-  const heading = folderId ? folderName || "フォルダ" : t.nav.allNotes;
+  const heading = folderId ? folderName || "フォルダ" : pinnedOnly ? t.nav.pinned : t.nav.allNotes;
   const { createNoteIn, moveNoteTo, moveNotesTo } = useLockActions();
+  /** A new note here: in this folder, or Inbox, and pinned among the pinned. */
+  const newNote = async () => {
+    const id = await createNoteIn(folderId);
+    if (id && pinnedOnly) await setNotePinned(id, true);
+    return id;
+  };
 
   // Notes chosen to be moved together: with ⌘/Ctrl (⌘ alone on a Mac,
   // where Ctrl and a click is a right click) or Shift and a click, or a tap
@@ -447,20 +470,20 @@ export function NoteList({
   // opened, none are, coming back included; one gone from it (moved, say),
   // not either. With where a Shift and a click chooses from (`anchor`), and
   // what was chosen when it was set (`base`), as in Finder.
-  const [choice, setChoice] = useState<Choice>(() => unchosen(folderId));
-  if (choice.folderId !== folderId) setChoice(unchosen(folderId));
+  const [choice, setChoice] = useState<Choice>(() => unchosen(listKey));
+  if (choice.folderId !== listKey) setChoice(unchosen(listKey));
   const chosen = useMemo(
     () => new Set([...choice.ids].filter((id) => notes.some((note) => note.noteId === id))),
     [choice.ids, notes],
   );
   const choosing = choice.on || chosen.size > 0;
-  const stopChoosing = () => setChoice(unchosen(folderId));
+  const stopChoosing = () => setChoice(unchosen(listKey));
   const apple = useClientValue(() => isApple(navigator.userAgent), false);
   const ids = notes.map((note) => note.noteId);
   /** Chooses one more, or one less: where a Shift and a click goes from next. */
   const toggleChosen = (noteId: string, on = choice.on) => {
     const next = toggled(chosen, noteId);
-    setChoice({ folderId, ids: next, on, anchor: noteId, base: next });
+    setChoice({ folderId: listKey, ids: next, on, anchor: noteId, base: next });
   };
 
   /** A click on a row: chooses it, or up to it, or opens it. */
@@ -476,7 +499,7 @@ export function NoteList({
       return;
     }
     // Opened: where a Shift and a click chooses from.
-    setChoice({ ...unchosen(folderId), anchor: noteId });
+    setChoice({ ...unchosen(listKey), anchor: noteId });
     onSelectNote(noteId);
   };
 
@@ -532,6 +555,25 @@ export function NoteList({
       setBusy(false);
     }
   };
+  /**
+   * Pins notes, or unpins them, from the menu of `from`'s row. In the pinned
+   * view, those unpinned leave it: no longer chosen, focus to the row now
+   * where the first was. Elsewhere `from`'s row, drawn again pinned or not,
+   * keeps focus.
+   */
+  const pinAll = async (pinned: Note[], pin: boolean, from: string) => {
+    const going = pinnedOnly && !pin;
+    if (going) refocusAt.current = ids.indexOf(pinned[0]!.noteId);
+    else repinned.current = { noteId: from, pinned: pin };
+    await setNotesPinned(
+      pinned.map((note) => note.noteId),
+      pin,
+    );
+    if (!going) return;
+    const left = new Set([...chosen].filter((id) => !pinned.some((note) => note.noteId === id)));
+    if (left.size === 0) stopChoosing();
+    else setChoice({ ...choice, ids: left, base: left });
+  };
   /** The notes a menu or a drag acts on: the chosen ones, if it is one of them. */
   const withChosen = (noteId: string) =>
     takenWith(ids, chosen, noteId).flatMap((id) => notes.filter((note) => note.noteId === id));
@@ -557,6 +599,19 @@ export function NoteList({
     if (!noteId) return;
     moved.current = null;
     list.current?.querySelector<HTMLElement>(`[data-note-row="${noteId}"]`)?.focus();
+  }, [notes]);
+
+  // A row pinned or unpinned keeps focus: it is drawn again as another kind
+  // of row (one placed by hand among the pinned, or not), a button anew.
+  // Once it shows as it now is, the others pinned with it written one by one.
+  const repinned = useRef<{ noteId: string; pinned: boolean } | null>(null);
+  useEffect(() => {
+    const want = repinned.current;
+    if (!want || notes.find((note) => note.noteId === want.noteId)?.pinned !== want.pinned) return;
+    repinned.current = null;
+    const focused = document.activeElement;
+    if (focused && focused !== document.body && focused.isConnected) return;
+    list.current?.querySelector<HTMLElement>(`[data-note-row="${want.noteId}"]`)?.focus();
   }, [notes]);
 
   // Set to choose, or not, by a button that then goes: focus to the first
@@ -598,6 +653,19 @@ export function NoteList({
       (each) => each.pinned === note.pinned && each.noteId !== note.noteId,
     );
     if (index < 0 || index > others.length) return;
+    if (note.pinned) {
+      // Among the pinned, in every list, by its place among them.
+      placing.current = placing.current
+        .then(() =>
+          placePinned(
+            note.noteId,
+            others.map((each) => each.noteId),
+            index,
+          ),
+        )
+        .catch(() => {});
+      return;
+    }
     const { key, rekeyed } = placeAt(others, index);
     // One move at a time, each from the list as the one before left it.
     placing.current = placing.current
@@ -627,7 +695,7 @@ export function NoteList({
   /** Option (Alt) and up or down: one place up or down. */
   const nudge = (noteId: string, direction: -1 | 1) => {
     const note = notes.find((each) => each.noteId === noteId);
-    if (!note || !manual) return;
+    if (!note || !(manual || note.pinned)) return;
     const group = notes.filter((each) => each.pinned === note.pinned);
     const at = group.findIndex((each) => each.noteId === noteId);
     const index = at + direction;
@@ -722,7 +790,10 @@ export function NoteList({
         args,
       );
       if (folders.length > 0) return folders;
-      if (!manual || dragged(args.active).length > 1) return [];
+      const taken = dragged(args.active);
+      // Placed by hand: all of them where the list is so ordered, and the
+      // pinned ones whatever its order is.
+      if (!(manual || taken[0]?.pinned) || taken.length > 1) return [];
       const box = list.current?.getBoundingClientRect();
       const x = args.pointerCoordinates?.x;
       if (box && x !== undefined && (x < box.left || x > box.right)) return [];
@@ -800,11 +871,28 @@ export function NoteList({
   /** A row's menu: move it (and those chosen with it), or choose it. */
   const menuOf = (note: Note) => {
     const taken = withChosen(note.noteId);
+    const allPinned = taken.every((each) => each.pinned);
+    // Those it changes: the pinned ones to unpin, or the others to pin.
+    const changing = taken.filter((each) => each.pinned === allPinned);
     return (
       <ContextMenuContent onCloseAutoFocus={onCloseAutoFocus}>
         <ContextMenuItem disabled={busy} onSelect={() => openDialog(() => pickFolderFor(taken))}>
           <FileInput className="size-4" aria-hidden />
           {taken.length > 1 ? `${taken.length} 件のメモを移動…` : "移動…"}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={() => void pinAll(changing, !allPinned, note.noteId)}>
+          {allPinned ? (
+            <PinOff className="size-4" aria-hidden />
+          ) : (
+            <Pin className="size-4" aria-hidden />
+          )}
+          {changing.length > 1
+            ? allPinned
+              ? `${changing.length} 件のピン留めを外す`
+              : `${changing.length} 件をピン留め`
+            : allPinned
+              ? t.action.unpin
+              : t.action.pin}
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => toggleChosen(note.noteId, true)}>
           <ListChecks className="size-4" aria-hidden />
@@ -829,7 +917,7 @@ export function NoteList({
       setEditing(null);
     },
     onArrow,
-    onNudge: manual ? nudge : undefined,
+    onNudge: manual || note.pinned ? nudge : undefined,
     shownAt: order === "created" ? (createdAt(note.noteId) ?? note.updatedAt) : note.updatedAt,
   });
 
@@ -911,19 +999,22 @@ export function NoteList({
                 aria-label="メモを選択"
                 onClick={() => {
                   focusNext.current = "rows";
-                  setChoice({ ...unchosen(folderId), on: true });
+                  setChoice({ ...unchosen(listKey), on: true });
                 }}
               >
                 <ListChecks className="size-4" aria-hidden />
               </Button>
             ) : null}
-            <OrderMenu order={order} manualAllowed={folderId !== null} onChange={setOrder} />
+            {/* The pinned are in their own order, placed by hand. */}
+            {pinnedOnly ? null : (
+              <OrderMenu order={order} manualAllowed={folderId !== null} onChange={setOrder} />
+            )}
             <Button
               size="icon"
               variant="ghost"
               aria-label={t.action.newNote}
               onClick={async () => {
-                const id = await createNoteIn(folderId);
+                const id = await newNote();
                 if (id) onSelectNote(id);
               }}
             >
@@ -935,14 +1026,18 @@ export function NoteList({
 
       {notes.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground">
-          <p className="text-sm">{t.empty.noNotes}</p>
-          <p className="text-xs">{t.empty.noNotesHint}</p>
+          <p className="text-sm">{pinnedOnly ? "ピン留めしたメモはありません" : t.empty.noNotes}</p>
+          <p className="text-xs">
+            {pinnedOnly
+              ? "メモのメニューの「ピン留め」で、どのフォルダのメモもここに集まります。"
+              : t.empty.noNotesHint}
+          </p>
           <Button
             variant="outline"
             size="sm"
             className="mt-2"
             onClick={async () => {
-              const id = await createNoteIn(folderId);
+              const id = await newNote();
               if (id) onSelectNote(id);
             }}
           >
@@ -960,27 +1055,37 @@ export function NoteList({
             {choosing
               ? "スペースで選択、もう一度で選択を外します。Escape で選択をやめます。"
               : "上下の矢印キーで移動、Enter でタイトルを変更、スペースで開きます。"}
-            {manual && !choosing ? "Option（Alt）と上下の矢印キーで並べ替えます。" : ""}
-            Shift＋F10 で移動や選択のメニューを開きます。
+            {choosing
+              ? ""
+              : manual
+                ? "Option（Alt）と上下の矢印キーで並べ替えます。"
+                : notes.some((note) => note.pinned)
+                  ? "ピン留めしたメモは、Option（Alt）と上下の矢印キーで並べ替えます。"
+                  : ""}
+            Shift＋F10 で移動やピン留め、選択のメニューを開きます。
           </p>
           <p className="sr-only" aria-live="polite">
             {spoken}
           </p>
           {/* Room below for the bar that chooses, on a phone. */}
           <div ref={list} className={cn(choosing && "max-md:pb-14")}>
-            {manual ? (
-              <SortableContext items={ids} strategy={verticalListSortingStrategy}>
-                {notes.map((note) => (
+            {/* Placed by hand: all of them where the list is so ordered, and
+                the pinned ones (first) whatever its order is. The others
+                dragged to a folder only, with a mouse. */}
+            <SortableContext
+              items={manual ? ids : notes.filter((note) => note.pinned).map((note) => note.noteId)}
+              strategy={verticalListSortingStrategy}
+            >
+              {notes.map((note) =>
+                manual || note.pinned ? (
                   <SortableNoteRow key={note.noteId} owner={owner} {...rowProps(note)} />
-                ))}
-              </SortableContext>
-            ) : fine ? (
-              notes.map((note) => (
-                <DraggableNoteRow key={note.noteId} owner={owner} {...rowProps(note)} />
-              ))
-            ) : (
-              notes.map((note) => <NoteRow key={note.noteId} {...rowProps(note)} />)
-            )}
+                ) : fine ? (
+                  <DraggableNoteRow key={note.noteId} owner={owner} {...rowProps(note)} />
+                ) : (
+                  <NoteRow key={note.noteId} {...rowProps(note)} />
+                ),
+              )}
+            </SortableContext>
           </div>
         </ScrollArea>
       )}

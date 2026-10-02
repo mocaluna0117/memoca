@@ -65,6 +65,23 @@ describe("ordering a list of notes", () => {
       expect(orderNotes([a, pinned, b], order)[0]!.noteId).toBe("00-p");
     }
   });
+
+  test("the pinned in their own order, as placed among them, whichever the list's is", () => {
+    const first = note("01-p", { pinned: true, pinKey: "a", updatedAt: 1, title: "ん" });
+    const second = note("02-p", { pinned: true, pinKey: "m", updatedAt: 9, title: "あ" });
+    for (const order of ["updated", "created", "title", "manual"] as NoteOrder[]) {
+      expect(ids(orderNotes([second, a, first], order)).slice(0, 2)).toEqual(["01-p", "02-p"]);
+    }
+  });
+
+  test("pinned before there were places: before those placed, the one pinned last first", () => {
+    const at = (t: number) => ({ ...zero, t });
+    const placed = note("01-p", { pinned: true, pinKey: "a" });
+    // The one pinned last made first: by when they were pinned, not made.
+    const early = note("03-p", { pinned: true, ts: { ...note("x").ts, pin: at(1) } });
+    const late = note("02-p", { pinned: true, ts: { ...note("x").ts, pin: at(5) } });
+    expect(ids(orderNotes([placed, early, late]))).toEqual(["02-p", "03-p", "01-p"]);
+  });
 });
 
 describe("placing a note by hand", () => {

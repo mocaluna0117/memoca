@@ -14,6 +14,8 @@ export type NoteStamps = {
   preview?: Stamp;
   place: Stamp;
   pin: Stamp;
+  /** Its place among the pinned (pinKey): absent until it is given one. */
+  pinPlace?: Stamp;
   trash: Stamp;
   lock: Stamp;
 };
@@ -41,6 +43,12 @@ export type Note = {
   titleSealed?: Sealed;
   preview: string | null;
   pinned: boolean;
+  /**
+   * Where it is among the pinned notes, in every list, as placed by hand: a
+   * sort key, on a stamp of its own (ts.pinPlace). Missing on notes pinned
+   * before this was kept. Kept, unused, once unpinned.
+   */
+  pinKey?: string;
   sortKey: string;
   locked: boolean;
   keyEpoch: number;

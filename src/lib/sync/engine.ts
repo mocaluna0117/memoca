@@ -107,6 +107,10 @@ export class SyncEngine {
     if (lastSyncAt && Date.now() - lastSyncAt > FULL_RESYNC_AFTER_MS) {
       await setMeta(META.cursor, 0);
     }
+    if (!(await getMeta<boolean>(META.pinPlacesPulled, false))) {
+      await setMeta(META.cursor, 0);
+      await setMeta(META.pinPlacesPulled, true);
+    }
 
     this.claimLeadership();
     this.attachWindowHooks();

@@ -30,6 +30,12 @@ const noteStamps = v.object({
   preview: v.optional(stamp),
   place: stamp,
   pin: stamp,
+  /**
+   * Where a pinned note is among the pinned (pinKey), on a stamp of its own:
+   * placing one again is never a decision to pin it. Optional because rows
+   * written before this existed have none.
+   */
+  pinPlace: v.optional(stamp),
   trash: stamp,
   lock: stamp,
 });
@@ -127,6 +133,12 @@ export default defineSchema({
     /** Short plaintext excerpt for list rows; null when locked. */
     preview: v.union(v.string(), v.null()),
     pinned: v.boolean(),
+    /**
+     * Where a pinned note is among the pinned ones, in every list, as placed
+     * by hand (a sort key, as sortKey is among a folder's notes). Absent on
+     * notes pinned before this was recorded. Kept, unused, once unpinned.
+     */
+    pinKey: v.optional(v.string()),
     sortKey: v.string(),
     locked: v.boolean(),
     /** Bumped on every lock/unlock so stale writes from other devices are rejected. */

@@ -4,6 +4,7 @@ import { uuidv7 } from "uuidv7";
 import { db } from "@/lib/db";
 import { deviceId } from "@/lib/db/meta";
 import { between } from "@/lib/sortkey";
+import { byPinPlace, placeAt } from "@/lib/note-order";
 import type { Folder, Note, Stamp } from "@/lib/types";
 import { stamp } from "./clock";
 import { enqueue } from "./outbox";
@@ -436,17 +437,112 @@ export async function moveNote(
   });
 }
 
-export async function setNotePinned(noteId: string, pinned: boolean): Promise<void> {
-  const database = db();
-  const note = await database.notes.get(noteId);
+/**
+ * Writes a note's pin, and (`key`) its place among the pinned: each on its
+ * own stamp, so that a place written for it never decides it is pinned.
+ */
+async function writePin(
+  noteId: string,
+  change: { pinned?: boolean; key?: string },
+): Promise<void> {
+  const note = await db().notes.get(noteId);
   if (!note) return;
   const { ts } = await now();
-  await database.notes.update(noteId, { pinned, ts: { ...note.ts, pin: ts } });
+  await db().notes.update(noteId, {
+    ...(change.pinned === undefined ? {} : { pinned: change.pinned }),
+    ...(change.key === undefined ? {} : { pinKey: change.key }),
+    ts: {
+      ...note.ts,
+      ...(change.pinned === undefined ? {} : { pin: ts }),
+      ...(change.key === undefined ? {} : { pinPlace: ts }),
+    },
+  });
   await enqueue({
     kind: "note",
     entityId: noteId,
-    payload: { kind: "note", noteId, pin: { pinned, ts } },
+    payload: {
+      kind: "note",
+      noteId,
+      ...(change.pinned === undefined ? {} : { pin: { pinned: change.pinned, ts } }),
+      ...(change.key === undefined ? {} : { pinPlace: { key: change.key, ts } }),
+    },
   });
+}
+
+/**
+ * The pinned notes shown (not in the trash), in their order among the
+ * pinned, every one with a place: those pinned before there were places
+ * (with none, first) given places in the order they are in, before the
+ * first that has one. Those that have one are left as they are.
+ */
+async function placedPinned(): Promise<Note[]> {
+  const pinned = (
+    await db()
+      .notes.filter((note) => note.pinned && note.deletedAt === null && !note.purged)
+      .toArray()
+  ).sort(byPinPlace);
+  const unplaced = pinned.filter((note) => !note.pinKey);
+  if (unplaced.length === 0) return pinned;
+  let before = pinned.find((note) => note.pinKey)?.pinKey ?? null;
+  const keys = new Map<string, string>();
+  for (const note of [...unplaced].reverse()) {
+    before = between(null, before);
+    keys.set(note.noteId, before);
+    await writePin(note.noteId, { key: before });
+  }
+  return pinned.map((note) => (keys.has(note.noteId) ? { ...note, pinKey: keys.get(note.noteId) } : note));
+}
+
+/** Pins a note, first among the pinned, or unpins it. */
+export async function setNotePinned(noteId: string, pinned: boolean): Promise<void> {
+  await setNotesPinned([noteId], pinned);
+}
+
+/**
+ * Pins notes (those not pinned yet), first among the pinned, in the order
+ * given, or unpins them.
+ */
+export async function setNotesPinned(noteIds: string[], pinned: boolean): Promise<void> {
+  const notes = (await db().notes.bulkGet(noteIds)).filter(
+    (note): note is Note => note !== undefined && note.pinned !== pinned,
+  );
+  if (notes.length === 0) return;
+  if (!pinned) {
+    for (const note of notes) await writePin(note.noteId, { pinned: false });
+    return;
+  }
+  // Each before the one after it, the first given first of all.
+  let after = (await placedPinned())[0]?.pinKey ?? null;
+  for (const note of [...notes].reverse()) {
+    after = between(null, after);
+    await writePin(note.noteId, { pinned: true, key: after });
+  }
+}
+
+/**
+ * Puts a pinned note among the pinned notes `others` of a list (in their
+ * order there, itself not one of them) at `index`: between the two it was
+ * let go between, by their places as they are now (one may have been
+ * placed, or unpinned, on another device meanwhile), as {@link placeAt}
+ * does a note among a folder's.
+ */
+export async function placePinned(noteId: string, others: readonly string[], index: number) {
+  const pinned = await placedPinned();
+  if (!pinned.some((each) => each.noteId === noteId)) return;
+  const still = pinned.filter((each) => each.noteId !== noteId && others.includes(each.noteId));
+  const after = others[index];
+  const before = others[index - 1];
+  let at = after ? still.findIndex((each) => each.noteId === after) : -1;
+  if (at < 0) {
+    const previous = before ? still.findIndex((each) => each.noteId === before) : -1;
+    at = previous >= 0 ? previous + 1 : before ? Math.min(index, still.length) : 0;
+  }
+  const { key, rekeyed } = placeAt(
+    still.map((each) => ({ noteId: each.noteId, sortKey: each.pinKey! })),
+    at,
+  );
+  for (const each of rekeyed) await writePin(each.noteId, { key: each.sortKey });
+  await writePin(noteId, { key });
 }
 
 export async function setNoteTrashed(noteId: string, trashed: boolean): Promise<void> {

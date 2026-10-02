@@ -32,7 +32,22 @@ export const isNoteOrder = (value: unknown): value is NoteOrder =>
 const byName = new Intl.Collator("ja", { numeric: true, sensitivity: "base" });
 
 /**
- * Notes in an order, pinned ones first. `names` are the names shown, for
+ * Pinned notes in their order among the pinned, as placed by hand (their
+ * pin keys, which every device shares); those pinned before there were keys
+ * (with none) first, the one pinned last first, as one pinned now goes.
+ */
+export function byPinPlace(a: Note, b: Note): number {
+  const left = a.pinKey ?? "";
+  const right = b.pinKey ?? "";
+  if (left !== right) return left < right ? -1 : 1;
+  const pinnedLater = b.ts.pin.t - a.ts.pin.t;
+  if (pinnedLater !== 0) return pinnedLater;
+  return a.noteId < b.noteId ? 1 : a.noteId > b.noteId ? -1 : 0;
+}
+
+/**
+ * Notes in an order, pinned ones first, in their own order among the pinned
+ * (as placed by hand, whichever the order is). `names` are the names shown, for
  * ordering by name (a locked note's title is only known decrypted); a note
  * with none is ordered by its title. By hand, the order is the notes' sort
  * keys, which every device shares. A note's id is made from the time it
@@ -59,6 +74,7 @@ export function orderNotes(
   };
   return [...notes].sort((a, b) => {
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1;
+    if (a.pinned) return byPinPlace(a, b);
     return compare[order](a, b);
   });
 }

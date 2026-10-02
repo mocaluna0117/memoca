@@ -17,7 +17,11 @@ function Workspace() {
   const { selection, openNote, closeNote } = useWorkspace();
   const folder = useFolder(selection.folderId);
   const folderName = useFolderName(folder);
-  const heading = selection.folderId ? folderName || "フォルダ" : t.nav.allNotes;
+  const heading = selection.folderId
+    ? folderName || "フォルダ"
+    : selection.pinned
+      ? t.nav.pinned
+      : t.nav.allNotes;
   usePhoneScroll(selection.noteId);
   const [listWidth] = usePaneWidth(NOTE_LIST);
 
@@ -39,6 +43,7 @@ function Workspace() {
         <div className="min-h-0 flex-1">
           <NoteList
             folderId={selection.folderId}
+            pinnedOnly={selection.pinned}
             selectedNoteId={selection.noteId}
             onSelectNote={openNote}
           />

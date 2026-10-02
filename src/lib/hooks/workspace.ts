@@ -5,14 +5,17 @@ import { useCallback, useEffect, useMemo } from "react";
 import { useSelectionStore } from "@/lib/store/selection";
 
 export type Selection = {
-  /** null = all notes, otherwise a folder id. */
+  /** null = all notes (or, `pinned`, the pinned ones), otherwise a folder id. */
   folderId: string | null;
   noteId: string | null;
+  /** The pinned notes, of every folder: the list shown, with no folder. */
+  pinned: boolean;
 };
 
 function hrefFor(selection: Selection): string {
   const search = new URLSearchParams();
   if (selection.folderId) search.set("f", selection.folderId);
+  else if (selection.pinned) search.set("v", "pinned");
   if (selection.noteId) search.set("n", selection.noteId);
   const query = search.toString();
   return query ? `/app?${query}` : "/app";
@@ -30,23 +33,33 @@ export function useWorkspace() {
   const router = useRouter();
   const folderId = useSelectionStore((s) => s.folderId);
   const noteId = useSelectionStore((s) => s.noteId);
+  const pinned = useSelectionStore((s) => s.pinned);
   const apply = useSelectionStore((s) => s.apply);
 
   const urlFolder = params.get("f");
   const urlNote = params.get("n");
+  const urlPinned = !urlFolder && params.get("v") === "pinned";
 
   // Follow the URL when it changes from outside this hook: a first load, the
   // back button, or a link from another screen.
   useEffect(() => {
-    apply({ folderId: urlFolder, noteId: urlNote });
-  }, [urlFolder, urlNote, apply]);
+    apply({ folderId: urlFolder, noteId: urlNote, pinned: urlPinned });
+  }, [urlFolder, urlNote, urlPinned, apply]);
 
-  const selection = useMemo<Selection>(() => ({ folderId, noteId }), [folderId, noteId]);
+  const selection = useMemo<Selection>(
+    () => ({ folderId, noteId, pinned }),
+    [folderId, noteId, pinned],
+  );
 
   const navigate = useCallback(
     (next: Partial<Selection>, options: { replace?: boolean } = {}) => {
       const merged = { ...useSelectionStore.getState(), ...next };
-      const target = { folderId: merged.folderId, noteId: merged.noteId };
+      const target = {
+        folderId: merged.folderId,
+        noteId: merged.noteId,
+        // A folder is not the pinned notes.
+        pinned: merged.folderId === null && merged.pinned,
+      };
       // State first, so the interface has already switched by the time the
       // next keystroke arrives.
       apply(target);
@@ -67,11 +80,16 @@ export function useWorkspace() {
   );
 
   const openFolder = useCallback(
-    (folder: string | null) => navigate({ folderId: folder, noteId: null }),
+    (folder: string | null) => navigate({ folderId: folder, noteId: null, pinned: false }),
+    [navigate],
+  );
+  /** The pinned notes, of every folder. */
+  const openPinned = useCallback(
+    () => navigate({ folderId: null, noteId: null, pinned: true }),
     [navigate],
   );
   const openNote = useCallback((note: string | null) => navigate({ noteId: note }), [navigate]);
   const closeNote = useCallback(() => navigate({ noteId: null }), [navigate]);
 
-  return { selection, navigate, openFolder, openNote, closeNote };
+  return { selection, navigate, openFolder, openPinned, openNote, closeNote };
 }

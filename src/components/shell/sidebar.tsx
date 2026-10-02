@@ -6,6 +6,7 @@ import {
   FileText,
   FolderPlus,
   Megaphone,
+  Pin,
   Search,
   Settings,
   Shield,
@@ -32,6 +33,9 @@ import { cn } from "@/lib/utils";
 type Props = {
   selectedFolderId: string | null;
   onSelectFolder: (folderId: string | null) => void;
+  /** The pinned notes, of every folder, are the list shown. */
+  pinnedSelected: boolean;
+  onSelectPinned: () => void;
   /** Selects a freshly created folder without dismissing the panel. */
   onCreatedFolder?: (folderId: string) => void;
   onNavigate?: () => void;
@@ -44,6 +48,8 @@ type Props = {
 export function Sidebar({
   selectedFolderId,
   onSelectFolder,
+  pinnedSelected,
+  onSelectPinned,
   onCreatedFolder,
   onNavigate,
   onClose,
@@ -107,13 +113,29 @@ export function Sidebar({
           }}
           className={cn(
             "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-            selectedFolderId === null && pathname === "/app"
+            selectedFolderId === null && !pinnedSelected && pathname === "/app"
               ? "bg-accent text-accent-foreground"
               : "hover:bg-accent/60",
           )}
         >
           <FileText className="size-4 opacity-70" aria-hidden />
           {t.nav.allNotes}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            onSelectPinned();
+            onNavigate?.();
+          }}
+          className={cn(
+            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
+            pinnedSelected && pathname === "/app"
+              ? "bg-accent text-accent-foreground"
+              : "hover:bg-accent/60",
+          )}
+        >
+          <Pin className="size-4 opacity-70" aria-hidden />
+          {t.nav.pinned}
         </button>
       </div>
 
