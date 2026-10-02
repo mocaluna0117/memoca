@@ -187,6 +187,32 @@
   border-top: 2px solid var(--foreground);
 }
 
+/* Text colours brighter than BlockNote's own, which are Notion's, muted
+   enough that green and blue read almost as grey (green #4d6461, blue
+   #0b6e99): vivid, while still to be read on the note's background. Over
+   BlockNote's rule, on .bn-root, for the colour menu's swatches too. Gray
+   is already light, and stays as it was. */
+:root .bn-root {
+  --bn-colors-highlights-brown-text: #a8663a;
+  --bn-colors-highlights-red-text: #f04438;
+  --bn-colors-highlights-orange-text: #f97316;
+  --bn-colors-highlights-yellow-text: #e5a800;
+  --bn-colors-highlights-green-text: #1fa855;
+  --bn-colors-highlights-blue-text: #2f80ed;
+  --bn-colors-highlights-purple-text: #9b51e0;
+  --bn-colors-highlights-pink-text: #e64a9b;
+}
+:root .bn-root[data-color-scheme="dark"] {
+  --bn-colors-highlights-brown-text: #c98b5f;
+  --bn-colors-highlights-red-text: #ff6b6b;
+  --bn-colors-highlights-orange-text: #ff9a3d;
+  --bn-colors-highlights-yellow-text: #ffd43b;
+  --bn-colors-highlights-green-text: #4ade80;
+  --bn-colors-highlights-blue-text: #5aa9ff;
+  --bn-colors-highlights-purple-text: #b98bff;
+  --bn-colors-highlights-pink-text: #ff74b8;
+}
+
 /* An open toggle's line stays at the top of the note while what is inside it
    is scrolled past, its ▼ in reach to close it from anywhere in it. Within
    the toggle's own block only: past its end, it goes on up with it. Below
