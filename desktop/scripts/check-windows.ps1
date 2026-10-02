@@ -83,27 +83,24 @@ function Start-Debuggable($how) {
 Stop-All
 
 if (-not $NoWindow) {
-  # Its window driven through its WebView2's debugging port, opened by
-  # either of WebView2's ways of being given more arguments: an environment
-  # variable, or (if that is not taken) a policy in the registry.
+  # Its window driven through its WebView2's debugging port, asked for as
+  # WebView2 takes more arguments: the app passes them on (window.rs,
+  # browser_args), as WebView2 itself does not with the app's own.
   Write-Host "Checking the window"
   Show-Running "before it is started"
-  $policy = "HKCU:\Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments"
+  # Policies that would change what WebView2 is started with, if any.
+  foreach ($root in "HKLM:\SOFTWARE\Policies\Microsoft\Edge", "HKCU:\Software\Policies\Microsoft\Edge") {
+    Get-ChildItem -Path $root -Recurse -ErrorAction SilentlyContinue |
+      ForEach-Object { Write-Host "policy: $($_.Name) $($_.Property -join ', ')" }
+  }
   try {
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
     $open = Start-Debuggable "from WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
     Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
-    if (-not $open) {
-      Stop-All
-      New-Item -Path $policy -Force | Out-Null
-      New-ItemProperty -Path $policy -Name "memoca.exe" -Value "--remote-debugging-port=9222" -Force | Out-Null
-      $open = Start-Debuggable "from the AdditionalBrowserArguments policy"
-    }
     Check $open "its WebView2 opens the debugging port it is started with"
     node e2e/window.mjs 9222
     if ($LASTEXITCODE -ne 0) { throw "the window's checks failed" }
   } finally {
-    Remove-Item -Path $policy -Recurse -ErrorAction SilentlyContinue
     Stop-All
   }
 }

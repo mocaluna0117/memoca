@@ -57,6 +57,27 @@ pub const PLATFORM: &str = if cfg!(target_os = "windows") {
     "macos"
 };
 
+/// What the window's WebView2 is started with: what wry starts it with
+/// when given nothing, and what is asked for in
+/// WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS. WebView2 is documented to add
+/// that to an app's own, but does not with wry's (nor the policy in the
+/// registry): it is how the window's checks open its debugging port
+/// (scripts/check-windows.ps1).
+#[cfg(target_os = "windows")]
+fn browser_args() -> String {
+    // wry's, for a window that may play sound unasked (Tauri's default).
+    let mut args = String::from(
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
+         --autoplay-policy=no-user-gesture-required",
+    );
+    if let Ok(more) = std::env::var("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") {
+        eprintln!("Memoca: WebView2 also started with {more}");
+        args.push(' ');
+        args.push_str(&more);
+    }
+    args
+}
+
 /// What the window tells the site it is: the engine it is (Safari's on a
 /// Mac, Edge's on Windows), and the shell (src/lib/quick/shell.ts reads it
 /// before any script runs).
@@ -125,7 +146,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let (guard, opener) = (app.clone(), app.clone());
     // As big as it was last put away, or as it starts.
     let (width, height) = app.state::<Store>().get().size.unwrap_or((420.0, 360.0));
-    let window = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(quick_url()))
+    let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(quick_url()))
         .title("Memoca")
         .inner_size(width.max(320.0), height.max(240.0))
         .min_inner_size(320.0, 240.0)
@@ -144,8 +165,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .on_new_window(move |url, _| {
             open_outside(&opener, &url);
             NewWindowResponse::Deny
-        })
-        .build()?;
+        });
+    #[cfg(target_os = "windows")]
+    let builder = builder.additional_browser_args(&browser_args());
+    let window = builder.build()?;
     app.manage(Loaded(Mutex::new(Instant::now())));
     #[cfg(target_os = "windows")]
     out_of_alt_tab(&window);
