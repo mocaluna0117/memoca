@@ -4,6 +4,8 @@
 use crate::settings::{Corner, Store};
 use crate::updater::{self, VersionItem};
 use crate::{app_window, window};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -25,6 +27,39 @@ struct CornerItems(Vec<(Option<Corner>, CheckMenuItem<Wry>)>);
 
 /// The item that starts the app at login, ticked as the system has it.
 struct AtLogin(CheckMenuItem<Wry>);
+
+/// The icon's clicks so far: when it was last right-clicked, and whether
+/// the left click under way is one with Control held.
+#[derive(Default)]
+struct Clicks(Mutex<ClicksSeen>);
+
+#[derive(Default)]
+struct ClicksSeen {
+    right: Option<Instant>,
+    left_for_menu: bool,
+}
+
+/// How long after a right click a left one is taken as part of it.
+const RIGHT_CLICK: Duration = Duration::from_millis(1000);
+
+/// Whether Control is held: on a Mac, a click with it is a right click.
+#[cfg(target_os = "macos")]
+fn control_held() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGEventSourceFlagsState(state: i32) -> u64;
+    }
+    // kCGEventSourceStateCombinedSessionState, kCGEventFlagMaskControl.
+    const COMBINED_SESSION: i32 = 0;
+    const CONTROL: u64 = 1 << 18;
+    // SAFETY: reads the keyboard's state; takes and keeps nothing.
+    unsafe { CGEventSourceFlagsState(COMBINED_SESSION) & CONTROL != 0 }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn control_held() -> bool {
+    false
+}
 
 /// The tray icon: on a Mac, a glyph the menu bar colours as it is coloured;
 /// on Windows, the app's own icon, which a dark taskbar shows as well as a
@@ -127,6 +162,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     )?;
     app.manage(CornerItems(corners));
     app.manage(AtLogin(at_login));
+    app.manage(Clicks::default());
     app.manage(VersionItem(version));
 
     TrayIconBuilder::with_id("memoca")
@@ -136,16 +172,43 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| chosen(app, event.id().as_ref()))
-        .on_tray_icon_event(|tray, event| {
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
+        .on_tray_icon_event(|tray, event| match event {
+            // Control held over the icon on a Mac: a click is a right
+            // click, for the menu (tray-icon does not take it for one).
+            #[cfg(target_os = "macos")]
+            TrayIconEvent::Enter { .. } | TrayIconEvent::Move { .. } => {
+                let _ = tray.set_show_menu_on_left_click(control_held());
+            }
+            TrayIconEvent::Click {
+                button,
+                button_state,
                 rect,
                 ..
-            } = event
-            {
-                window::toggle(tray.app_handle(), window::Place::Tray(rect));
+            } => {
+                let clicks = tray.app_handle().state::<Clicks>();
+                let mut clicks = clicks.0.lock().unwrap();
+                match (button, button_state) {
+                    (MouseButton::Right, MouseButtonState::Down) => {
+                        clicks.right = Some(Instant::now())
+                    }
+                    (MouseButton::Left, MouseButtonState::Down) => {
+                        clicks.left_for_menu = control_held()
+                    }
+                    (MouseButton::Left, MouseButtonState::Up) => {
+                        // Some right clicks (on a trackpad, say) come with a
+                        // left one too, or as one with Control held: the
+                        // menu's, not the window's.
+                        let for_menu = clicks.left_for_menu
+                            || clicks.right.is_some_and(|at| at.elapsed() < RIGHT_CLICK);
+                        drop(clicks);
+                        if !for_menu {
+                            window::toggle(tray.app_handle(), window::Place::Tray(rect));
+                        }
+                    }
+                    _ => {}
+                }
             }
+            _ => {}
         })
         .build(app)?;
     Ok(())

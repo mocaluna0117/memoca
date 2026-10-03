@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-03-desktop-tray-right-click",
+    date: "2026-10-03",
+    title: "デスクトップ版のメニューが出ないことがあったのを修正",
+    details: [
+      "Mac で ⚡ のアイコンを右クリック（2 本指でクリック）しても、メニューが出ずに即席メモが開くことがあったのを直しました（0.3.1）。Control を押しながらのクリックでも、メニューが出ます。",
+    ],
+  },
+  {
     id: "2026-10-03-desktop-app-window",
     date: "2026-10-03",
     title: "デスクトップ版で Memoca 全体を",

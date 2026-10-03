@@ -81,6 +81,8 @@ Google は、アプリの窓の中でのログインを受け付けません。�
 
 ### メニュー（⚡ アイコンを右クリック）
 
+Mac では、Control を押しながらのクリックでも出ます。
+
 - **即席メモを開く**
 - **Memoca を開く**：Memoca 全体のウィンドウを開きます
 - **ピン留め（ほかをクリックしても隠さない）**
@@ -192,6 +194,6 @@ cd src-tauri && cargo test && cargo clippy --all-targets -- -D warnings
 
 1. `desktop/package.json`・`desktop/src-tauri/tauri.conf.json`・`desktop/src-tauri/Cargo.toml` の版をそろえて上げます。
 2. `desktop-v<版>`（例：`desktop-v0.2.0`）のタグを push します。
-3. GitHub Actions の「Desktop」が `.dmg`・Windows のインストーラー・更新用のファイル（`latest.json` と署名）を作り、下書きのリリースに置きます。中身を確かめて公開します。公開すると、入っているアプリが自動で更新されます（下書きのあいだは届きません）。
+3. GitHub Actions の「Desktop」が `.dmg`・Windows のインストーラー・更新用のファイル（`latest.json` と署名）を作り、下書きのリリースに置きます。中身を確かめて公開します。公開するときは「Set as the latest release」にチェックが入っているか確かめます（アプリは Latest のリリースの `latest.json` だけを見ます。0.3.0 は公開しても Latest にならず、`gh release edit desktop-v0.3.0 --latest` で直した）。公開すると、入っているアプリが自動で更新されます（下書きのあいだは届きません）。
 
 `desktop/` だけの変更は、Vercel の再デプロイを起こしません（`vercel.json` の `ignoreCommand`）。
