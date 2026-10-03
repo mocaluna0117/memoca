@@ -63,7 +63,9 @@ async function hydrate(noteId: string, note: Note | undefined, doc: Y.Doc): Prom
   const locked = note?.locked === true;
   const key =
     locked && note?.wrappedKey && vault.isUnlocked
-      ? await vault.noteKey(noteId, note.keyEpoch, note.wrappedKey)
+      ? await vault
+          .noteKey(noteId, note.keyEpoch, note.wrappedKey)
+          .catch((cause: unknown) => Promise.reject(unreadable("鍵", cause)))
       : null;
 
   // Snapshots and incremental updates are sealed under different contexts, so
@@ -88,11 +90,26 @@ async function hydrate(noteId: string, note: Note | undefined, doc: Y.Doc): Prom
   };
 
   if (snapshot) {
-    await applyOne("snapshot", snapshot.data, snapshot.iv, snapshot.keyEpoch);
+    await applyOne("snapshot", snapshot.data, snapshot.iv, snapshot.keyEpoch).catch(
+      (cause: unknown) =>
+        Promise.reject(unreadable(`全体の写し（世代 ${snapshot.keyEpoch}）`, cause)),
+    );
   }
   for (const update of updates) {
-    await applyOne("update", update.data, update.iv, update.keyEpoch);
+    await applyOne("update", update.data, update.iv, update.keyEpoch).catch((cause: unknown) =>
+      Promise.reject(
+        unreadable(`編集 ${update.seq ?? "未送信"}（世代 ${update.keyEpoch}）`, cause),
+      ),
+    );
   }
+}
+
+/** A part of a locked note that could not be read, named, keeping the error's own name. */
+function unreadable(part: string, cause: unknown): Error {
+  const { name, message } = (cause ?? {}) as { name?: string; message?: string };
+  const error = new Error(`${part}: ${message ?? String(cause)}`, { cause });
+  if (name) error.name = name;
+  return error;
 }
 
 async function flush(handle: Handle): Promise<void> {

@@ -10,6 +10,7 @@ import {
   signUp,
   waitForSynced,
 } from "./helpers";
+import { readTable } from "./local-db";
 import { createVaultInSettings, enterVaultPassword, vaultPrompt } from "./vault-helpers";
 
 /**
@@ -44,6 +45,26 @@ test("a note in a locked folder opens on a device that has never seen it, with t
   await expect(confirm).toBeVisible({ timeout: 30_000 });
   await enterVaultPassword(page, "ロックする");
   await expect(page.getByText("フォルダ「仕事」をロックしました")).toBeVisible({ timeout: 60_000 });
+  await waitForSynced(page);
+  // The vault, opened again where the note was written, seals it again for
+  // the server once (reconcile.ts, resealLockedNotes).
+  await page.goto("/app/settings");
+  const open = page.getByRole("button", { name: "金庫を開く" }).filter({ visible: true }).first();
+  await expect(open).toBeVisible({ timeout: 30_000 });
+  await page.waitForTimeout(2000);
+  await open.click();
+  await enterVaultPassword(page, "開く");
+  await expect
+    .poll(
+      async () =>
+        Object.keys(
+          ((await readTable<{ key: string; value: unknown }>(page, "meta")).find(
+            (row) => row.key === "resealed",
+          )?.value ?? {}) as Record<string, number>,
+        ).length,
+      { timeout: 60_000 },
+    )
+    .toBe(1);
   await waitForSynced(page);
 
   const fresh = await context.browser()!.newContext({

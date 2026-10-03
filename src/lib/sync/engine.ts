@@ -530,20 +530,20 @@ export class SyncEngine {
    * cannot merge ciphertext. Refusing when anything is unpushed or unreadable
    * is what keeps the deletion of those updates safe.
    */
-  async compact(noteId: string): Promise<void> {
+  async compact(noteId: string): Promise<boolean> {
     const database = db();
     const note = await database.notes.get(noteId);
     const body = await database.bodies.get(noteId);
-    if (!note || !body) return;
-    if (body.throughSeq !== note.lastUpdateSeq) return;
-    if (body.keyEpoch !== note.keyEpoch) return;
+    if (!note || !body) return false;
+    if (body.throughSeq !== note.lastUpdateSeq) return false;
+    if (body.keyEpoch !== note.keyEpoch) return false;
     const unpushed = await database.updates
       .where("noteId")
       .equals(noteId)
       .filter((u) => u.pushed === 0)
       .count();
-    if (unpushed > 0) return;
-    if (note.locked && (!note.wrappedKey || !vault.isUnlocked)) return;
+    if (unpushed > 0) return false;
+    if (note.locked && (!note.wrappedKey || !vault.isUnlocked)) return false;
 
     const merged = await withDetachedDoc(noteId, (doc) => Y.encodeStateAsUpdate(doc));
     let payload = merged;
@@ -563,7 +563,7 @@ export class SyncEngine {
       size: payload.byteLength,
       ...(iv ? { iv: toArrayBuffer(iv) } : {}),
     });
-    if (result.status !== "ok") return;
+    if (result.status !== "ok") return false;
 
     // Mirror the server locally so the snapshot header that arrives next does
     // not look like something this device still needs to download.
@@ -579,6 +579,7 @@ export class SyncEngine {
       .equals(noteId)
       .filter((u) => u.seq !== null && u.seq <= note.lastUpdateSeq)
       .delete();
+    return true;
   }
 
   /**

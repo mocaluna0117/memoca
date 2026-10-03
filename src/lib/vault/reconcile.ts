@@ -9,7 +9,7 @@ import { purgeLockedBlobs } from "@/lib/media/attachments";
 import { purgeMediaCache } from "@/lib/media/media-cache";
 import { plainCopies, relockCopies, settleHeldCopies } from "@/lib/media/relock-copies";
 import { stamp } from "@/lib/sync/clock";
-import { withDetachedDoc } from "@/lib/sync/docs";
+import { openDoc, withDetachedDoc } from "@/lib/sync/docs";
 import type { SyncEngine } from "@/lib/sync/engine";
 import { renameFolder } from "@/lib/sync/mutations";
 import { attachmentRefs } from "@/lib/sync/ydoc";
@@ -336,6 +336,36 @@ export async function checkVaultHealth(): Promise<VaultHealth | null> {
   return health;
 }
 
+/**
+ * Seals each locked note this device can read again, as one snapshot, and
+ * puts it on the server in place of all it has for the note: once a device,
+ * for each key the note is locked under. A copy on the server that a device
+ * could not read (a new one, with nothing of the note yet: one note locked
+ * on 2026-10-01 would not open in the desktop app, nor on any new device,
+ * while it opened where it was written) is replaced by one that can be.
+ * A note this device cannot read, is behind on, or has edits of still to
+ * send is left for another time; so is one open here, whose document can
+ * lack what another tab of this device wrote.
+ */
+export async function resealLockedNotes(engine: SyncEngine | null): Promise<number> {
+  if (!engine || !vault.isUnlocked) return 0;
+  const database = db();
+  const done = await getMeta<Record<string, number>>(META.resealed, {});
+  let resealed = 0;
+  for (const note of await database.notes.filter((n) => n.locked && !n.purged).toArray()) {
+    if (!vault.isUnlocked) break;
+    if (done[note.noteId] === note.keyEpoch || openDoc(note.noteId)) continue;
+    // Read here first: compact seals what this device has, which has to be all of it.
+    const readable = await withDetachedDoc(note.noteId, () => true).catch(() => false);
+    if (!readable) continue;
+    if (!(await engine.compact(note.noteId).catch(() => false))) continue;
+    done[note.noteId] = note.keyEpoch;
+    await setMeta(META.resealed, done);
+    resealed += 1;
+  }
+  return resealed;
+}
+
 export type RepairReport = {
   inboxUnlocked: boolean;
   namesRestored: number;
@@ -393,6 +423,7 @@ export function repairLocks(
     report.plainCopies = plain.copied;
     report.plainCopiesTooLarge = plain.tooLarge;
     report.unreadable = (await checkVaultHealth())?.unreadableNotes.length ?? 0;
+    await resealLockedNotes(engine).catch(() => 0);
     return report;
   })().finally(() => {
     repairing = null;
