@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-03-locked-note-error-detail",
+    date: "2026-10-03",
+    title: "ロックしたメモが開けなかったときの理由",
+    details: [
+      "ロックしたメモを開けなかったとき、「このメモを開けませんでした」の下に、うまくいかなかった理由を小さく出すようにしました。直すための手がかりになります。",
+    ],
+  },
+  {
     id: "2026-10-03-toggle-image-selection-scroll",
     date: "2026-10-03",
     title: "折りたたみの中の画像を Shift＋↓ で選ぶとき",

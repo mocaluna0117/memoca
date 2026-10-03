@@ -59,7 +59,12 @@ import { LayoutTemplate } from "lucide-react";
 import { db } from "@/lib/db";
 import { t } from "@/lib/i18n/ja";
 import { noteName } from "@/lib/note-name";
-import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, insertTemplate, isTemplate } from "@/lib/templates";
+import {
+  TEMPLATES_FOLDER_ID,
+  TemplateUnavailableError,
+  insertTemplate,
+  isTemplate,
+} from "@/lib/templates";
 
 /** Blocks that are a file, shown as one: an image, a video, a sound, a PDF or any file. */
 const MEDIA = new Set(["image", "video", "audio", "file"]);
@@ -94,7 +99,11 @@ const LINKS = { onClick: (event: MouseEvent) => openLinkApart(event) };
  * line it was made from; the person's own goes back to its button, to try
  * again. A file that was to replace another leaves that one as it was.
  */
-function settleRefusedBlock(editor: BlockNoteEditor | null, blockId: string | undefined, file: File) {
+function settleRefusedBlock(
+  editor: BlockNoteEditor | null,
+  blockId: string | undefined,
+  file: File,
+) {
   const block = editor && blockId ? editor.getBlock(blockId) : undefined;
   if (!editor || !block) return;
   const props = block.props as { url?: string; name?: string };
@@ -105,6 +114,15 @@ function settleRefusedBlock(editor: BlockNoteEditor | null, blockId: string | un
   } catch {
     // Gone meanwhile: nothing left to put right.
   }
+}
+
+/** An error, in a line: its name and message, as it can be told. */
+function describeFailure(error: unknown): string {
+  if (error instanceof Error || (error && typeof error === "object" && "name" in error)) {
+    const { name, message } = error as { name?: unknown; message?: unknown };
+    return [name, message].filter((part) => typeof part === "string" && part).join(": ") || "不明";
+  }
+  return String(error);
 }
 
 /**
@@ -126,7 +144,7 @@ export function NoteEditor({
   // The loaded document is tagged with the note it belongs to, so a slow load
   // for a note the user has already navigated away from cannot be shown.
   const [loaded, setLoaded] = useState<{ noteId: string; doc: Y.Doc } | null>(null);
-  const [failed, setFailed] = useState<string | null>(null);
+  const [failed, setFailed] = useState<{ noteId: string; why: string } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -137,8 +155,9 @@ export function NoteEditor({
       },
       // A locked note whose key this vault cannot open. Say so instead of
       // showing a skeleton forever.
-      () => {
-        if (!cancelled) setFailed(noteId);
+      (error: unknown) => {
+        console.error("Could not open the note", noteId, error);
+        if (!cancelled) setFailed({ noteId, why: describeFailure(error) });
       },
     );
     return () => {
@@ -150,11 +169,13 @@ export function NoteEditor({
   const doc = loaded?.noteId === noteId ? loaded.doc : null;
 
   if (locked && !vault.isUnlocked) return null;
-  if (failed === noteId) {
+  if (failed?.noteId === noteId) {
     return (
-      <p role="alert" className="text-muted-foreground px-4 py-6 text-sm sm:px-10">
-        このメモを開けませんでした。金庫の鍵が合わない可能性があります。
-      </p>
+      <div role="alert" className="space-y-1 px-4 py-6 text-sm text-muted-foreground sm:px-10">
+        <p>このメモを開けませんでした。金庫の鍵が合わない可能性があります。</p>
+        {/* What went wrong, for whoever looks into it. */}
+        <p className="text-xs break-all opacity-70">（{failed.why}）</p>
+      </div>
     );
   }
   if (!doc) {
@@ -166,7 +187,9 @@ export function NoteEditor({
       </div>
     );
   }
-  return <EditorSurface key={noteId} noteId={noteId} doc={doc} locked={locked} readOnly={readOnly} />;
+  return (
+    <EditorSurface key={noteId} noteId={noteId} doc={doc} locked={locked} readOnly={readOnly} />
+  );
 }
 
 function EditorSurface({
@@ -279,7 +302,9 @@ function EditorSurface({
         onItemClick: () => {
           insertTemplate(editor, template.noteId).catch((error: unknown) =>
             toast.error(
-              error instanceof TemplateUnavailableError ? t.templates.unavailable : "テンプレートを使えませんでした。",
+              error instanceof TemplateUnavailableError
+                ? t.templates.unavailable
+                : "テンプレートを使えませんでした。",
             ),
           );
         },
