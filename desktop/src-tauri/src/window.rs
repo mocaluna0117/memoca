@@ -5,6 +5,8 @@
 
 use crate::screen::{self, Area};
 use crate::settings::{Corner, Store};
+use crate::{app_window, sign_in};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::webview::NewWindowResponse;
@@ -64,7 +66,7 @@ pub const PLATFORM: &str = if cfg!(target_os = "windows") {
 /// registry): it is how the window's checks open its debugging port
 /// (scripts/check-windows.ps1).
 #[cfg(target_os = "windows")]
-fn browser_args() -> String {
+pub fn browser_args() -> String {
     // wry's, for a window that may play sound unasked (Tauri's default).
     let mut args = String::from(
         "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection \
@@ -81,7 +83,7 @@ fn browser_args() -> String {
 /// What the window tells the site it is: the engine it is (Safari's on a
 /// Mac, Edge's on Windows), and the shell (src/lib/quick/shell.ts reads it
 /// before any script runs).
-fn user_agent() -> String {
+pub fn user_agent() -> String {
     let engine = if cfg!(target_os = "windows") {
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36 Edg/130.0.0.0"
     } else {
@@ -94,8 +96,8 @@ fn user_agent() -> String {
 }
 
 /// What the page is given as `window.memocaShell` (src/lib/quick/shell.ts),
-/// on Memoca's pages only.
-fn bridge() -> String {
+/// on Memoca's pages only, in this window and Memoca's own (app_window.rs).
+pub fn bridge() -> String {
     format!(
         r#"(() => {{
   if (location.origin !== {origin:?}) return;
@@ -104,6 +106,8 @@ fn bridge() -> String {
     value: Object.freeze({{
       hide: () => void invoke("hide"),
       openExternal: (url) => void invoke("open_external", {{ url: String(url) }}),
+      openApp: (url) => void invoke("open_app", {{ url: String(url) }}),
+      showQuick: () => void invoke("show_quick"),
       beginSignIn: () => invoke("begin_sign_in"),
       completeSignIn: (code) => invoke("complete_sign_in", {{ code: String(code) }}),
       takeSignIn: () => invoke("take_sign_in"),
@@ -117,7 +121,7 @@ fn bridge() -> String {
 }
 
 /// Opens a web address in the browser; anything else is let go.
-fn open_outside(app: &AppHandle, url: &Url) {
+pub fn open_outside(app: &AppHandle, url: &Url) {
     if matches!(url.scheme(), "http" | "https") {
         let _ = app.opener().open_url(url.as_str(), None::<&str>);
     }
@@ -140,6 +144,10 @@ fn may_go(app: &AppHandle, url: &Url) -> bool {
 /// site long gone, a sign-in long out of date).
 pub struct Loaded(Mutex<Instant>);
 
+/// Whether Memoca's own window (app_window.rs) was in use when this one
+/// came out: then the keyboard goes back to it as this one is put away.
+pub struct CameFromApp(AtomicBool);
+
 const STALE: Duration = Duration::from_secs(12 * 60 * 60);
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
@@ -159,7 +167,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .visible(false)
         .user_agent(&user_agent())
         .initialization_script(bridge())
-        .on_navigation(move |url| may_go(&guard, url))
+        // The page's own: images dropped into the quick note.
+        .disable_drag_drop_handler()
+        .on_navigation(move |url| {
+            sign_in::on_navigation(&guard, LABEL, url);
+            may_go(&guard, url)
+        })
         // A link opened in a new window (target=_blank, window.open) goes
         // to the browser, rather than nowhere.
         .on_new_window(move |url, _| {
@@ -170,6 +183,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let builder = builder.additional_browser_args(&browser_args());
     let window = builder.build()?;
     app.manage(Loaded(Mutex::new(Instant::now())));
+    app.manage(CameFromApp(AtomicBool::new(false)));
     #[cfg(target_os = "windows")]
     out_of_alt_tab(&window);
 
@@ -288,6 +302,9 @@ fn place(app: &AppHandle, window: &WebviewWindow, place: &Place) {
 pub fn show(app: &AppHandle, where_: Place) {
     let Some(window) = window(app) else { return };
     if !window.is_visible().unwrap_or(false) {
+        app.state::<CameFromApp>()
+            .0
+            .store(app_window::is_in_use(app), Ordering::Relaxed);
         let settings = app.state::<Store>().get();
         match settings.position {
             // Pinned, it comes out where it was left.
@@ -324,8 +341,13 @@ pub fn hide(app: &AppHandle) {
     if window.is_visible().unwrap_or(false) {
         remember(app, &window);
         let _ = window.hide();
+        // On a Mac, the app in use before is the one the keyboard goes back
+        // to only once Memoca is hidden: Memoca's own window too, unless it
+        // was the one in use.
         #[cfg(target_os = "macos")]
-        let _ = app.hide();
+        if !app.state::<CameFromApp>().0.load(Ordering::Relaxed) {
+            let _ = app.hide();
+        }
         let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-hidden'))");
     }
 }

@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "quick",
-  "description": "The quick note's window, showing Memoca's site: moved by its header, and the app's own five commands. Nothing else, and no other page.",
-  "windows": ["quick"],
+  "description": "The quick note's window and Memoca's own, showing Memoca's site: moved by its header, and the app's own seven commands. Nothing else, and no other site.",
+  "windows": ["quick", "app"],
   "remote": {
     "urls": ["https://memoca-app.vercel.app/*"]
   },
@@ -12,6 +12,8 @@
     "allow-open-external",
     "allow-begin-sign-in",
     "allow-complete-sign-in",
-    "allow-take-sign-in"
+    "allow-take-sign-in",
+    "allow-open-app",
+    "allow-show-quick"
   ]
 }

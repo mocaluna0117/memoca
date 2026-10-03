@@ -3,10 +3,10 @@
 //! the app starts and every six hours since, or when asked from the menu,
 //! in the latest release published on GitHub, and taken only if signed with
 //! the key the app was built to trust (tauri.conf.json's pubkey). Put in
-//! while the window is away, so nothing being written is cut short, and the
-//! app started again, hidden.
+//! while the quick note is away and Memoca's own window closed, so nothing
+//! being written is cut short, and the app started again, hidden.
 
-use crate::window;
+use crate::{app_window, window};
 use std::time::Duration;
 use tauri::menu::MenuItem;
 use tauri::{AppHandle, Manager, Wry};
@@ -38,7 +38,7 @@ pub fn watch(app: AppHandle) {
         std::thread::sleep(FIRST);
         loop {
             match tauri::async_runtime::block_on(look(&app, false)) {
-                // Out and maybe in use: asked again soon, rather than in six hours.
+                // A window out, maybe in use: asked again soon, rather than in six hours.
                 Looked::Later => std::thread::sleep(WAIT),
                 _ => std::thread::sleep(EVERY),
             }
@@ -78,12 +78,14 @@ async fn look(app: &AppHandle, asked: bool) -> Looked {
             return Looked::Failed;
         }
     };
-    if window::is_out(app) {
+    if window::is_out(app) || app_window::is_open(app) {
         if !asked {
             return Looked::Later;
         }
-        // Asked for: put away first, its draft kept by the page.
+        // Asked for: put away first, the quick note's draft kept by the
+        // page, and the notes, kept on this computer as they are written.
         window::hide(app);
+        app_window::close(app);
         std::thread::sleep(Duration::from_millis(1500));
     }
     say(app, &format!("{} を入れています…", update.version));

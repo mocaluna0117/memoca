@@ -108,4 +108,17 @@ describe("Q, for the quick note", () => {
     await press();
     expect(opened).toHaveBeenCalledOnce();
   });
+
+  test("in the desktop shell's window for the whole app, brings out the shell's own", async () => {
+    const showQuick = vi.fn();
+    window.memocaShell = { hide() {}, openExternal() {}, showQuick, platform: "macos" };
+    try {
+      await press();
+      expect(showQuick).toHaveBeenCalledOnce();
+      expect(opened).not.toHaveBeenCalled();
+      expect(h.push).not.toHaveBeenCalled();
+    } finally {
+      delete window.memocaShell;
+    }
+  });
 });

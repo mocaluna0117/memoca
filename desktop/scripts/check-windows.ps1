@@ -2,8 +2,9 @@
 # one there (CI, .github/workflows/desktop.yml), and checks it: installed for
 # this user, memoca:// links handed to it, started (hidden) and still
 # running, one only however often it is started or a link opened, and gone
-# again once uninstalled; and, unless -NoWindow, that its window loads
-# Memoca's site as the Windows shell (e2e/window.mjs).
+# again once uninstalled; and, unless -NoWindow, that its windows (the
+# quick note's, and Memoca's own) load Memoca's site as the Windows shell
+# (e2e/window.mjs).
 param(
   [Parameter(Mandatory = $true)][string]$Installer,
   [switch]$NoWindow
@@ -98,8 +99,14 @@ if (-not $NoWindow) {
     $open = Start-Debuggable "from WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
     Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
     Check $open "its WebView2 opens the debugging port it is started with"
-    node e2e/window.mjs 9222
-    if ($LASTEXITCODE -ne 0) { throw "the window's checks failed" }
+    node e2e/window.mjs 9222 quick
+    if ($LASTEXITCODE -ne 0) { throw "the quick note's window's checks failed" }
+    # Memoca's own window, as a launch with --app opens it in the app running.
+    Start-Process -FilePath $exe.FullName -ArgumentList "--app"
+    Start-Sleep -Seconds 5
+    Check ((Running).Count -eq 1) "started with --app: the one running opens Memoca's own window"
+    node e2e/window.mjs 9222 app
+    if ($LASTEXITCODE -ne 0) { throw "Memoca's own window's checks failed" }
   } finally {
     Stop-All
   }

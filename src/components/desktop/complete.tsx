@@ -19,6 +19,14 @@ function take(): Promise<Handoff | null> {
   return taking;
 }
 
+/**
+ * Where the window goes once signed in: the quick note, or the notes in the
+ * shell's window for the whole app, which sends it here with `to=app`.
+ */
+export function nextPage(search: string): string {
+  return new URLSearchParams(search).get("to") === "app" ? "/app" : "/quick?window=1";
+}
+
 /** Codes being taken: each one once. */
 const exchanges = new Map<string, Promise<boolean>>();
 
@@ -39,7 +47,8 @@ function exchange({ code, verifier }: Handoff): Promise<boolean> {
 /**
  * In the desktop shell's window: takes the code the shell hands over, with
  * the verifier it holds, for a session of the window's own, and opens the
- * quick note in this page's place. Given nothing (the page opened by
+ * quick note (or, in the window for the whole app, the notes) in this
+ * page's place. Given nothing (the page opened by
  * anything but the shell), there is nothing to take.
  */
 export function Complete() {
@@ -55,7 +64,7 @@ export function Complete() {
       }
       const signedIn = await exchange(handoff);
       if (!current) return;
-      if (signedIn) window.location.replace("/quick?window=1");
+      if (signedIn) window.location.replace(nextPage(window.location.search));
       else setProblem("failed");
     });
     return () => {

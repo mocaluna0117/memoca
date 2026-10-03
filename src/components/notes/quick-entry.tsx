@@ -21,14 +21,19 @@ const QUICK_WINDOW = {
 const WIDE = "(min-width: 768px)";
 
 /**
- * Opens the quick note: in a small window of its own on a computer, or as a
- * page here where there is no room for one, or the browser will not open one.
+ * Opens the quick note: the desktop shell's own, in its window for the whole
+ * app; else in a small window of its own on a computer, or as a page here
+ * where there is no room for one, or the browser will not open one.
  * A window already open is brought forward as it is, not loaded again: what
  * is being written in it stays where it is.
  */
 export function useOpenQuickNote(): () => void {
   const router = useRouter();
   return useCallback(() => {
+    if (window.memocaShell?.showQuick) {
+      window.memocaShell.showQuick();
+      return;
+    }
     // Asked for by name with no address: the one already open, or a new blank one.
     const opened = window.matchMedia(WIDE).matches
       ? window.open("", QUICK_WINDOW.name, QUICK_WINDOW.features)

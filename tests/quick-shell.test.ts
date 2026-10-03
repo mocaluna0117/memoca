@@ -77,7 +77,17 @@ describe("openNoteInApp", () => {
     };
   }
 
-  test("from the shell, opens the note in the default browser, in full", () => {
+  test("from the shell, opens the note in its window for the whole app", () => {
+    const here = windowWith({ memocaShell: { ...shell(), openApp: vi.fn() }, open: vi.fn() });
+    openNoteInApp("abc", here);
+    expect(here.memocaShell!.openApp).toHaveBeenCalledWith(
+      "https://memoca-app.vercel.app/app?n=abc",
+    );
+    expect(here.memocaShell!.openExternal).not.toHaveBeenCalled();
+    expect(here.open).not.toHaveBeenCalled();
+  });
+
+  test("from a shell with no such window (before 0.3.0), opens the note in the default browser", () => {
     const here = windowWith({ memocaShell: shell(), open: vi.fn() });
     openNoteInApp("abc", here);
     expect(here.memocaShell!.openExternal).toHaveBeenCalledWith(

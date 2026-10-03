@@ -13,15 +13,19 @@
 //!    verifier (take_sign_in), which Memoca takes for a session of the
 //!    window's own. Neither is in any address, and a code is good only with
 //!    the verifier, which never leaves the app but for that page.
+//!
+//! The quick note's window and Memoca's own (app_window.rs) are one sign-in:
+//! the code is taken in the one that started it, and the other is loaded
+//! again once that one has moved on from taking it.
 
-use crate::window;
+use crate::{app_window, window};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Manager, State};
+use tauri::{AppHandle, Manager, State, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
@@ -34,6 +38,8 @@ const HANDING: Duration = Duration::from_secs(60);
 struct Started {
     state: String,
     verifier: String,
+    /// The window it was started in: the one to take the code.
+    window: String,
     at: Instant,
 }
 
@@ -42,10 +48,11 @@ struct Started {
 pub struct Pending(Mutex<Option<Started>>);
 
 impl Pending {
-    fn start(&self, state: String, verifier: String) {
+    fn start(&self, state: String, verifier: String, window: String) {
         *self.0.lock().unwrap() = Some(Started {
             state,
             verifier,
+            window,
             at: Instant::now(),
         });
     }
@@ -53,13 +60,15 @@ impl Pending {
     /// The verifier of the sign-in started, for a link back from the
     /// browser: if the link is that sign-in's, and not too late. It is taken
     /// with it: the link is that sign-in's end.
-    fn take_for(&self, state: &str) -> Option<String> {
+    fn take_for(&self, state: &str) -> Option<(String, String)> {
         let mut pending = self.0.lock().unwrap();
         let fresh = pending.as_ref().is_some_and(|started| {
             started.at.elapsed() < WAIT && same(state.as_bytes(), started.state.as_bytes())
         });
         if fresh {
-            pending.take().map(|started| started.verifier)
+            pending
+                .take()
+                .map(|started| (started.verifier, started.window))
         } else {
             None
         }
@@ -75,6 +84,36 @@ impl Pending {
             .filter(|started| started.at.elapsed() < WAIT)
             .map(|started| started.verifier.clone())
     }
+}
+
+/// The window sent to take a code, until it moves on from that page.
+#[derive(Default)]
+pub struct Taking(Mutex<Option<String>>);
+
+/// A window moving to `url`: one moving on from taking a code (signed in,
+/// or to try again), and the other window is loaded again, signed in with
+/// it. Any other move is let be.
+pub fn on_navigation(app: &AppHandle, window: &str, url: &Url) {
+    if url.path() == "/desktop/complete" {
+        return;
+    }
+    let taking = app.state::<Taking>();
+    {
+        let mut taking = taking.0.lock().unwrap();
+        if taking.as_deref() != Some(window) {
+            return;
+        }
+        *taking = None;
+    }
+    // After this move is let go on with.
+    let (app, from_app) = (app.clone(), app_window::is_label(window));
+    tauri::async_runtime::spawn(async move {
+        if from_app {
+            window::reload(&app);
+        } else {
+            app_window::go(&app, window::origin().join("/app").unwrap());
+        }
+    });
 }
 
 /// What /desktop/complete takes: the code, and the verifier it goes with.
@@ -159,12 +198,16 @@ fn parse_link(url: &Url) -> Option<(String, String)> {
 
 /// Starts signing in, in the browser: the few letters the browser will show for it.
 #[tauri::command]
-pub fn begin_sign_in(app: AppHandle, pending: State<'_, Pending>) -> Result<String, String> {
+pub fn begin_sign_in(
+    app: AppHandle,
+    window: WebviewWindow,
+    pending: State<'_, Pending>,
+) -> Result<String, String> {
     let state = random();
     let verifier = random();
     let challenge = challenge(&verifier);
     let url = sign_in_url(&window::origin(), &state, &challenge);
-    pending.start(state, verifier);
+    pending.start(state, verifier, window.label().into());
     app.opener()
         .open_url(url.as_str(), None::<&str>)
         .map_err(|error| error.to_string())?;
@@ -173,14 +216,14 @@ pub fn begin_sign_in(app: AppHandle, pending: State<'_, Pending>) -> Result<Stri
 
 /// A code pasted into the window: taken for the sign-in started, if any.
 #[tauri::command]
-pub fn complete_sign_in(app: AppHandle, code: String) -> &'static str {
+pub fn complete_sign_in(app: AppHandle, window: WebviewWindow, code: String) -> &'static str {
     let code = code.trim();
     if !is_code(code) {
         return "not-started";
     }
     match app.state::<Pending>().verifier() {
         Some(verifier) => {
-            complete(&app, code, verifier);
+            complete(&app, code, verifier, window.label());
             "ok"
         }
         None => "not-started",
@@ -201,20 +244,32 @@ pub fn on_link(app: &AppHandle, url: &Url) {
         return;
     };
     match app.state::<Pending>().take_for(&state) {
-        Some(verifier) => complete(app, &code, verifier),
+        Some((verifier, window)) => complete(app, &code, verifier, &window),
         None => window::show(app, window::Place::Cursor),
     }
 }
 
-/// Sends the window to take the code, and keeps it, with the verifier, for
-/// that page to be handed.
-fn complete(app: &AppHandle, code: &str, verifier: String) {
+/// Sends the window the sign-in was started in to take the code (the quick
+/// note's, if Memoca's own has closed since), and keeps it, with the
+/// verifier, for that page to be handed. Taken in Memoca's own, the page
+/// goes on to the notes (`to=app`), rather than to the quick note.
+fn complete(app: &AppHandle, code: &str, verifier: String, started_in: &str) {
     app.state::<Ready>().put(Handoff {
         code: code.into(),
         verifier,
     });
-    window::go(app, window::origin().join("/desktop/complete").unwrap());
-    window::show(app, window::Place::Cursor);
+    let page = window::origin().join("/desktop/complete").unwrap();
+    if app_window::is_label(started_in) && app_window::is_open(app) {
+        *app.state::<Taking>().0.lock().unwrap() = Some(started_in.into());
+        app_window::open_at(
+            app,
+            window::origin().join("/desktop/complete?to=app").unwrap(),
+        );
+    } else {
+        *app.state::<Taking>().0.lock().unwrap() = Some(window::LABEL.into());
+        window::go(app, page);
+        window::show(app, window::Place::Cursor);
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +340,7 @@ mod tests {
         Pending(Mutex::new(Some(Started {
             state: state.into(),
             verifier: "the-verifier".into(),
+            window: "quick".into(),
             at: Instant::now() - ago,
         })))
     }
@@ -293,7 +349,10 @@ mod tests {
     fn a_link_back_ends_the_sign_in_it_is_for_and_no_other() {
         let pending = started("mine", Duration::ZERO);
         assert_eq!(pending.take_for("another"), None);
-        assert_eq!(pending.take_for("mine").as_deref(), Some("the-verifier"));
+        assert_eq!(
+            pending.take_for("mine"),
+            Some(("the-verifier".into(), "quick".into()))
+        );
         assert_eq!(pending.take_for("mine"), None);
         assert_eq!(started("mine", WAIT).take_for("mine"), None);
     }

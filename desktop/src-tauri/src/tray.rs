@@ -3,7 +3,7 @@
 
 use crate::settings::{Corner, Store};
 use crate::updater::{self, VersionItem};
-use crate::window;
+use crate::{app_window, window};
 use tauri::image::Image;
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -40,6 +40,7 @@ fn icon() -> tauri::Result<Image<'static>> {
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let settings = app.state::<Store>().get();
     let show = MenuItem::with_id(app, "show", "即席メモを開く", true, None::<&str>)?;
+    let memoca = MenuItem::with_id(app, "app", "Memoca を開く", true, None::<&str>)?;
     let pin = CheckMenuItem::with_id(
         app,
         "pin",
@@ -108,6 +109,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         app,
         &[
             &show,
+            &memoca,
             &PredefinedMenuItem::separator(app)?,
             &pin,
             &corner_menu,
@@ -152,6 +154,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 fn chosen(app: &AppHandle, id: &str) {
     match id {
         "show" => window::show(app, window::Place::Cursor),
+        "app" => app_window::open(app),
         "pin" => app
             .state::<Store>()
             .update(|settings| settings.pinned = !settings.pinned),
@@ -185,6 +188,8 @@ fn chosen(app: &AppHandle, id: &str) {
         }
         "update" => updater::look_now(app),
         "sign-out" => {
+            // One sign-in for both windows: Memoca's own goes with it.
+            app_window::close(app);
             window::go(app, window::origin().join("/desktop/sign-out").unwrap());
             window::show(app, window::Place::Cursor);
         }

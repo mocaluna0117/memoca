@@ -67,6 +67,20 @@ describe("taking the code in the shell's window", () => {
     expect(replace).toHaveBeenCalledWith("/quick?window=1");
   });
 
+  test("in the shell's window for the whole app, opens the notes in its place", async () => {
+    h.fetch.mockResolvedValue({ data: { signedIn: true }, error: null });
+    vi.stubGlobal("location", { ...window.location, search: "?to=app" });
+    await open({ code: CODE, verifier: VERIFIER });
+    expect(replace).toHaveBeenCalledWith("/app");
+  });
+
+  test("goes nowhere else than the quick note or the notes", async () => {
+    const { nextPage } = await import("@/components/desktop/complete");
+    expect(nextPage("?to=app")).toBe("/app");
+    expect(nextPage("")).toBe("/quick?window=1");
+    expect(nextPage("?to=https://example.com")).toBe("/quick?window=1");
+  });
+
   test("turned down, says so, and offers to sign in again", async () => {
     h.fetch.mockResolvedValue({ data: null, error: { status: 400, message: "Invalid code" } });
     await open({ code: CODE, verifier: VERIFIER });

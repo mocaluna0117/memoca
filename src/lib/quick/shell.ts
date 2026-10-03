@@ -5,8 +5,16 @@
 export type MemocaShell = {
   /** Puts the window away, to be shown again as it was. */
   hide(): void;
-  /** Opens a link in the default browser: the shell's window is the quick note's alone. */
+  /** Opens one of Memoca's pages in the default browser. */
   openExternal(url: string): void;
+  /**
+   * Opens one of Memoca's pages in the shell's window for the whole app
+   * (desktop/src-tauri/src/app_window.rs): a note there is moved to, as
+   * {@link OpenNoteMessage} has it. Not in shells before 0.3.0.
+   */
+  openApp?(url: string): void;
+  /** Brings out the shell's quick note, in place of a window of the page's. Not before 0.3.0. */
+  showQuick?(): void;
   /**
    * Starts signing in through the default browser (src/lib/auth/handoff.ts),
    * with the few letters the browser will show for it.
@@ -72,8 +80,9 @@ export type OpenedNoteMessage = { type: typeof OPENED_NOTE; noteId: string };
 export const ANSWER_MS = 800;
 
 /**
- * Opens a note just saved, from the quick note's window: in the browser,
- * from the shell. From a window the app opened, in the app there, told to
+ * Opens a note just saved, from the quick note's window: in the shell's
+ * window for the whole app, from the shell (in the browser, from a shell
+ * that has none). From a window the app opened, in the app there, told to
  * move to it rather than loaded again, which would close its vault (loaded
  * after all if it does not answer); or, if that window has left the app,
  * loaded there. With no window of the app at hand, in a new one, so this
@@ -81,8 +90,11 @@ export const ANSWER_MS = 800;
  */
 export function openNoteInApp(noteId: string, here: Window = window): void {
   const path = `/app?${new URLSearchParams({ n: noteId })}`;
-  if (here.memocaShell) {
-    here.memocaShell.openExternal(new URL(path, here.location.origin).href);
+  const shell = here.memocaShell;
+  if (shell) {
+    const href = new URL(path, here.location.origin).href;
+    if (shell.openApp) shell.openApp(href);
+    else shell.openExternal(href);
     return;
   }
   const opener = here.opener as Window | null;
