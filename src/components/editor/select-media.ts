@@ -2,6 +2,7 @@ import { createExtension } from "@blocknote/core";
 import type { Node, ResolvedPos } from "prosemirror-model";
 import {
   type EditorState,
+  NodeSelection,
   Plugin,
   Selection,
   TextSelection,
@@ -99,7 +100,11 @@ function headOver(doc: Node, block: Found, dir: "down" | "up"): number | null {
 function eachMedia(doc: Node, from: number, to: number, f: (pos: number, content: Node) => void) {
   doc.nodesBetween(from, to, (node, pos) => {
     // Groups, and columns and the rows of them, hold blocks: looked into.
-    if (node.type.name === "blockGroup" || node.type.name === "columnList" || node.type.name === "column") {
+    if (
+      node.type.name === "blockGroup" ||
+      node.type.name === "columnList" ||
+      node.type.name === "column"
+    ) {
       return true;
     }
     if (node.type.name !== "blockContainer") return false;
@@ -125,6 +130,10 @@ function hasMedia(doc: Node, from: number, to: number) {
  * press each. What a closed toggle hides is passed over, as the browser
  * passes over it.
  *
+ * An image clicked (selected as itself): taken from its edge on to the
+ * next block, or the one before. The browser, with no text there, took
+ * the caret elsewhere (in a toggle, to the end of its line).
+ *
  * Null to leave the key to the browser (or to a table's own): not a
  * selection of text, not at the edge of the lines of a block's own line,
  * or text or a table next.
@@ -136,6 +145,7 @@ export function extendOverMedia(
   shown: Shown = () => true,
 ): Transaction | null {
   const { selection, doc } = state;
+  if (selection instanceof NodeSelection) return extendFromMedia(state, selection, dir, shown);
   if (!(selection instanceof TextSelection)) return null;
   const { $head, $anchor } = selection;
   const block = blockAt($head);
@@ -159,6 +169,31 @@ export function extendOverMedia(
   }
   const head = headOver(doc, next, dir);
   if (head === null) return null;
+  return selectTo(state, $anchor, head);
+}
+
+/** An image selected as itself (clicked), taken with the block after it (or before). */
+function extendFromMedia(
+  state: EditorState,
+  selection: NodeSelection,
+  dir: "down" | "up",
+  shown: Shown,
+): Transaction | null {
+  const { doc } = state;
+  const block = blockAt(selection.$from);
+  if (!block || !isMedia(block.node) || selection.node !== block.node.firstChild) return null;
+  const start = block.pos + 1;
+  const end = afterLine(block);
+  const anchor = doc.resolve(dir === "down" ? start : end);
+  const next = dir === "down" ? blockAfter(doc, block, shown) : blockBefore(doc, block, shown);
+  // Nothing that way: the image alone, as a selection to go on from.
+  const head = (next && headOver(doc, next, dir)) ?? (dir === "down" ? end : start);
+  return selectTo(state, anchor, head);
+}
+
+/** A selection from `$anchor` to `head`, into view as it may be (see scrollToMedia). */
+function selectTo(state: EditorState, $anchor: ResolvedPos, head: number): Transaction {
+  const { doc } = state;
   const from = Math.min($anchor.pos, head);
   const to = Math.max($anchor.pos, head);
   // Back over all that was taken: the caret, where it began, not a

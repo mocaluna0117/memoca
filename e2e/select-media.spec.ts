@@ -50,6 +50,42 @@ async function paste(page: Page, types: Record<string, string>) {
 const looksSelected = (page: Page) =>
   page.locator('[data-content-type="image"].memoca-selected-media');
 
+/** A note with an open toggle: a line, then six tall images in a row inside it. */
+async function imagesInToggle(page: Page) {
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "トグル");
+  await editor(page).click();
+  await page.keyboard.type("/折りたたみリスト");
+  await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("箱");
+  const box = editor(page)
+    .locator(".bn-block-content")
+    .filter({ has: page.locator(".bn-inline-content", { hasText: /^箱$/ }) })
+    .first();
+  await box.locator(".bn-toggle-button").click();
+  await box.locator(".bn-toggle-add-block-button").click();
+  await page.keyboard.type("中の上");
+  await page.keyboard.press("Enter");
+  // Six tall images in a row inside the toggle, taller together than the screen.
+  await editor(page).evaluate((target) => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 600;
+    canvas.height = 500;
+    const context = canvas.getContext("2d")!;
+    context.fillStyle = "#3366cc";
+    context.fillRect(0, 0, 600, 500);
+    const url = canvas.toDataURL("image/png");
+    const data = new DataTransfer();
+    data.setData("text/html", Array.from({ length: 6 }, () => `<img src="${url}">`).join(""));
+    target.dispatchEvent(
+      new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+    );
+  });
+  await expect(noteImages(page)).toHaveCount(6, { timeout: 30_000 });
+}
+
 test.describe("an image selected with Shift and the arrow keys", () => {
   test.beforeEach(({}, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "a computer's keyboard");
@@ -302,39 +338,7 @@ test.describe("an image selected with Shift and the arrow keys", () => {
     page,
   }) => {
     test.setTimeout(150_000);
-    await signUp(page);
-    await openApp(page);
-    await createNote(page, "トグル");
-    await editor(page).click();
-    await page.keyboard.type("/折りたたみリスト");
-    await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
-    await page.keyboard.press("Enter");
-    await page.keyboard.type("箱");
-    const box = editor(page)
-      .locator(".bn-block-content")
-      .filter({ has: page.locator(".bn-inline-content", { hasText: /^箱$/ }) })
-      .first();
-    await box.locator(".bn-toggle-button").click();
-    await box.locator(".bn-toggle-add-block-button").click();
-    await page.keyboard.type("中の上");
-    await page.keyboard.press("Enter");
-    // Six tall images in a row inside the toggle, taller together than the screen.
-    await editor(page).evaluate((target) => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 600;
-      canvas.height = 500;
-      const context = canvas.getContext("2d")!;
-      context.fillStyle = "#3366cc";
-      context.fillRect(0, 0, 600, 500);
-      const url = canvas.toDataURL("image/png");
-      const data = new DataTransfer();
-      data.setData("text/html", Array.from({ length: 6 }, () => `<img src="${url}">`).join(""));
-      target.dispatchEvent(
-        new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
-      );
-    });
-    await expect(noteImages(page)).toHaveCount(6, { timeout: 30_000 });
-
+    await imagesInToggle(page);
     await editor(page).getByText("中の上").click();
     await page.keyboard.press("End");
     const images = editor(page).locator('[data-content-type="image"]');
@@ -350,11 +354,30 @@ test.describe("an image selected with Shift and the arrow keys", () => {
       });
       expect(shown, `image ${taken} on the screen`).toBe(true);
       if (taken + 1 < 6) {
-        const next = await images.nth(taken + 1).evaluate(
-          (image) => image.getBoundingClientRect().top > window.innerHeight,
-        );
+        const next = await images
+          .nth(taken + 1)
+          .evaluate((image) => image.getBoundingClientRect().top > window.innerHeight);
         expect(next, `image ${taken + 2} still below`).toBe(true);
       }
+    }
+  });
+
+  test("an image clicked in an open toggle, Shift+↓ takes it and the next, staying in the toggle", async ({
+    page,
+  }) => {
+    test.setTimeout(150_000);
+    await imagesInToggle(page);
+    const images = editor(page).locator('[data-content-type="image"]');
+    await images.nth(2).locator("img").click();
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect(looksSelected(page)).toHaveCount(2);
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect(looksSelected(page)).toHaveCount(3);
+    // Not up to the toggle's line: the images from the one clicked on.
+    const selected = await page.evaluate(() => window.getSelection()?.toString() ?? "");
+    expect(selected).not.toContain("箱");
+    for (const nth of [2, 3, 4]) {
+      await expect(images.nth(nth)).toHaveClass(/memoca-selected-media/);
     }
   });
 });

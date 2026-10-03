@@ -37,6 +37,58 @@ function press(state: EditorState, dir: "down" | "up", times = 1) {
   return next;
 }
 
+describe("Shift and the arrow keys, from an image clicked", () => {
+  /** A note of these blocks, the `nth` image selected as itself, as a click on it selects it. */
+  function clicked(blocks: PartialBlock[], nth = 0): EditorState {
+    const editor = BlockNoteEditor.create();
+    editor.replaceBlocks(editor.document, blocks);
+    const state = editor.prosemirrorState;
+    const found: number[] = [];
+    state.doc.descendants((node, pos) => {
+      if (node.type.name === "image") found.push(pos);
+      return true;
+    });
+    return state.apply(state.tr.setSelection(NodeSelection.create(state.doc, found[nth])));
+  }
+
+  test("↓ takes it and the next image, then the next, a press each", () => {
+    const blocks = [IMAGE, IMAGE, IMAGE, { type: "paragraph", content: "下の行" } as PartialBlock];
+    let state = press(clicked(blocks), "down");
+    expect(taken(state)).toBe("[image]|[image]");
+    state = press(state, "down");
+    expect(taken(state)).toBe("[image]|[image]|[image]");
+    state = press(state, "down");
+    expect(taken(state)).toBe("[image]|[image]|[image]|下の行");
+  });
+
+  test("in an open toggle, ↓ stays in it, image by image", () => {
+    const blocks: PartialBlock[] = [
+      {
+        type: "toggleListItem",
+        content: "箱",
+        children: [{ type: "paragraph", content: "中の上" }, IMAGE, IMAGE, IMAGE],
+      },
+    ];
+    let state = press(clicked(blocks, 0), "down");
+    expect(taken(state)).toBe("[image]|[image]");
+    state = press(state, "down");
+    expect(taken(state)).toBe("[image]|[image]|[image]");
+    expect(taken(state)).not.toContain("箱");
+  });
+
+  test("↑ takes it and the line before", () => {
+    const state = press(clicked([{ type: "paragraph", content: "上の行" }, IMAGE]), "up");
+    expect(taken(state)).toBe("上の行|[image]");
+  });
+
+  test("with nothing that way, the image alone, to go on from (and back off it)", () => {
+    const state = press(clicked([{ type: "paragraph", content: "上の行" }, IMAGE]), "down");
+    expect(taken(state)).toBe("[image]");
+    expect(press(state, "up").selection.empty).toBe(true);
+    expect(taken(press(state, "up", 2))).toBe("上の行");
+  });
+});
+
 describe("Shift and the arrow keys, next to an image", () => {
   test("↓ at the last line before an image at the end: the selection takes it", () => {
     const state = press(
