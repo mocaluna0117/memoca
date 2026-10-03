@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-03-toggle-image-selection-scroll",
+    date: "2026-10-03",
+    title: "折りたたみの中の画像を Shift＋↓ で選ぶとき",
+    details: [
+      "開いた折りたたみの中で、画像が続くところを Shift＋↑↓ で選んでいくと、画面が折りたたみの下の端まで一気に飛んでしまうことがあったのを直しました。いま選択に入れた画像が見えるように、少しずつ進みます。",
+    ],
+  },
+  {
     id: "2026-10-03-desktop-tray-right-click",
     date: "2026-10-03",
     title: "デスクトップ版のメニューが出ないことがあったのを修正",

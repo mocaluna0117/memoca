@@ -298,4 +298,63 @@ test.describe("an image selected with Shift and the arrow keys", () => {
       expect(html).toContain("<img");
     });
   }
+  test("images in a row in an open toggle, taken one a press, each scrolled to, not past", async ({
+    page,
+  }) => {
+    test.setTimeout(150_000);
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "トグル");
+    await editor(page).click();
+    await page.keyboard.type("/折りたたみリスト");
+    await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("箱");
+    const box = editor(page)
+      .locator(".bn-block-content")
+      .filter({ has: page.locator(".bn-inline-content", { hasText: /^箱$/ }) })
+      .first();
+    await box.locator(".bn-toggle-button").click();
+    await box.locator(".bn-toggle-add-block-button").click();
+    await page.keyboard.type("中の上");
+    await page.keyboard.press("Enter");
+    // Six tall images in a row inside the toggle, taller together than the screen.
+    await editor(page).evaluate((target) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 600;
+      canvas.height = 500;
+      const context = canvas.getContext("2d")!;
+      context.fillStyle = "#3366cc";
+      context.fillRect(0, 0, 600, 500);
+      const url = canvas.toDataURL("image/png");
+      const data = new DataTransfer();
+      data.setData("text/html", Array.from({ length: 6 }, () => `<img src="${url}">`).join(""));
+      target.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+      );
+    });
+    await expect(noteImages(page)).toHaveCount(6, { timeout: 30_000 });
+
+    await editor(page).getByText("中の上").click();
+    await page.keyboard.press("End");
+    const images = editor(page).locator('[data-content-type="image"]');
+    for (let taken = 1; taken <= 6; taken += 1) {
+      await page.keyboard.press("Shift+ArrowDown");
+      await expect(looksSelected(page)).toHaveCount(taken);
+      // The image just taken is what is on the screen: the note was thrown
+      // down to the toggle's foot by the first press.
+      await page.waitForTimeout(500);
+      const shown = await images.nth(taken - 1).evaluate((image) => {
+        const box = image.getBoundingClientRect();
+        return box.bottom > 0 && box.top < window.innerHeight;
+      });
+      expect(shown, `image ${taken} on the screen`).toBe(true);
+      if (taken + 1 < 6) {
+        const next = await images.nth(taken + 1).evaluate(
+          (image) => image.getBoundingClientRect().top > window.innerHeight,
+        );
+        expect(next, `image ${taken + 2} still below`).toBe(true);
+      }
+    }
+  });
 });

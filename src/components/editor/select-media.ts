@@ -167,7 +167,58 @@ export function extendOverMedia(
   const extended = none
     ? TextSelection.create(doc, $anchor.pos)
     : new TextSelection($anchor, doc.resolve(head));
-  return state.tr.setSelection(extended).scrollIntoView();
+  const tr = state.tr.setSelection(extended);
+  // Into view by the editor where the head is in a line; at an image's
+  // edge, by the image (see scrollToMedia).
+  return extended.$head.parent.inlineContent ? tr.scrollIntoView() : tr;
+}
+
+/** Where each of what scrolls an element (its scrolling ancestors, and the page) is scrolled to. */
+function scrolls(element: Element): [Element, number][] {
+  const found: [Element, number][] = [];
+  for (let at = element.parentElement; at; at = at.parentElement) {
+    if (at.scrollHeight > at.clientHeight) found.push([at, at.scrollTop]);
+  }
+  const page = document.scrollingElement;
+  if (page && !found.some(([at]) => at === page)) found.push([page, page.scrollTop]);
+  return found;
+}
+
+function restore(positions: [Element, number][]) {
+  for (const [element, top] of positions) {
+    if (element.scrollTop !== top) element.scrollTop = top;
+  }
+}
+
+/** How long the browser is given to bring a selection into view. */
+const HOLD_MS = 400;
+
+/**
+ * Keeps what scrolls an element where it is for a moment: put back each
+ * time it moves, but not once the person scrolls or presses a key.
+ */
+function holdScroll(element: Element) {
+  const held = scrolls(element);
+  const stop = new AbortController();
+  const options = { capture: true, passive: true, signal: stop.signal };
+  document.addEventListener("scroll", () => restore(held), options);
+  for (const type of ["wheel", "touchstart", "pointerdown", "keydown"]) {
+    window.addEventListener(type, () => stop.abort(), options);
+  }
+  setTimeout(() => stop.abort(), HOLD_MS);
+}
+
+/**
+ * The image (or file) a selection's head is at the edge of, scrolled into
+ * view as little as it takes. ProseMirror (and the browser) find no good
+ * place on the screen for a head between blocks: in an open toggle they
+ * took the toggle's foot, and Shift+↓ threw the note down to there.
+ */
+function scrollToMedia(view: EditorView) {
+  const block = blockAt(view.state.selection.$head);
+  if (!block || !isMedia(block.node)) return;
+  const element = view.nodeDOM(block.pos);
+  if (element instanceof HTMLElement) element.scrollIntoView({ block: "nearest" });
 }
 
 /**
@@ -197,7 +248,18 @@ function extend(view: EditorView | undefined, dir: "down" | "up") {
   if (!view) return false;
   const tr = extendOverMedia(view.state, dir, view.endOfTextblock(dir), shownOn(view));
   if (tr) {
+    if (tr.scrolledIntoView) {
+      view.dispatch(tr);
+      return true;
+    }
+    // The browser brings a selection's head into view itself, once the
+    // selection has changed. Between blocks it can put no caret there, so it
+    // looks on for where it could, past the images (in an open toggle, to
+    // its foot) and the note was thrown down to there. The image is brought
+    // into view instead, and the note held there while the browser would.
     view.dispatch(tr);
+    scrollToMedia(view);
+    holdScroll(view.dom);
     return true;
   }
   // At an image, with nothing further that way: kept as it is, where the
