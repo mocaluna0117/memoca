@@ -254,7 +254,10 @@ export class SyncEngine {
 
     if (!batch.complete) await this.resubscribe();
     // Inbox may just have arrived, for a note made before it did.
-    else void import("./mutations").then(({ fileAwaitingInbox }) => fileAwaitingInbox()).catch(() => 0);
+    else
+      void import("./mutations")
+        .then(({ fileAwaitingInbox }) => fileAwaitingInbox())
+        .catch(() => 0);
   }
 
   /** Pulls snapshots and updates for notes this device is behind on. */
@@ -290,7 +293,9 @@ export class SyncEngine {
         : body.snapshot.url
           ? // Not kept by the service worker or the browser: a note locked
             // later would leave this copy of its text behind.
-            new Uint8Array(await (await fetch(body.snapshot.url, { cache: "no-store" })).arrayBuffer())
+            new Uint8Array(
+              await (await fetch(body.snapshot.url, { cache: "no-store" })).arrayBuffer(),
+            )
           : null;
       if (bytes) {
         await database.snapshots.put({
@@ -309,6 +314,13 @@ export class SyncEngine {
         through = body.snapshot.coversThroughSeq;
       }
     }
+    // What was kept here under another key (from before a lock or unlock)
+    // is in what just came, and that key cannot open it any more.
+    await database.updates
+      .where("noteId")
+      .equals(body.noteId)
+      .filter((u) => u.keyEpoch !== body.keyEpoch && u.pushed === 1)
+      .delete();
 
     for (const update of body.updates) {
       const existing = await database.updates.where("opId").equals(update.opId).first();
@@ -416,7 +428,8 @@ export class SyncEngine {
         if (ops.length === entries.length && entries.length < PUSH_OP_LIMIT) break;
       }
       // A file for a note that has only now reached the server waited above.
-      if ((await database.pendingUploads.count()) > 0) await flushUploads(this.client).catch(() => {});
+      if ((await database.pendingUploads.count()) > 0)
+        await flushUploads(this.client).catch(() => {});
       this.set({ state: "idle", pending: await database.outbox.count() });
       // Everything of ours is sent: a good moment, and this loop keeps
       // running while nothing else happens, which a quiet note needs.
@@ -471,9 +484,7 @@ export class SyncEngine {
     const note = await database.notes.get(noteId);
     if (!note) return;
 
-    const local = await withDetachedDoc(noteId, (doc) =>
-      Y.encodeStateAsUpdate(doc),
-    );
+    const local = await withDetachedDoc(noteId, (doc) => Y.encodeStateAsUpdate(doc));
     await this.fetchBodies([noteId]);
     const server = await withDetachedDoc(noteId, (doc) => Y.encodeStateVector(doc));
 
@@ -623,10 +634,28 @@ export class SyncEngine {
       const body = await database.bodies.get(note.noteId);
       if (!body || body.keyEpoch !== note.keyEpoch || body.throughSeq < note.snapshotSeq) {
         missing.push(note.noteId);
+      } else if (await hasStaleParts(note.noteId, note.keyEpoch)) {
+        // Counted as whole by an earlier version, with parts of another key
+        // left over: fetched again, all of it.
+        await database.bodies.update(note.noteId, { throughSeq: 0 });
+        missing.push(note.noteId);
       }
     }
     if (missing.length > 0) await this.fetchBodies(missing);
   }
+}
+
+/** Whether this device keeps parts of a note under a key other than the note's own. */
+async function hasStaleParts(noteId: string, keyEpoch: number): Promise<boolean> {
+  const database = db();
+  const snapshot = await database.snapshots.get(noteId);
+  if (snapshot && snapshot.keyEpoch !== keyEpoch) return true;
+  const stale = await database.updates
+    .where("noteId")
+    .equals(noteId)
+    .filter((u) => u.keyEpoch !== keyEpoch && u.pushed === 1)
+    .count();
+  return stale > 0;
 }
 
 function estimateSize(payload: Record<string, unknown>): number {

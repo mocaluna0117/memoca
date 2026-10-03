@@ -123,8 +123,7 @@ async function flush(handle: Handle): Promise<void> {
   // rather than leaving some to a write that may yet fail.
   while (handle.writing) await handle.writing.catch(() => {});
   if (handle.buffer.length === 0) return;
-  const merged =
-    handle.buffer.length === 1 ? handle.buffer[0]! : Y.mergeUpdates(handle.buffer);
+  const merged = handle.buffer.length === 1 ? handle.buffer[0]! : Y.mergeUpdates(handle.buffer);
   handle.buffer = [];
   const writing = write(handle, merged).catch((error: unknown) => {
     // Not stored: put back ahead of anything typed since, to be written with

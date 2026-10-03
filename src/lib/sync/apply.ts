@@ -209,14 +209,29 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
         // own writes too. Locking and compaction both refuse to act unless the
         // local copy is known to cover every update on the server, and leaving
         // the marker behind on an echo makes that condition unreachable.
+        // Only over a body this device has, under the same key: an update of a
+        // note locked (or unlocked) since, with the body that came with that
+        // still to fetch, does not make it whole. Counted as whole, the body
+        // was never fetched, and the old key's parts stayed, which the new
+        // key cannot open: such a note would not open here.
         const body = await database.bodies.get(remote.noteId);
-        await database.bodies.put({
-          noteId: remote.noteId,
-          throughSeq: Math.max(body?.throughSeq ?? 0, remote.seq),
-          keyEpoch: remote.keyEpoch,
-          text: body?.text ?? null,
-          updatedAt: Date.now(),
-        });
+        const row = await database.notes.get(remote.noteId);
+        // With no body here yet, every update of a note never folded into a
+        // snapshot is all of it; one that has a snapshot is not whole without it.
+        const whole = body
+          ? body.keyEpoch === remote.keyEpoch
+          : row?.snapshotSeq === 0 && row.keyEpoch === remote.keyEpoch;
+        if (own || whole) {
+          await database.bodies.put({
+            noteId: remote.noteId,
+            throughSeq: Math.max(body?.throughSeq ?? 0, remote.seq),
+            keyEpoch: remote.keyEpoch,
+            text: body?.text ?? null,
+            updatedAt: Date.now(),
+          });
+        } else {
+          needBodies.add(remote.noteId);
+        }
         // `lastUpdateSeq` is only carried on the note row, which is not resent
         // for content changes; keep it in step from the update itself.
         const note = await database.notes.get(remote.noteId);
