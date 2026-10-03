@@ -16,6 +16,16 @@ export type MemocaShell = {
   /** Brings out the shell's quick note, in place of a window of the page's. Not before 0.3.0. */
   showQuick?(): void;
   /**
+   * The computer's own check (Touch ID, Windows Hello) for the vault
+   * (src/lib/vault/device-unlock.ts). Not before 0.4.0.
+   */
+  deviceUnlock?: {
+    /** Which check the computer has, if any. */
+    kind(): Promise<DeviceUnlockKind | null>;
+    /** The computer's secret, base64, once the person has proved themselves; made if `create`. */
+    secret(create: boolean): Promise<string>;
+  };
+  /**
    * Starts signing in through the default browser (src/lib/auth/handoff.ts),
    * with the few letters the browser will show for it.
    */
@@ -30,6 +40,8 @@ export type MemocaShell = {
   takeSignIn?(): Promise<{ code: string; verifier: string } | null>;
   platform: "macos" | "windows";
 };
+
+export type DeviceUnlockKind = "touchId" | "windowsHello";
 
 declare global {
   interface Window {

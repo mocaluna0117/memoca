@@ -27,6 +27,7 @@
 | D3 | 即席メモに画像 | 済み（2026-10-03）。オーナーの判断で D2 より先に。下の「D3 の実装で決めたこと」。Apple の署名の項目は、Apple Developer Program に入らないため外した（2026-09-30） |
 | D2 | Windows 版（GitHub Actions でインストーラーと自動の動作確認）、ログイン時の自動起動、自動更新、窓の位置の記憶 | 実装と CI の確認は済み（2026-10-03。Windows のジョブでインストールから窓の読み込み・アンインストールまで通る）。`desktop-v0.2.0` を下書きのリリースに。残りは、オーナーが下書きを公開することと、実機での確認（Windows PC と Mac：ホットキー・トレイ・ホットコーナー・ログイン時の起動・自動更新） |
 | D4 | デスクトップ版に Memoca 全体のウィンドウ（オーナーの依頼、2026-10-03） | 実装済み（2026-10-03、0.3.0）。下の「D4 の実装で決めたこと」 |
+| D5 | デスクトップ版で金庫を Touch ID・Windows Hello で開く（オーナーの依頼、2026-10-03） | 実装済み（2026-10-04、0.4.0）。下の「D5 の実装で決めたこと」。実機での確認はオーナーの Mac と Windows PC で |
 
 ### S1 の実装で決めたこと（2026-09-26）
 
@@ -348,6 +349,17 @@ Q4〜D0 と、1 回目のレビューで直したもの（Opus 3 人：安全、
 - **窓の大きさと位置の記憶**：窓を隠すときに、大きさ（点）を `settings.json` の `size` に、ピン留めしていれば位置を `position` に書く。次に出すとき（起動し直したあとも）その大きさで作り、ピン留めしていればその位置に出す。
 - **12 時間以上たった窓**：窓のページを読み込んでから 12 時間たっていれば、出すときに読み込み直す（D1 の「隠したときに新しいビルドなら読み込み直す」に加えて。ログインの期限や、長く動かした WebView のため）。
 - 版は 0.2.0。デスクトップ版のクレートのライセンスも GPL-3.0 にした（MIT のまま残っていた）。
+
+### D5 の実装で決めたこと（2026-10-04）
+
+デスクトップ版の窓では、署名がないのでパスキー（WebAuthn）が使えない（Associated Domains が要る）。オーナーに選んでもらい（2026-10-03）、Apple Developer Program には入らず、アプリがパソコンの認証を呼ぶ形にした。Mac は「アプリが Touch ID で確かめてから、キーチェーンの秘密を使う」形（パスキーより一段弱い）、Windows は Windows Hello の鍵。
+
+- アプリ（`desktop/src-tauri/src/device_unlock.rs`）：`device_unlock_kind`（"touchId"・"windowsHello"・なし）と `device_unlock_secret(create)`（確認のあと、32 バイトの秘密を base64 で）。橋渡しの `memocaShell.deviceUnlock`。
+  - Mac：`LAContext.canEvaluatePolicy(DeviceOwnerAuthenticationWithBiometrics)` で Touch ID があるか。確認は `DeviceOwnerAuthentication`（Touch ID がだめなら Mac のパスワード）。秘密は乱数で、ログインキーチェーンの汎用パスワード（サービス `io.github.mocaluna0117.memoca.vault-unlock`）。署名が ad hoc なので、データ保護キーチェーン・Secure Enclave・生体認証で縛ったアクセス制御は使えない（エンタイトルメントが要る）。
+  - Windows：`KeyCredentialManager` の鍵「Memoca vault unlock」（なければ作る。`FailIfExists`）に、決まった文字列 `memoca-vault-unlock-v1` を署名させ、その SHA-256 を秘密にする（RSA・PKCS#1 v1.5 の署名は毎回同じ）。何も保存しない。
+- サイト（`src/lib/vault/device-unlock.ts`）：秘密から HKDF（`memoca-kek-device-v1`）で鍵を作り、金庫の鍵を `wrap:vault:v1:device` で包んで、この端末のローカル DB（meta の `deviceUnlock`）だけに置く。サーバーの金庫のレコードは変えない（Convex の変更なし）。秘密で開けなくなった写し（`OperationError`）は捨てて、パスワードに戻す。
+- 画面：金庫の入力で、写しがあれば開いた瞬間に確認を出し、「Touch ID で開く」ボタンも置く。パスワードで開いたあと、写しがなければ使うかを聞く（「あとで」は `deviceUnlockOfferAt` に記録し、パスキーの案内と同じ間隔で聞き直す）。デスクトップ版ではパスキーの案内は出さない。設定の「金庫とロック」に「Touch ID（このアプリ）」（パスワードで使い始める・使わない）。
+- 確かめ：単体テスト（`tests/device-unlock.test.ts`：同じ鍵が開く、取り消し、合わなくなった写しを捨てる）。Touch ID・Windows Hello そのものは CI では動かせないので、実機で。
 
 ### D4 の実装で決めたこと（2026-10-03）
 

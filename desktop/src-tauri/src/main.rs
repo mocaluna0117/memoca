@@ -11,6 +11,7 @@
 mod app_window;
 mod commands;
 mod corner;
+mod device_unlock;
 mod screen;
 mod settings;
 mod shortcut;
@@ -116,6 +117,8 @@ fn main() {
             sign_in::take_sign_in,
             commands::open_app,
             commands::show_quick,
+            device_unlock::device_unlock_kind,
+            device_unlock::device_unlock_secret,
         ])
         .setup(|app| {
             // A menu bar app: no Dock icon, and not in ⌘Tab.
@@ -141,7 +144,9 @@ fn main() {
                         .permission("allow-complete-sign-in")
                         .permission("allow-take-sign-in")
                         .permission("allow-open-app")
-                        .permission("allow-show-quick"),
+                        .permission("allow-show-quick")
+                        .permission("allow-device-unlock-kind")
+                        .permission("allow-device-unlock-secret"),
                 )?;
             }
 

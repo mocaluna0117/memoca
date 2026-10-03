@@ -10,6 +10,8 @@ fn main() {
             "take_sign_in",
             "open_app",
             "show_quick",
+            "device_unlock_kind",
+            "device_unlock_secret",
         ]),
     ))
     .expect("failed to run tauri-build");

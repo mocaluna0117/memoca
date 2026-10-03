@@ -108,6 +108,10 @@ pub fn bridge() -> String {
       openExternal: (url) => void invoke("open_external", {{ url: String(url) }}),
       openApp: (url) => void invoke("open_app", {{ url: String(url) }}),
       showQuick: () => void invoke("show_quick"),
+      deviceUnlock: Object.freeze({{
+        kind: () => invoke("device_unlock_kind"),
+        secret: (create) => invoke("device_unlock_secret", {{ create: Boolean(create) }}),
+      }}),
       beginSignIn: () => invoke("begin_sign_in"),
       completeSignIn: (code) => invoke("complete_sign_in", {{ code: String(code) }}),
       takeSignIn: () => invoke("take_sign_in"),

@@ -271,9 +271,7 @@ class VaultSession {
     return key;
   }
 
-  async createAttachmentKey(
-    attachmentId: string,
-  ): Promise<{ key: CryptoKey; wrapped: Sealed }> {
+  async createAttachmentKey(attachmentId: string): Promise<{ key: CryptoKey; wrapped: Sealed }> {
     const raw = randomBytes(KEY_BYTES);
     const key = await importAesKey(raw);
     const wrapped = await seal(this.require(), raw, ctx.attachmentKeyWrap(attachmentId));
@@ -475,16 +473,17 @@ export async function setUpVault(
   };
 }
 
-async function adoptFrom(kek: CryptoKey, wrapped: Sealed, method: "password" | "recovery" | "passkey") {
+async function adoptFrom(
+  kek: CryptoKey,
+  wrapped: Sealed,
+  method: "password" | "recovery" | "passkey" | "device",
+) {
   const raw = await open(kek, toBytes(wrapped.ct), toBytes(wrapped.iv), ctx.vaultWrap(method));
   vault.adopt(await importAesKey(raw));
   wipe(raw);
 }
 
-export async function unlockWithPassword(
-  record: VaultRecord,
-  password: string,
-): Promise<void> {
+export async function unlockWithPassword(record: VaultRecord, password: string): Promise<void> {
   const kek = await argonKey(password, toBytes(record.saltPw), record.argon);
   await adoptFrom(kek, record.pwWrap, "password");
 }
@@ -494,16 +493,8 @@ export async function unlockWithRecoveryKey(
   recoveryKey: Uint8Array,
 ): Promise<void> {
   if (!record.recWrap) throw new Error("リカバリーキーが設定されていません。");
-  const kek = await hkdfKey(
-    recoveryKey,
-    toBytes(record.recWrap.hkdfSalt),
-    HKDF_INFO.recovery,
-  );
-  await adoptFrom(
-    kek,
-    { ct: record.recWrap.ct, iv: record.recWrap.iv },
-    "recovery",
-  );
+  const kek = await hkdfKey(recoveryKey, toBytes(record.recWrap.hkdfSalt), HKDF_INFO.recovery);
+  await adoptFrom(kek, { ct: record.recWrap.ct, iv: record.recWrap.iv }, "recovery");
 }
 
 export async function unlockWithPrf(
@@ -512,6 +503,27 @@ export async function unlockWithPrf(
 ): Promise<void> {
   const kek = await hkdfKey(prfOutput, toBytes(entry.hkdfSalt), HKDF_INFO.passkey);
   await adoptFrom(kek, { ct: entry.ct, iv: entry.iv }, "passkey");
+}
+
+/** A copy of the vault key under the computer's own secret (vault/device-unlock.ts). */
+export type DeviceWrap = { hkdfSalt: ArrayBuffer; ct: ArrayBuffer; iv: ArrayBuffer };
+
+/** Wraps the vault key in `vaultRaw` under the computer's secret. */
+export async function wrapForDevice(secret: Uint8Array, vaultRaw: Uint8Array): Promise<DeviceWrap> {
+  const hkdfSalt = randomBytes(16);
+  const kek = await hkdfKey(secret, hkdfSalt, HKDF_INFO.device);
+  const wrapped = await seal(kek, vaultRaw, ctx.vaultWrap("device"));
+  return {
+    hkdfSalt: toArrayBuffer(hkdfSalt),
+    ct: toArrayBuffer(wrapped.ct),
+    iv: toArrayBuffer(wrapped.iv),
+  };
+}
+
+/** Opens the vault with the computer's secret and its copy of the vault key. */
+export async function unlockWithDevice(wrap: DeviceWrap, secret: Uint8Array): Promise<void> {
+  const kek = await hkdfKey(secret, toBytes(wrap.hkdfSalt), HKDF_INFO.device);
+  await adoptFrom(kek, { ct: wrap.ct, iv: wrap.iv }, "device");
 }
 
 /**

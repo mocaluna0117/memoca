@@ -75,6 +75,13 @@ import {
   purposeCopy,
 } from "@/lib/vault/purpose";
 import { useVaultRecord } from "@/lib/vault/record";
+import {
+  DeviceUnlockCancelled,
+  deviceUnlockLabel,
+  enrollDeviceUnlock,
+  unlockWithDeviceCheck,
+  useDeviceUnlock,
+} from "@/lib/vault/device-unlock";
 
 const MIN_PASSWORD = 8;
 
@@ -108,7 +115,10 @@ function useFolderNoteCounts(purpose: VaultPurpose): { count: number | null; kee
         // Only what the person can see: trashed notes change too, silently.
         const visible = new Set(notes.filter((n) => n.deletedAt === null).map((n) => n.noteId));
         if (locking) {
-          return { count: planFolderLock(folderId, folders, notes).filter((id) => visible.has(id)).length, keep: 0 };
+          return {
+            count: planFolderLock(folderId, folders, notes).filter((id) => visible.has(id)).length,
+            keep: 0,
+          };
         }
         const plan = planFolderUnlock(folderId, folders, notes);
         return {
@@ -153,7 +163,8 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     const start = startGate(purpose, ctx);
     if ("immediate" in start) return { view: "confirm" as GateView, notice: null };
     // A sheet the tap already started belongs on the passkey screen.
-    if (request.auto && start.view !== "create") return { view: "passkey" as GateView, notice: null };
+    if (request.auto && start.view !== "create")
+      return { view: "passkey" as GateView, notice: null };
     return { view: start.view, notice: null };
   });
   const { view, notice } = gate;
@@ -186,6 +197,12 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
   const [offerRaw, setOfferRaw] = useState<Uint8Array | null>(null);
   const offerRawRef = useRef<Uint8Array | null>(null);
   const content = useRef<HTMLDivElement>(null);
+  // The desktop app's own check (Touch ID, Windows Hello), in place of a
+  // passkey there (lib/vault/device-unlock.ts).
+  const device = useDeviceUnlock();
+  const deviceLabel = device.kind ? deviceUnlockLabel(device.kind) : null;
+  const [deviceOffer, setDeviceOffer] = useState(false);
+  const deviceTried = useRef(false);
 
   useEffect(() => {
     dispatch({ type: "context", ctx: { availability, online, unlocked, passkeyReady } });
@@ -279,7 +296,10 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         }
         setError(
           cause instanceof StalePasskeyError
-            ? withMethod(method, "の登録が古くなっています。パスワードで開いたあと、設定で登録し直してください。")
+            ? withMethod(
+                method,
+                "の登録が古くなっています。パスワードで開いたあと、設定で登録し直してください。",
+              )
             : cause instanceof PrfUnsupportedError
               ? cause.message
               : withMethod(method, "で開けませんでした。パスワードを使ってください。"),
@@ -314,6 +334,8 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
 
   /** Whether to ask, after the password, to add a passkey in this browser. */
   const offerDue = async () => {
+    // The desktop app offers its own check instead (deviceOfferDue).
+    if (device.kind) return false;
     if (!platform || !online || passkeyReady || passkeys.length >= MAX_PASSKEYS) return false;
     const declinedAt = await getMeta<number>(META.passkeyOfferAt, 0);
     return Date.now() - declinedAt > OFFER_AGAIN_MS;
@@ -327,7 +349,9 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         offerRawRef.current = raw;
         setOfferRaw(raw);
       } catch {
-        setError(withMethod(method, "の登録を始められませんでした。あとで設定から登録してください。"));
+        setError(
+          withMethod(method, "の登録を始められませんでした。あとで設定から登録してください。"),
+        );
       }
     });
 
@@ -355,6 +379,63 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     }
   };
 
+  /** Whether to ask, after the password, to open with the computer's check from now on. */
+  const deviceOfferDue = async () => {
+    if (!device.kind || device.enrolled) return false;
+    const declinedAt = await getMeta<number>(META.deviceUnlockOfferAt, 0);
+    return Date.now() - declinedAt > OFFER_AGAIN_MS;
+  };
+
+  /** Opens the vault with the computer's check; the password stays there if it does not. */
+  const runDevice = () =>
+    work(async () => {
+      try {
+        await unlockWithDeviceCheck();
+      } catch (cause) {
+        if (!(cause instanceof DeviceUnlockCancelled)) {
+          setError(
+            `${deviceLabel ?? "この端末の認証"}で開けませんでした。パスワードで開いてください。`,
+          );
+        }
+        return;
+      }
+      ok();
+    });
+
+  // Asked for at once where this device opens with it, as a passkey here is.
+  useEffect(() => {
+    if (deviceTried.current || !device.enrolled || view !== "password" || unlocked) return;
+    deviceTried.current = true;
+    void runDevice();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [device.enrolled, view, unlocked]);
+
+  const acceptDeviceOffer = () =>
+    work(async () => {
+      if (!record) return;
+      let raw: Uint8Array | null = null;
+      try {
+        raw = await openVaultRaw(record, { password });
+        await enrollDeviceUnlock(raw);
+      } catch (cause) {
+        if (!(cause instanceof DeviceUnlockCancelled)) {
+          setError(
+            `${deviceLabel}を使えるようにできませんでした。あとで設定から設定してください。`,
+          );
+        }
+        return;
+      } finally {
+        if (raw) wipe(raw);
+      }
+      toast.success(`次からは ${deviceLabel} で金庫を開けます`);
+      ok();
+    });
+
+  const declineDeviceOffer = () => {
+    void setMeta(META.deviceUnlockOfferAt, Date.now());
+    ok();
+  };
+
   const submitPassword = () =>
     work(async () => {
       if (!record) return;
@@ -366,6 +447,10 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         await unlockWithPassword(record, password);
       } catch {
         setError(t.vault.wrongPassword);
+        return;
+      }
+      if (await deviceOfferDue()) {
+        setDeviceOffer(true);
         return;
       }
       if (await offerDue()) {
@@ -460,7 +545,9 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         setCreatedRaw(result.raw);
         dispatch({ type: "setupSucceeded" });
       } catch {
-        setError("金庫を作成できませんでした。インターネット接続を確認して、もう一度お試しください。");
+        setError(
+          "金庫を作成できませんでした。インターネット接続を確認して、もう一度お試しください。",
+        );
         dispatch({ type: "setupFailed" });
       }
     });
@@ -480,7 +567,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         className={cn(
           "sm:max-w-md",
           // On a phone, a sheet from the bottom, lifted above the keyboard.
-          "max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[85dvh] max-sm:max-w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:rounded-b-none max-sm:rounded-t-2xl max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]",
+          "max-sm:top-auto max-sm:bottom-0 max-sm:left-0 max-sm:max-h-[85dvh] max-sm:max-w-full max-sm:translate-x-0 max-sm:translate-y-0 max-sm:overflow-y-auto max-sm:rounded-t-2xl max-sm:rounded-b-none max-sm:pb-[max(1rem,env(safe-area-inset-bottom))]",
         )}
         style={narrow ? { bottom: keyboard } : undefined}
         showCloseButton={!locked}
@@ -492,7 +579,35 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         onEscapeKeyDown={(event) => locked && event.preventDefault()}
         onInteractOutside={(event) => locked && event.preventDefault()}
       >
-        {view === "createKey" && freshKey ? (
+        {deviceOffer && deviceLabel ? (
+          <>
+            <DialogHeader>
+              <DialogTitle>{`このアプリでも ${deviceLabel} で開けるようにしますか？`}</DialogTitle>
+              <DialogDescription>
+                {`次からはパスワードを入力せずに、${deviceLabel} だけで金庫を開けます。開くための鍵は、このパソコンだけに保存されます。`}
+              </DialogDescription>
+            </DialogHeader>
+            <ErrorLine error={error} />
+            <DialogFooter>
+              <Button variant="ghost" onClick={declineDeviceOffer} disabled={pending !== null}>
+                あとで
+              </Button>
+              <Button
+                onClick={() => void acceptDeviceOffer()}
+                disabled={pending !== null}
+                className="gap-2"
+                data-autofocus
+              >
+                {pending === "work" ? (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                ) : (
+                  <Fingerprint className="size-4" aria-hidden />
+                )}
+                {`${deviceLabel} を使う`}
+              </Button>
+            </DialogFooter>
+          </>
+        ) : view === "createKey" && freshKey ? (
           <RecoveryKeyView
             recoveryKey={freshKey.key}
             onConfirmed={async () => {
@@ -528,7 +643,10 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
               <DialogHeader>
                 <DialogTitle>{withMethod(method, "でも開けるようにしますか？")}</DialogTitle>
                 <DialogDescription>
-                  {withMethod(`次からはパスワードを入力せずに、${method}`, "だけで金庫を開けます。")}
+                  {withMethod(
+                    `次からはパスワードを入力せずに、${method}`,
+                    "だけで金庫を開けます。",
+                  )}
                   この端末にパスキーが保存されます。
                 </DialogDescription>
               </DialogHeader>
@@ -562,9 +680,14 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
           ) : (
             <>
               <DialogHeader>
-                <DialogTitle>{withMethod(`この端末でも ${method}`, "で開けるようにしますか？")}</DialogTitle>
+                <DialogTitle>
+                  {withMethod(`この端末でも ${method}`, "で開けるようにしますか？")}
+                </DialogTitle>
                 <DialogDescription>
-                  {withMethod(`次からはパスワードを入力せずに、${method}`, "だけで金庫を開けます。")}
+                  {withMethod(
+                    `次からはパスワードを入力せずに、${method}`,
+                    "だけで金庫を開けます。",
+                  )}
                   パスキーはこの端末（いま使っているブラウザ）に保存されます。
                 </DialogDescription>
               </DialogHeader>
@@ -573,7 +696,12 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                 <Button variant="ghost" onClick={declineOffer} disabled={pending !== null}>
                   あとで
                 </Button>
-                <Button onClick={() => void acceptOffer()} disabled={pending !== null} className="gap-2" data-autofocus>
+                <Button
+                  onClick={() => void acceptOffer()}
+                  disabled={pending !== null}
+                  className="gap-2"
+                  data-autofocus
+                >
                   {pending === "work" ? (
                     <Loader2 className="size-4 animate-spin" aria-hidden />
                   ) : (
@@ -601,7 +729,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
         ) : view === "loading" ? (
           <>
             <Header title={copy.title} body={copy.body} />
-            <p role="status" className="text-muted-foreground flex items-center gap-2 text-sm">
+            <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
               <Loader2 className="size-4 animate-spin" aria-hidden />
               金庫の情報を読み込んでいます…
             </p>
@@ -651,7 +779,9 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                     value={newPassword.value}
                     autoComplete="new-password"
                     enterKeyHint="next"
-                    onChange={(event) => setNewPassword((s) => ({ ...s, value: event.target.value }))}
+                    onChange={(event) =>
+                      setNewPassword((s) => ({ ...s, value: event.target.value }))
+                    }
                     data-autofocus
                   />
                 </Field>
@@ -661,7 +791,9 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                     value={newPassword.again}
                     autoComplete="new-password"
                     enterKeyHint="go"
-                    onChange={(event) => setNewPassword((s) => ({ ...s, again: event.target.value }))}
+                    onChange={(event) =>
+                      setNewPassword((s) => ({ ...s, again: event.target.value }))
+                    }
                   />
                 </Field>
                 <ErrorLine error={error} />
@@ -680,7 +812,10 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                 <Button variant="ghost" onClick={ok}>
                   あとで
                 </Button>
-                <Button onClick={() => setNewPassword((s) => ({ ...s, open: true }))} data-autofocus>
+                <Button
+                  onClick={() => setNewPassword((s) => ({ ...s, open: true }))}
+                  data-autofocus
+                >
                   新しいパスワードを設定
                 </Button>
               </DialogFooter>
@@ -710,7 +845,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                   aria-describedby="vault-password-hint"
                   data-autofocus
                 />
-                <p id="vault-password-hint" className="text-muted-foreground text-xs">
+                <p id="vault-password-hint" className="text-xs text-muted-foreground">
                   8 文字以上。Memoca へのログインとは別の、金庫専用のパスワードです。
                 </p>
               </Field>
@@ -724,7 +859,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                   aria-invalid={error ? true : undefined}
                 />
               </Field>
-              <p className="text-muted-foreground text-xs">
+              <p className="text-xs text-muted-foreground">
                 このパスワードを忘れても、次に表示するリカバリーキーがあれば開けます。両方なくすと、誰にも開けません。
               </p>
               <ErrorLine error={error} />
@@ -788,18 +923,35 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                     : passkeyAction(purpose, method)}
               </Button>
             ) : view === "password" ? (
-              <Field id="vault-unlock-password" label="金庫のパスワード">
-                <PasswordInput
-                  id="vault-unlock-password"
-                  value={password}
-                  autoComplete="current-password"
-                  enterKeyHint="go"
-                  onChange={(event) => setPassword(event.target.value)}
-                  aria-invalid={error ? true : undefined}
-                  aria-describedby={error ? "vault-error" : undefined}
-                  data-autofocus
-                />
-              </Field>
+              <>
+                {device.enrolled && deviceLabel ? (
+                  <Button
+                    type="button"
+                    className="w-full gap-2"
+                    onClick={() => void runDevice()}
+                    disabled={pending !== null}
+                  >
+                    {pending === "work" ? (
+                      <Loader2 className="size-4 animate-spin" aria-hidden />
+                    ) : (
+                      <Fingerprint className="size-4" aria-hidden />
+                    )}
+                    {`${deviceLabel} で開く`}
+                  </Button>
+                ) : null}
+                <Field id="vault-unlock-password" label="金庫のパスワード">
+                  <PasswordInput
+                    id="vault-unlock-password"
+                    value={password}
+                    autoComplete="current-password"
+                    enterKeyHint="go"
+                    onChange={(event) => setPassword(event.target.value)}
+                    aria-invalid={error ? true : undefined}
+                    aria-describedby={error ? "vault-error" : undefined}
+                    data-autofocus
+                  />
+                </Field>
+              </>
             ) : (
               <Field id="vault-recovery" label={t.vault.recoveryKey}>
                 <Input
@@ -817,7 +969,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                   className="font-mono"
                   data-autofocus
                 />
-                <p id="vault-recovery-hint" className="text-muted-foreground text-xs">
+                <p id="vault-recovery-hint" className="text-xs text-muted-foreground">
                   大文字・小文字、ハイフンや空白はどちらでもかまいません。（
                   {recoveryKeyCharacters(recoveryInput)} / {RECOVERY_KEY_LENGTH} 文字）
                 </p>
@@ -918,7 +1070,7 @@ function Field({ id, label, children }: { id: string; label: string; children: R
 function ErrorLine({ error }: { error: string | null }) {
   if (!error) return null;
   return (
-    <p id="vault-error" role="alert" className="text-destructive text-sm">
+    <p id="vault-error" role="alert" className="text-sm text-destructive">
       {error}
     </p>
   );
@@ -926,14 +1078,14 @@ function ErrorLine({ error }: { error: string | null }) {
 
 function OfflineNote({ text }: { text: string | null }) {
   if (!text) return null;
-  return <p className="text-muted-foreground text-sm">{text}</p>;
+  return <p className="text-sm text-muted-foreground">{text}</p>;
 }
 
 function LinkButton({ onClick, children }: { onClick: () => void; children: React.ReactNode }) {
   return (
     <button
       type="button"
-      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1.5 text-xs underline-offset-4 hover:underline"
+      className="inline-flex items-center gap-1.5 text-xs text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
       onClick={onClick}
     >
       {children}

@@ -28,6 +28,10 @@ export const META = {
   recoveryNudgeAt: "recoveryNudgeAt",
   /** What the last check found that this vault's key cannot open. */
   vaultHealth: "vaultHealth",
+  /** The desktop app's copy of the vault key, under the computer's own check (vault/device-unlock.ts). */
+  deviceUnlock: "deviceUnlock",
+  /** When the desktop app's offer of that was last declined here. */
+  deviceUnlockOfferAt: "deviceUnlockOfferAt",
   /** Locked notes this device has sealed again for the server, by key epoch (reconcile.ts). */
   resealed: "resealed",
   /** A folder unlock this device has not finished, to resume on next open. */

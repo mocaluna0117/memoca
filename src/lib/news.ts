@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-04-desktop-device-unlock",
+    date: "2026-10-04",
+    title: "デスクトップ版の金庫を Touch ID・Windows Hello で",
+    details: [
+      "デスクトップ版（0.4.0）で、金庫をパスワードの代わりに、Mac では Touch ID、Windows では Windows Hello（指紋・顔・PIN）で開けるようになりました。",
+      "アプリで金庫をパスワードで開くと、使うかどうかを聞かれます。設定の「金庫とロック」からも使い始められます。開くための鍵は、そのパソコンだけに保存されます。",
+    ],
+  },
+  {
     id: "2026-10-03-locked-note-resealed",
     date: "2026-10-03",
     title: "ロックしたメモが新しい端末で開けないことがあったのを修正",

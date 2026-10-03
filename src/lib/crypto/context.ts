@@ -8,8 +8,11 @@ export const ctx = {
   noteKeyWrap: (noteId: string, epoch: number) => `wrap:note:v1:${noteId}:${epoch}`,
   /** Wrapping a per-attachment data key with the vault key. */
   attachmentKeyWrap: (attachmentId: string) => `wrap:att:v1:${attachmentId}`,
-  /** Wrapping the vault key itself. */
-  vaultWrap: (method: "password" | "recovery" | "passkey") => `wrap:vault:v1:${method}`,
+  /**
+   * Wrapping the vault key itself. "device": the desktop app's copy, under
+   * the computer's own fingerprint or face check (vault/device-unlock.ts).
+   */
+  vaultWrap: (method: "password" | "recovery" | "passkey" | "device") => `wrap:vault:v1:${method}`,
 
   yjsUpdate: (noteId: string, epoch: number) => `yupd:v1:${noteId}:${epoch}`,
   yjsSnapshot: (noteId: string, epoch: number) => `ysnap:v1:${noteId}:${epoch}`,
@@ -22,4 +25,5 @@ export const ctx = {
 export const HKDF_INFO = {
   passkey: "memoca-kek-passkey-v1",
   recovery: "memoca-kek-recovery-v1",
+  device: "memoca-kek-device-v1",
 } as const;

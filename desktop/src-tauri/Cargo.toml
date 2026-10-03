@@ -1,6 +1,6 @@
 [package]
 name = "memoca"
-version = "0.3.1"
+version = "0.4.0"
 description = "Memoca のデスクトップ版：即席メモの窓"
 authors = ["mocaluna0117"]
 license = "GPL-3.0-only"
@@ -27,8 +27,18 @@ url = "2"
 tauri-plugin-window-state = "2"
 
 # Kept out of Alt-Tab: the window's extended style (window.rs).
+[target.'cfg(target_os = "macos")'.dependencies]
+# Touch ID (device_unlock.rs): asked by the app, the secret kept in the keychain.
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
+block2 = "0.6"
+security-framework = "3"
+
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+# Windows Hello (device_unlock.rs): a key of its own, the secret its signature.
+windows = { version = "0.61", features = ["Security_Credentials", "Security_Cryptography", "Storage_Streams", "Foundation"] }
 
 [profile.release]
 codegen-units = 1

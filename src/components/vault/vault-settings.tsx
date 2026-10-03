@@ -6,6 +6,8 @@ import { useState } from "react";
 import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import { LockHealth } from "@/components/vault/lock-health";
+import { DeviceUnlockSettings } from "@/components/vault/device-unlock-settings";
+import { deviceUnlockLabel, useDeviceUnlock } from "@/lib/vault/device-unlock";
 import { PasskeyManager } from "@/components/vault/passkey-manager";
 import { ChangePasswordDialog, ResetPasswordDialog } from "@/components/vault/password-dialogs";
 import { RecoverySettings } from "@/components/vault/recovery-settings";
@@ -47,6 +49,7 @@ export function VaultSettings() {
   const unlocked = useVaultUnlocked();
   const availability = useVaultRecord((s) => s.availability);
   const record = useVaultRecord((s) => s.record);
+  const deviceKind = useDeviceUnlock().kind;
   const updateSettings = useMutation(api.users.updateSettings);
   const online = useOnline();
 
@@ -54,15 +57,17 @@ export function VaultSettings() {
     // Not known yet, or offline. Offering to create a vault here would let an
     // account that already has one start a second.
     return (
-      <p className="text-muted-foreground text-sm">
-        {online ? "金庫の情報を読み込んでいます…" : "オフラインのため、金庫の情報を確認できません。"}
+      <p className="text-sm text-muted-foreground">
+        {online
+          ? "金庫の情報を読み込んでいます…"
+          : "オフラインのため、金庫の情報を確認できません。"}
       </p>
     );
   }
   if (availability === "none" || !record) {
     return (
       <div className="space-y-3">
-        <p className="text-muted-foreground text-sm">
+        <p className="text-sm text-muted-foreground">
           まだ金庫はありません。メモやフォルダを初めてロックするときに作成します。
         </p>
         <Button onClick={() => void requestVault({ kind: "setup" })} className="gap-2">
@@ -116,10 +121,16 @@ export function VaultSettings() {
             <SelectItem value="60">60 分</SelectItem>
           </SelectContent>
         </Select>
-        <p className="text-muted-foreground text-xs">
+        <p className="text-xs text-muted-foreground">
           金庫を開いたあと、この時間なにも操作しないと自動で閉じます。アプリを閉じたときや再読み込みしたときも閉じます。
         </p>
       </div>
+
+      {deviceKind ? (
+        <Part id="settings-device-unlock" title={`${deviceUnlockLabel(deviceKind)}（このアプリ）`}>
+          <DeviceUnlockSettings record={record} />
+        </Part>
+      ) : null}
 
       <Part id="settings-passkeys" title="パスキー（Face ID・Touch ID など）">
         <PasskeyManager />
@@ -149,7 +160,7 @@ function PasswordSettings({ record }: { record: StoredVaultRecord }) {
       </Button>
       <button
         type="button"
-        className="text-muted-foreground hover:text-foreground text-xs underline underline-offset-4"
+        className="text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
         onClick={() => setResetting(true)}
       >
         パスワードを忘れた場合
