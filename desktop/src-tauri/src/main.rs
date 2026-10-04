@@ -117,6 +117,7 @@ fn main() {
             sign_in::take_sign_in,
             commands::open_app,
             commands::show_quick,
+            commands::show_app,
             device_unlock::device_unlock_kind,
             device_unlock::device_unlock_secret,
         ])
@@ -145,6 +146,7 @@ fn main() {
                         .permission("allow-take-sign-in")
                         .permission("allow-open-app")
                         .permission("allow-show-quick")
+                        .permission("allow-show-app")
                         .permission("allow-device-unlock-kind")
                         .permission("allow-device-unlock-secret"),
                 )?;

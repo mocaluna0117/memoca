@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-04-desktop-quick-open-app",
+    date: "2026-10-04",
+    title: "デスクトップ版の即席メモから Memoca を開く",
+    details: [
+      "デスクトップ版（0.4.1）の即席メモの上に、「Memoca を開く」ボタンを足しました。押すと即席メモが隠れ、Memoca 全体のウィンドウが開きます（開いていれば、そのまま前に出ます）。",
+      "書きかけは下書きとして残り、次に即席メモを出したときに戻ります。",
+    ],
+  },
+  {
     id: "2026-10-04-desktop-device-unlock",
     date: "2026-10-04",
     title: "デスクトップ版の金庫を Touch ID・Windows Hello で",

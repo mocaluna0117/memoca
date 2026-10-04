@@ -10,6 +10,7 @@ fn main() {
             "take_sign_in",
             "open_app",
             "show_quick",
+            "show_app",
             "device_unlock_kind",
             "device_unlock_secret",
         ]),

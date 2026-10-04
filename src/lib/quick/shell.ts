@@ -16,6 +16,11 @@ export type MemocaShell = {
   /** Brings out the shell's quick note, in place of a window of the page's. Not before 0.3.0. */
   showQuick?(): void;
   /**
+   * Puts the quick note away and brings out the shell's window for the whole
+   * app, opened on the notes or as it was left. Not before 0.4.1.
+   */
+  showApp?(): void;
+  /**
    * The computer's own check (Touch ID, Windows Hello) for the vault
    * (src/lib/vault/device-unlock.ts). Not before 0.4.0.
    */

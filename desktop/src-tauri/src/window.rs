@@ -108,6 +108,7 @@ pub fn bridge() -> String {
       openExternal: (url) => void invoke("open_external", {{ url: String(url) }}),
       openApp: (url) => void invoke("open_app", {{ url: String(url) }}),
       showQuick: () => void invoke("show_quick"),
+      showApp: () => void invoke("show_app"),
       deviceUnlock: Object.freeze({{
         kind: () => invoke("device_unlock_kind"),
         secret: (create) => invoke("device_unlock_secret", {{ create: Boolean(create) }}),
@@ -341,10 +342,7 @@ pub fn show(app: &AppHandle, where_: Place) {
 /// The page is told, so it can load a new version of the site while out of
 /// sight.
 pub fn hide(app: &AppHandle) {
-    let Some(window) = window(app) else { return };
-    if window.is_visible().unwrap_or(false) {
-        remember(app, &window);
-        let _ = window.hide();
+    if put_away(app) {
         // On a Mac, the app in use before is the one the keyboard goes back
         // to only once Memoca is hidden: Memoca's own window too, unless it
         // was the one in use.
@@ -352,8 +350,20 @@ pub fn hide(app: &AppHandle) {
         if !app.state::<CameFromApp>().0.load(Ordering::Relaxed) {
             let _ = app.hide();
         }
-        let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-hidden'))");
     }
+}
+
+/// Hides the window, if shown, and no more: for Memoca's own window to come
+/// out in its place (commands::show_app). Whether it was shown.
+pub fn put_away(app: &AppHandle) -> bool {
+    let Some(window) = window(app) else { return false };
+    if !window.is_visible().unwrap_or(false) {
+        return false;
+    }
+    remember(app, &window);
+    let _ = window.hide();
+    let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-hidden'))");
+    true
 }
 
 /// Keeps the window's size, and where it is if pinned, for the next time it

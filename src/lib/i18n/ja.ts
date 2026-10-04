@@ -86,6 +86,7 @@ export const ja = {
     back: "戻る",
     saved: "保存しました",
     openNote: "メモを開く",
+    openApp: "Memoca を開く",
     failed: "保存できませんでした。もう一度お試しください。",
     restored: "前回の下書きを戻しました",
     appended: "前回の下書きを下に足しました",

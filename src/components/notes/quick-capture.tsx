@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowLeft, Check, ImagePlus, X } from "lucide-react";
+import { AppWindow, ArrowLeft, Check, ImagePlus, X } from "lucide-react";
 import { uuidv7 } from "uuidv7";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { newBuildOut } from "@/lib/build";
 import { t } from "@/lib/i18n/ja";
+import { useClientValue } from "@/lib/hooks/use-client-value";
 import { useVisibleArea } from "@/lib/hooks/use-visible-area";
 import { useModKeyLabel } from "@/lib/platform";
 import { type Allowance, prepareUpload, stageUpload } from "@/lib/media/attachments";
@@ -119,6 +120,9 @@ function Capture({
 }) {
   const router = useRouter();
   const windowed = useQuickMode() === "window";
+  // The desktop shell's window for the whole app, to be brought out from
+  // here: not in shells before 0.4.1.
+  const canShowApp = useClientValue(() => typeof window.memocaShell?.showApp === "function", false);
   const modKey = useModKeyLabel();
   const area = useVisibleArea();
   const [text, setText] = useState(shared);
@@ -284,6 +288,14 @@ function Capture({
     // Shown again by the shell, the window should not still say saved.
     setStatus(null);
     closeQuickWindow();
+  }, []);
+
+  /** As {@link close}, Memoca's own window brought out in its place, as it was left. */
+  const showApp = useCallback(async () => {
+    await inFlight.current;
+    await draft.current?.flush(true);
+    setStatus(null);
+    window.memocaShell?.showApp?.();
   }, []);
 
   useEffect(() => {
@@ -459,6 +471,17 @@ function Capture({
           >
             {t.nav.quick}
           </h1>
+          {canShowApp ? (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void showApp()}
+              title={t.quick.openApp}
+              aria-label={t.quick.openApp}
+            >
+              <AppWindow className="size-4" aria-hidden />
+            </Button>
+          ) : null}
           <Button
             variant="ghost"
             size="icon"

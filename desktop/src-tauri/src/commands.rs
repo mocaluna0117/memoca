@@ -38,6 +38,15 @@ pub fn open_app(app: AppHandle, url: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Memoca's own window, asked for from the quick note (its 「Memoca を開く」):
+/// the quick note is put away, its draft kept, and the window opened on the
+/// notes, or brought forward as it was, so its vault stays open.
+#[tauri::command]
+pub fn show_app(app: AppHandle) {
+    window::put_away(&app);
+    app_window::open(&app);
+}
+
 /// The quick note, asked for from Memoca's own window (its ⚡ and Q): this
 /// app's, rather than a window of the page's.
 #[tauri::command]

@@ -322,6 +322,38 @@ describe("the quick note's window, closing", () => {
   });
 });
 
+describe("the quick note's window, opening Memoca", () => {
+  const openApp = () => host.querySelector<HTMLButtonElement>('button[aria-label="Memoca を開く"]');
+
+  afterEach(() => {
+    delete window.memocaShell;
+  });
+
+  test("a shell that can bring out Memoca's own window has the button, which keeps the draft first", async () => {
+    let atShow: Promise<unknown> | undefined;
+    const showApp = vi.fn(() => {
+      atShow = loadDraft(ME);
+    });
+    window.memocaShell = { hide() {}, openExternal() {}, showApp, platform: "macos" };
+    await render();
+    await type("書きかけ");
+    await act(async () => openApp()!.click());
+    await settle();
+    expect(showApp).toHaveBeenCalledOnce();
+    expect(await atShow).toMatchObject({ text: "書きかけ" });
+  });
+
+  test("an older shell, or a browser's window, has none", async () => {
+    window.memocaShell = { hide() {}, openExternal() {}, platform: "macos" };
+    await render();
+    expect(openApp()).toBeNull();
+    delete window.memocaShell;
+    await act(async () => root.render(<QuickCapture key="again" />));
+    await settle();
+    expect(openApp()).toBeNull();
+  });
+});
+
 describe("the quick note's window, put away by the desktop shell", () => {
   /** The shell puts the window away (desktop/src-tauri/src/window.rs), keeping it loaded. */
   const putAway = async () => {
