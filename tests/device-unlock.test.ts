@@ -59,7 +59,8 @@ describe("the vault opened by the desktop app's own check", () => {
 
     await unlockWithDeviceCheck();
     expect(vault.isUnlocked).toBe(true);
-    const key = vault.require();
+    // The key the vault holds: private to it, read here only to compare.
+    const key = (vault as unknown as { require(): CryptoKey }).require();
     expect(Array.from(await open(key, sealed.ct, sealed.iv, ctx.noteKeyWrap("n1", 1)))).toEqual([
       7,
     ]);
