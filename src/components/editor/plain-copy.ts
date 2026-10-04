@@ -4,11 +4,13 @@ import { type BlockNoteEditor, selectedFragmentToHTML } from "@blocknote/core";
 import { TextSelection } from "prosemirror-state";
 import { useEffect, useRef } from "react";
 import {
+  asFile,
   asPng,
-  imageAlone,
+  imagesAlone,
   isWebKit,
   putImageOnClipboard,
   rememberImageCopy,
+  stitch,
 } from "@/components/editor/copy-image";
 import { clipboardFor, copyRange, cutRange, isOpenOnScreen } from "@/components/editor/toggles";
 import { plainTextBetween, plainTextOf } from "@/lib/plain-text";
@@ -29,8 +31,10 @@ const forThisSystem = (text: string) =>
  * back up), over what it wrote. Listened for on the document: the editor's
  * view is made after this component's first render, and may be made again.
  *
- * An image copied alone is put on the clipboard as an image, for other apps
- * to paste, and known again when pasted back into Memoca (see copy-image.ts).
+ * Images copied alone are put on the clipboard as images, for other apps to
+ * paste, and known again when pasted back into Memoca (see copy-image.ts):
+ * one as it is; several as files of their own from the desktop shell, and
+ * joined into one from a browser, which puts no more than one there.
  *
  * A copy or cut of all of a closed toggle's line takes what is hidden inside
  * it too (see copyRange in toggles.ts): written here in full, BlockNote's
@@ -38,7 +42,7 @@ const forThisSystem = (text: string) =>
  */
 export function usePlainTextCopy(
   editor: BlockNoteEditor,
-  /** An image's bytes, by its url: for an image copied alone (see copy-image.ts). */
+  /** An image's bytes, by its url: for images copied alone (see copy-image.ts). */
   loadImage?: (url: string) => Promise<Blob>,
 ) {
   const imageOf = useRef(loadImage);
@@ -95,18 +99,36 @@ export function usePlainTextCopy(
         return;
       }
       text = plainTextOf(doc, selection);
-      // An image alone: the image itself, for other apps, and the block as
-      // Memoca copies it, to be pasted back as that.
-      const url = event.type === "copy" ? imageAlone(doc, selection) : null;
+      // Images alone: the images themselves, for other apps, and the blocks
+      // as Memoca copies them, to be pasted back as those.
+      const images = event.type === "copy" ? imagesAlone(doc, selection) : null;
       const load = imageOf.current;
-      if (url && load) {
+      if (images && load) {
         const { clipboardHTML } = selectedFragmentToHTML(view, editor);
         const mine = copies;
-        const image = load(url)
-          .then(asPng)
+        const current = () => mine === copies && document.hasFocus();
+        const copyFiles = images.length > 1 ? window.memocaShell?.copyImages : undefined;
+        if (copyFiles) {
+          // The shell writes the clipboard itself, once they are read: over
+          // what the copy wrote, as the browser's own write would be.
+          void Promise.all(
+            images.map(({ url, name }, index) =>
+              load(url).then((blob) => asFile(blob, name, index)),
+            ),
+          )
+            .then(async (files) => {
+              if (!current()) return;
+              rememberImageCopy({ html: clipboardHTML, sizes: files.map(({ size }) => size) });
+              await copyFiles(files.map(({ file }) => file));
+            })
+            .catch(() => {});
+          return;
+        }
+        const image = Promise.all(images.map(({ url }) => load(url)))
+          .then((blobs) => (blobs.length === 1 ? asPng(blobs[0]!) : stitch(blobs)))
           .then(({ png, width, height }) => {
-            if (mine !== copies || !document.hasFocus()) throw new Error("overtaken");
-            rememberImageCopy({ html: clipboardHTML, width, height });
+            if (!current()) throw new Error("overtaken");
+            rememberImageCopy({ html: clipboardHTML, sizes: [{ width, height }] });
             return png;
           });
         if (isWebKit()) {

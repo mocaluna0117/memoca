@@ -48,7 +48,7 @@ try {
   const platform = await page.evaluate(() => window.memocaShell?.platform);
   check(platform === "windows", "the page is given the shell's bridge, for Windows");
   const commands = await page.evaluate(() =>
-    ["hide", "openExternal", "openApp", "showQuick", "showApp", "beginSignIn", "completeSignIn", "takeSignIn"].filter(
+    ["hide", "openExternal", "openApp", "showQuick", "showApp", "copyImages", "beginSignIn", "completeSignIn", "takeSignIn"].filter(
       (name) => typeof window.memocaShell?.[name] !== "function",
     ),
   );

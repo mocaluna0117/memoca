@@ -16,6 +16,16 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-04-copy-several-images",
+    date: "2026-10-04",
+    title: "選んだ画像をまとめてコピー",
+    details: [
+      "メモの画像を何枚か選んで ⌘C（Windows は Ctrl＋C）すると、ChatGPT などのチャット欄やメールにそのまま貼り付けられるようになりました。画像をクリックしてから Shift＋↓ で、次の画像も選べます。",
+      "デスクトップ版（0.4.2）では、画像が 1 枚ずつ別々に貼り付けられます。ブラウザでは、ブラウザが 1 枚しか渡せないため、縦につないだ 1 枚の画像になります。",
+      "Memoca のメモに貼り戻すと、元の画像のまま戻ります。",
+    ],
+  },
+  {
     id: "2026-10-04-desktop-quick-open-app",
     date: "2026-10-04",
     title: "デスクトップ版の即席メモから Memoca を開く",

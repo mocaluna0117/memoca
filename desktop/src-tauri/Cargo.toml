@@ -1,6 +1,6 @@
 [package]
 name = "memoca"
-version = "0.4.1"
+version = "0.4.2"
 description = "Memoca のデスクトップ版：即席メモの窓"
 authors = ["mocaluna0117"]
 license = "GPL-3.0-only"
@@ -30,13 +30,15 @@ tauri-plugin-window-state = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 # Touch ID (device_unlock.rs): asked by the app, the secret kept in the keychain.
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSError"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError", "NSArray", "NSURL"] }
 objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
 block2 = "0.6"
 security-framework = "3"
+# Images copied as files (clipboard.rs).
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_Shell"] }
 # Windows Hello (device_unlock.rs): a key of its own, the secret its signature.
 windows = { version = "0.61", features = ["Security_Credentials", "Security_Cryptography", "Storage_Streams", "Foundation"] }
 

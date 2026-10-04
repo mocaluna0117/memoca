@@ -21,6 +21,12 @@ export type MemocaShell = {
    */
   showApp?(): void;
   /**
+   * Puts images on the clipboard as files, as copied in Finder or Explorer,
+   * for other apps to paste all of (src/components/editor/plain-copy.ts):
+   * each named, its bytes base64. Not before 0.4.2.
+   */
+  copyImages?(images: { name: string; data: string }[]): Promise<void>;
+  /**
    * The computer's own check (Touch ID, Windows Hello) for the vault
    * (src/lib/vault/device-unlock.ts). Not before 0.4.0.
    */

@@ -281,6 +281,48 @@ test.describe("an image selected with Shift and the arrow keys", () => {
     expect(urls).toEqual([src, src]);
   });
 
+  test("images copied together are on the clipboard as one image joined from them, and pasted back are the images they were", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "画像");
+    await editor(page).click();
+    await page.keyboard.type("上の行");
+    await pasteImage(page);
+    await pasteImage(page, { width: 200, height: 100, name: "small.png" });
+    await expect(noteImages(page)).toHaveCount(2);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    const urls = () =>
+      editor(page)
+        .locator('[data-content-type="image"]')
+        .evaluateAll((found) => found.map((block) => block.getAttribute("data-url")));
+    const before = await urls();
+
+    // The first image clicked, and Shift+↓ to take the next one with it.
+    await noteImages(page).first().click();
+    await page.keyboard.press("Shift+ArrowDown");
+    await expect(looksSelected(page)).toHaveCount(2);
+    await page.keyboard.press("ControlOrMeta+c");
+    // One image, both in it, top to bottom with room around them.
+    await expect
+      .poll(() =>
+        page.evaluate(async () => {
+          const [item] = await navigator.clipboard.read();
+          if (!item?.types.includes("image/png")) return null;
+          const bitmap = await createImageBitmap(await item.getType("image/png"));
+          return [bitmap.width, bitmap.height];
+        }),
+      )
+      .toEqual([400 + 32, 300 + 100 + 48]);
+
+    // Pasted back on the line above: the two images, pointing at the same files.
+    await editor(page).getByText("上の行").click();
+    await page.keyboard.press("ControlOrMeta+v");
+    await expect(noteImages(page)).toHaveCount(4);
+    expect(await urls()).toEqual([...before, ...before]);
+  });
+
   test("an image copied alone does not take the place of a copy made straight after it", async ({
     page,
   }) => {

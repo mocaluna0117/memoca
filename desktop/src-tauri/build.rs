@@ -11,6 +11,7 @@ fn main() {
             "open_app",
             "show_quick",
             "show_app",
+            "copy_images",
             "device_unlock_kind",
             "device_unlock_secret",
         ]),

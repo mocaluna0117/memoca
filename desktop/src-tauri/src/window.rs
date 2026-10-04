@@ -109,6 +109,8 @@ pub fn bridge() -> String {
       openApp: (url) => void invoke("open_app", {{ url: String(url) }}),
       showQuick: () => void invoke("show_quick"),
       showApp: () => void invoke("show_app"),
+      copyImages: (images) =>
+        invoke("copy_images", {{ images: Array.from(images, ({{ name, data }}) => ({{ name: String(name), data: String(data) }})) }}),
       deviceUnlock: Object.freeze({{
         kind: () => invoke("device_unlock_kind"),
         secret: (create) => invoke("device_unlock_secret", {{ create: Boolean(create) }}),
@@ -356,7 +358,9 @@ pub fn hide(app: &AppHandle) {
 /// Hides the window, if shown, and no more: for Memoca's own window to come
 /// out in its place (commands::show_app). Whether it was shown.
 pub fn put_away(app: &AppHandle) -> bool {
-    let Some(window) = window(app) else { return false };
+    let Some(window) = window(app) else {
+        return false;
+    };
     if !window.is_visible().unwrap_or(false) {
         return false;
     }

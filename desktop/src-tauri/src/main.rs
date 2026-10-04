@@ -9,6 +9,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_window;
+mod clipboard;
 mod commands;
 mod corner;
 mod device_unlock;
@@ -118,6 +119,7 @@ fn main() {
             commands::open_app,
             commands::show_quick,
             commands::show_app,
+            clipboard::copy_images,
             device_unlock::device_unlock_kind,
             device_unlock::device_unlock_secret,
         ])
@@ -147,11 +149,13 @@ fn main() {
                         .permission("allow-open-app")
                         .permission("allow-show-quick")
                         .permission("allow-show-app")
+                        .permission("allow-copy-images")
                         .permission("allow-device-unlock-kind")
                         .permission("allow-device-unlock-secret"),
                 )?;
             }
 
+            clipboard::clear(app.handle());
             let first_run = settings::init(app.handle())?;
             window::create(app.handle())?;
             tray::create(app.handle())?;

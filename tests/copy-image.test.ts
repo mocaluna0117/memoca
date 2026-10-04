@@ -2,15 +2,18 @@ import { BlockNoteEditor, type PartialBlock } from "@blocknote/core";
 import { NodeSelection, TextSelection } from "prosemirror-state";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
+  asFile,
   asPng,
   forgetImageCopy,
   imageAlone,
+  imagesAlone,
   isWebKit,
   pasteOwnImage,
   rememberImageCopy,
 } from "@/components/editor/copy-image";
 
 const IMAGE: PartialBlock = { type: "image", props: { url: "memoca://att/0190" } };
+const OTHER: PartialBlock = { type: "image", props: { url: "memoca://att/0192", name: "図.jpg" } };
 
 function docOf(blocks: PartialBlock[]) {
   const editor = BlockNoteEditor.create();
@@ -62,6 +65,45 @@ describe("an image copied alone", () => {
   });
 });
 
+describe("images copied alone", () => {
+  const endOf = (doc: ReturnType<typeof docOf>, pos: number) => pos + doc.nodeAt(pos)!.nodeSize - 1;
+
+  test("several, with empty lines between them: each, in order", () => {
+    const doc = docOf([{ type: "paragraph", content: "上" }, IMAGE, { type: "paragraph" }, OTHER]);
+    const [, first, , second] = starts(doc);
+    expect(imagesAlone(doc, TextSelection.create(doc, first! - 2, endOf(doc, second!)))).toEqual([
+      { url: "memoca://att/0190", name: "" },
+      { url: "memoca://att/0192", name: "図.jpg" },
+    ]);
+  });
+
+  test("with text or a file among them: none", () => {
+    const doc = docOf([
+      IMAGE,
+      { type: "paragraph", content: "間" },
+      OTHER,
+      { type: "file", props: { url: "memoca://att/0191" } },
+    ]);
+    const [first, , second, file] = starts(doc);
+    expect(imagesAlone(doc, TextSelection.create(doc, first! + 1, endOf(doc, second!)))).toBeNull();
+    expect(imagesAlone(doc, TextSelection.create(doc, second! + 1, endOf(doc, file!)))).toBeNull();
+  });
+});
+
+describe("an image as a file of its own", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("named as it was added, its bytes as they are", async () => {
+    vi.stubGlobal("createImageBitmap", async () => ({ width: 40, height: 30, close: () => {} }));
+    const jpeg = new Blob([new Uint8Array([1, 2, 3])], { type: "image/jpeg" });
+    expect(await asFile(jpeg, "図.jpeg", 0)).toEqual({
+      file: { name: "図.jpg", data: "AQID" },
+      size: { width: 40, height: 30 },
+    });
+    expect((await asFile(jpeg, "", 2)).file.name).toBe("画像-3.jpg");
+  });
+});
+
 describe("the image put on the clipboard", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -86,12 +128,15 @@ describe("the image put on the clipboard", () => {
     expect(isWebKit(chrome)).toBe(false);
   });
 
-  /** A paste of one image file, and whatever else is given. */
-  function pasteOf(types: Record<string, string> = {}) {
-    const file = new File([new Uint8Array(4)], "image.png", { type: "image/png" });
+  /** A paste of image files (one by default), and whatever else is given. */
+  function pasteOf(types: Record<string, string> = {}, count = 1) {
+    const files = Array.from(
+      { length: count },
+      (_, at) => new File([new Uint8Array(4)], `image-${at}.png`, { type: "image/png" }),
+    );
     return {
       clipboardData: {
-        files: [file],
+        files,
         types: ["Files", ...Object.keys(types)],
         getData: (type: string) => types[type] ?? "",
       },
@@ -102,15 +147,31 @@ describe("the image put on the clipboard", () => {
     vi.stubGlobal("createImageBitmap", async () => ({ width: 40, height: 30, close: () => {} }));
     const pasteHTML = vi.fn();
     const editor = { pasteHTML } as unknown as Parameters<typeof pasteOwnImage>[1];
-    rememberImageCopy({ html: "<div>block</div>", width: 40, height: 30 });
+    rememberImageCopy({ html: "<div>block</div>", sizes: [{ width: 40, height: 30 }] });
     expect(pasteOwnImage(pasteOf(), editor)).toBe(true);
     await vi.waitFor(() => expect(pasteHTML).toHaveBeenCalledWith("<div>block</div>", true));
+  });
+
+  test("pasted back, images Memoca copied as files of their own are the blocks they were", async () => {
+    const sizes = [
+      { width: 40, height: 30 },
+      { width: 20, height: 10 },
+    ];
+    let next = 0;
+    // Handed over in another order than copied.
+    vi.stubGlobal("createImageBitmap", async () => ({ ...sizes[1 - next++]!, close: () => {} }));
+    const pasteHTML = vi.fn();
+    const editor = { pasteHTML } as unknown as Parameters<typeof pasteOwnImage>[1];
+    rememberImageCopy({ html: "<div>blocks</div>", sizes });
+    expect(pasteOwnImage(pasteOf({}, 1), editor)).toBe(false);
+    expect(pasteOwnImage(pasteOf({}, 2), editor)).toBe(true);
+    await vi.waitFor(() => expect(pasteHTML).toHaveBeenCalledWith("<div>blocks</div>", true));
   });
 
   test("not taken on: with HTML on the clipboard too, with nothing copied, or long after", () => {
     const editor = { pasteHTML: vi.fn() } as unknown as Parameters<typeof pasteOwnImage>[1];
     expect(pasteOwnImage(pasteOf(), editor)).toBe(false);
-    rememberImageCopy({ html: "<div>block</div>", width: 40, height: 30 });
+    rememberImageCopy({ html: "<div>block</div>", sizes: [{ width: 40, height: 30 }] });
     expect(pasteOwnImage(pasteOf({ "text/html": "<img>" }), editor)).toBe(false);
     vi.useFakeTimers();
     vi.setSystemTime(Date.now() + 31 * 60 * 1000);

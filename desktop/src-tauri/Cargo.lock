@@ -2227,12 +2227,13 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "memoca"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "base64 0.22.1",
  "block2",
  "getrandom 0.3.4",
  "objc2",
+ "objc2-app-kit",
  "objc2-foundation",
  "objc2-local-authentication",
  "security-framework",
