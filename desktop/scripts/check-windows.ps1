@@ -103,7 +103,9 @@ if (-not $NoWindow) {
     if ($LASTEXITCODE -ne 0) { throw "the quick note's window's checks failed" }
     # Memoca's own window, as a launch with --app opens it in the app running.
     Start-Process -FilePath $exe.FullName -ArgumentList "--app"
-    Start-Sleep -Seconds 5
+    # The one running may be making Memoca's own window, hidden, just then
+    # (app_window.rs, prepare), and the second waits for it to answer.
+    for ($i = 0; $i -lt 20 -and (Running).Count -ne 1; $i++) { Start-Sleep -Seconds 1 }
     Check ((Running).Count -eq 1) "started with --app: the one running opens Memoca's own window"
     node e2e/window.mjs 9222 app
     if ($LASTEXITCODE -ne 0) { throw "Memoca's own window's checks failed" }
