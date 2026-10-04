@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-04-windows-freeze",
+    date: "2026-10-04",
+    title: "Windows 版で Memoca を開くとアプリが固まっていたのを修正",
+    details: [
+      "Windows のデスクトップ版で、即席メモの「Memoca を開く」や「メモを開く」を押すと、アプリ全体が固まっていました。そのあと、即席メモの × や Esc、右クリックのメニューも効かなくなっていました。0.4.4 で直しました。",
+      "固まってしまったときは、タスクマネージャーで Memoca を終了してから、起動し直してください。",
+    ],
+  },
+  {
     id: "2026-10-04-desktop-app-window-ready",
     date: "2026-10-04",
     title: "デスクトップ版の Memoca のウィンドウがすぐ開くように",

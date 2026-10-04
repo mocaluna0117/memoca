@@ -17,6 +17,7 @@
 use crate::{sign_in, window};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
@@ -53,19 +54,25 @@ pub fn is_shown(app: &AppHandle) -> bool {
 }
 
 /// How long after the app starts the window is made, hidden: after the
-/// quick note's, which is wanted first.
-const PREPARED_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
+/// quick note's, which is wanted first. MEMOCA_PREPARE_AFTER_MS says
+/// otherwise: CI puts it off, to have the window made when it is opened
+/// (scripts/check-windows.ps1).
+fn prepared_after() -> std::time::Duration {
+    std::env::var("MEMOCA_PREPARE_AFTER_MS")
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+        .map(std::time::Duration::from_millis)
+        .unwrap_or(std::time::Duration::from_secs(3))
+}
 
 /// Makes the window, hidden, on the notes, a moment from now: for it to come
 /// out at once when it is opened. (Opened before then, it is made there.)
 pub fn prepare(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
-        std::thread::sleep(PREPARED_AFTER);
+        std::thread::sleep(prepared_after());
         if window(&app).is_none() {
-            if let Err(error) = create(&app, window::origin().join("/app").unwrap(), false) {
-                eprintln!("Memoca: could not make its window: {error}");
-            }
+            make(&app, window::origin().join("/app").unwrap(), false);
         }
     });
 }
@@ -79,8 +86,8 @@ pub fn is_in_use(app: &AppHandle) -> bool {
 pub fn open(app: &AppHandle) {
     if let Some(window) = window(app) {
         bring_out(&window);
-    } else if let Err(error) = create(app, window::origin().join("/app").unwrap(), true) {
-        eprintln!("Memoca: could not open its window: {error}");
+    } else {
+        make_apart(app, window::origin().join("/app").unwrap(), true);
     }
 }
 
@@ -90,9 +97,7 @@ pub fn open(app: &AppHandle) {
 /// than loaded again, which would close the vault.
 pub fn open_at(app: &AppHandle, url: Url) {
     let Some(window) = window(app) else {
-        if let Err(error) = create(app, url, true) {
-            eprintln!("Memoca: could not open its window: {error}");
-        }
+        make_apart(app, url, true);
         return;
     };
     let note = url
@@ -121,8 +126,8 @@ pub fn open_at(app: &AppHandle, url: Url) {
 pub fn go(app: &AppHandle, url: Url) {
     if let Some(window) = window(app) {
         let _ = window.navigate(url);
-    } else if let Err(error) = create(app, url, false) {
-        eprintln!("Memoca: could not make its window: {error}");
+    } else {
+        make_apart(app, url, false);
     }
 }
 
@@ -177,6 +182,33 @@ fn put_away(app: &AppHandle, window: &WebviewWindow) {
 /// there (tauri's DownloadEvent::Finished).
 #[derive(Default)]
 pub struct Downloads(Mutex<HashMap<String, PathBuf>>);
+
+/// Whether the window is being made: asked for again meanwhile, it is not
+/// made twice.
+static MAKING: AtomicBool = AtomicBool::new(false);
+
+/// Makes the window, on a thread of its own. On Windows, a window made on
+/// the main thread from within a command the page sent, a menu's choice or
+/// another event's handler never gets its WebView2, and the whole app
+/// stops (tauri's known issue): the quick note's ×, Esc and the menu with
+/// it. 0.4.1 did, from 「Memoca を開く」.
+fn make_apart(app: &AppHandle, url: Url, shown: bool) {
+    let app = app.clone();
+    std::thread::spawn(move || make(&app, url, shown));
+}
+
+/// Makes the window, here: on a thread other than the main one.
+fn make(app: &AppHandle, url: Url, shown: bool) {
+    if MAKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    if window(app).is_none() {
+        if let Err(error) = create(app, url, shown) {
+            eprintln!("Memoca: could not make its window: {error}");
+        }
+    }
+    MAKING.store(false, Ordering::SeqCst);
+}
 
 /// Makes the window on `url`, brought out if `shown`, else left hidden.
 fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {

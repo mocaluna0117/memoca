@@ -96,8 +96,12 @@ if (-not $NoWindow) {
   }
   try {
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--remote-debugging-port=9222"
+    # Memoca's own window not made ahead: made when the page opens it, as
+    # after signing out (e2e/window.mjs).
+    $env:MEMOCA_PREPARE_AFTER_MS = "3600000"
     $open = Start-Debuggable "from WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"
     Remove-Item Env:\WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
+    Remove-Item Env:\MEMOCA_PREPARE_AFTER_MS
     Check $open "its WebView2 opens the debugging port it is started with"
     node e2e/window.mjs 9222 quick
     if ($LASTEXITCODE -ne 0) { throw "the quick note's window's checks failed" }

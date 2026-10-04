@@ -53,6 +53,41 @@ try {
     ),
   );
   check(commands.length === 0, `the bridge has its commands${commands.length ? ` (not ${commands})` : ""}`);
+
+  if (which === "quick") {
+    // What the page asks of the app answers, and the app goes on answering:
+    // Memoca's own window made from the quick note's 「Memoca を開く」 once
+    // stopped the whole app on Windows (0.4.1).
+    const ask = (command) =>
+      page.evaluate(async (command) => {
+        try {
+          await Promise.race([
+            window.__TAURI_INTERNALS__.invoke(command),
+            new Promise((_, reject) => setTimeout(() => reject(new Error("no answer in 10 s")), 10_000)),
+          ]);
+          return "answered";
+        } catch (error) {
+          return String(error?.message ?? error);
+        }
+      }, command);
+    for (const command of ["show_quick", "hide", "show_app"]) {
+      const said = await ask(command);
+      check(said === "answered", `${command} answers (${said})`);
+    }
+    let made;
+    for (const until = Date.now() + 60_000; !made && Date.now() < until; ) {
+      made = browser
+        .contexts()
+        .flatMap((context) => context.pages())
+        .find((each) => each.url().startsWith(ORIGIN) && goingTo(each.url()) === "/app");
+      if (!made) await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    check(made, "show_app makes Memoca's own window, and it loads the site, for /app");
+    for (const command of ["show_quick", "hide"]) {
+      const said = await ask(command);
+      check(said === "answered", `${command} still answers, after (${said})`);
+    }
+  }
 } finally {
   // Leaves the app running: connected to, not started by, this.
   await browser.close();
