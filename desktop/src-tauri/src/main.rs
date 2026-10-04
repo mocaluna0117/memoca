@@ -193,6 +193,8 @@ fn main() {
             if std::env::args().any(|arg| arg == "--app") {
                 app_window::open(app.handle());
             }
+            // Memoca's own window, made hidden, to come out at once.
+            app_window::prepare(app.handle());
             Ok(())
         })
         .build(tauri::generate_context!())
@@ -203,7 +205,7 @@ fn main() {
         // in the Dock clicked: Memoca's own window, if open.
         #[cfg(target_os = "macos")]
         if let RunEvent::Reopen { .. } = event {
-            if app_window::is_open(app) {
+            if app_window::is_shown(app) {
                 app_window::open(app);
             } else {
                 window::show(app, window::Place::Cursor);

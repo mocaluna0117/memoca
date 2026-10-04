@@ -259,7 +259,7 @@ fn complete(app: &AppHandle, code: &str, verifier: String, started_in: &str) {
         verifier,
     });
     let page = window::origin().join("/desktop/complete").unwrap();
-    if app_window::is_label(started_in) && app_window::is_open(app) {
+    if app_window::is_label(started_in) && app_window::is_shown(app) {
         *app.state::<Taking>().0.lock().unwrap() = Some(started_in.into());
         app_window::open_at(
             app,

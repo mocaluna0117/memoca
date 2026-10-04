@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-04-desktop-app-window-ready",
+    date: "2026-10-04",
+    title: "デスクトップ版の Memoca のウィンドウがすぐ開くように",
+    details: [
+      "デスクトップ版（0.4.3）では、Memoca 全体のウィンドウをアプリの起動時から裏で用意しておくようにしました。即席メモの「Memoca を開く」やメニューから、待たずに開きます。",
+      "閉じても裏に残るので、次に開いたときもすぐに、閉じたときのまま出ます。そのぶん、アプリが使うメモリは少し増えます。",
+    ],
+  },
+  {
     id: "2026-10-04-copy-several-images",
     date: "2026-10-04",
     title: "選んだ画像をまとめてコピー",

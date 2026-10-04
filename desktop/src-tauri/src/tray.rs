@@ -251,8 +251,9 @@ fn chosen(app: &AppHandle, id: &str) {
         }
         "update" => updater::look_now(app),
         "sign-out" => {
-            // One sign-in for both windows: Memoca's own goes with it.
-            app_window::close(app);
+            // One sign-in for both windows: Memoca's own goes with it, and
+            // is made again on signing in (sign_in.rs).
+            app_window::discard(app);
             window::go(app, window::origin().join("/desktop/sign-out").unwrap());
             window::show(app, window::Place::Cursor);
         }

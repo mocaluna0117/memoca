@@ -78,14 +78,14 @@ async fn look(app: &AppHandle, asked: bool) -> Looked {
             return Looked::Failed;
         }
     };
-    if window::is_out(app) || app_window::is_open(app) {
+    if window::is_out(app) || app_window::is_shown(app) {
         if !asked {
             return Looked::Later;
         }
         // Asked for: put away first, the quick note's draft kept by the
         // page, and the notes, kept on this computer as they are written.
         window::hide(app);
-        app_window::close(app);
+        app_window::hide(app);
         std::thread::sleep(Duration::from_millis(1500));
     }
     say(app, &format!("{} を入れています…", update.version));

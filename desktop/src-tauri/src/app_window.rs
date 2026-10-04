@@ -1,9 +1,14 @@
 //! Memoca itself, in a window of its own: the notes, as in the browser, for
 //! when the quick note's window is too small. Opened from the menu bar
 //! icon's menu (or the tray's), or by a note just saved in the quick note;
-//! made when opened and gone when closed, kept as big and where it was left
-//! (tauri-plugin-window-state). While it is open, Memoca is an app in the
-//! Dock and in ⌘Tab on a Mac, as any other with a window.
+//! kept as big and where it was left (tauri-plugin-window-state). While it
+//! is out, Memoca is an app in the Dock and in ⌘Tab on a Mac, as any other
+//! with a window.
+//!
+//! Made, hidden, soon after the app starts ([`prepare`]), and hidden, not
+//! closed, when closed: out at once when opened, its notes loaded and its
+//! vault as it was. Gone only on signing out (and made again on signing
+//! in), as what it held was the account's.
 //!
 //! It is shown as the quick note's is (window.rs): the same site, user
 //! agent, bridge and WebView2 arguments, and so the same sign-in. Other
@@ -42,9 +47,27 @@ pub fn is_label(label: &str) -> bool {
     label == LABEL
 }
 
-/// Whether the window is open.
-pub fn is_open(app: &AppHandle) -> bool {
-    window(app).is_some()
+/// Whether the window is out (made but hidden is not).
+pub fn is_shown(app: &AppHandle) -> bool {
+    window(app).is_some_and(|window| window.is_visible().unwrap_or(false))
+}
+
+/// How long after the app starts the window is made, hidden: after the
+/// quick note's, which is wanted first.
+const PREPARED_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Makes the window, hidden, on the notes, a moment from now: for it to come
+/// out at once when it is opened. (Opened before then, it is made there.)
+pub fn prepare(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(PREPARED_AFTER);
+        if window(&app).is_none() {
+            if let Err(error) = create(&app, window::origin().join("/app").unwrap(), false) {
+                eprintln!("Memoca: could not make its window: {error}");
+            }
+        }
+    });
 }
 
 /// Whether the window is the one in use.
@@ -56,7 +79,7 @@ pub fn is_in_use(app: &AppHandle) -> bool {
 pub fn open(app: &AppHandle) {
     if let Some(window) = window(app) {
         bring_out(&window);
-    } else if let Err(error) = create(app, window::origin().join("/app").unwrap()) {
+    } else if let Err(error) = create(app, window::origin().join("/app").unwrap(), true) {
         eprintln!("Memoca: could not open its window: {error}");
     }
 }
@@ -67,7 +90,7 @@ pub fn open(app: &AppHandle) {
 /// than loaded again, which would close the vault.
 pub fn open_at(app: &AppHandle, url: Url) {
     let Some(window) = window(app) else {
-        if let Err(error) = create(app, url) {
+        if let Err(error) = create(app, url, true) {
             eprintln!("Memoca: could not open its window: {error}");
         }
         return;
@@ -93,24 +116,61 @@ pub fn open_at(app: &AppHandle, url: Url) {
     bring_out(&window);
 }
 
-/// Sends the window, if open, to one of Memoca's pages.
+/// Sends the window to one of Memoca's pages: made, hidden, there if it is
+/// not (signed in, after signing out took it).
 pub fn go(app: &AppHandle, url: Url) {
     if let Some(window) = window(app) {
         let _ = window.navigate(url);
+    } else if let Err(error) = create(app, url, false) {
+        eprintln!("Memoca: could not make its window: {error}");
     }
 }
 
-/// Closes the window, if open, keeping its size and place.
-pub fn close(app: &AppHandle) {
+/// Puts the window away, if out, keeping it as it is for the next time.
+pub fn hide(app: &AppHandle) {
     if let Some(window) = window(app) {
-        let _ = window.close();
+        put_away(app, &window);
+    }
+}
+
+/// Closes the window for good, if made: on signing out, what it holds is
+/// the account's.
+pub fn discard(app: &AppHandle) {
+    if let Some(window) = window(app) {
+        let _ = window.destroy();
     }
 }
 
 fn bring_out(window: &WebviewWindow) {
+    // On a Mac, an app in the Dock and ⌘Tab while it is out.
+    #[cfg(target_os = "macos")]
+    let _ = window
+        .app_handle()
+        .set_activation_policy(tauri::ActivationPolicy::Regular);
     let _ = window.unminimize();
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// Hides the window, as closing it does: its size and place kept, the menu
+/// bar alone again on a Mac, and the page told (to load a new version of
+/// the site out of sight, as the quick note's does).
+fn put_away(app: &AppHandle, window: &WebviewWindow) {
+    if !window.is_visible().unwrap_or(false) {
+        return;
+    }
+    let _ = app.save_window_state(KEPT);
+    let _ = window.hide();
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+        // The keyboard back to the app in use before, unless the quick note
+        // is out and wants it.
+        if !window::is_out(app) {
+            let _ = app.hide();
+        }
+    }
+    let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-hidden'))");
 }
 
 /// Where each file the page saves is going: a Mac does not say once it is
@@ -118,7 +178,8 @@ fn bring_out(window: &WebviewWindow) {
 #[derive(Default)]
 pub struct Downloads(Mutex<HashMap<String, PathBuf>>);
 
-fn create(app: &AppHandle, url: Url) -> tauri::Result<()> {
+/// Makes the window on `url`, brought out if `shown`, else left hidden.
+fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
     let (guard, opener, saver, handle) = (app.clone(), app.clone(), app.clone(), app.clone());
     let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::External(url))
         .title("Memoca")
@@ -150,18 +211,25 @@ fn create(app: &AppHandle, url: Url) -> tauri::Result<()> {
     let builder = builder.additional_browser_args(&window::browser_args());
     let window = builder.build()?;
 
-    #[cfg(target_os = "macos")]
-    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
-    window.on_window_event(move |event| {
-        if let WindowEvent::Destroyed = event {
+    let closing = window.clone();
+    window.on_window_event(move |event| match event {
+        // Closed (its button, ⌘W, Alt+F4): hidden, to come out again at once.
+        WindowEvent::CloseRequested { api, .. } => {
+            api.prevent_close();
+            put_away(&handle, &closing);
+        }
+        WindowEvent::Destroyed => {
             // Kept now, not only when the app quits: an update starts it again.
             let _ = handle.save_window_state(KEPT);
             // Back to the menu bar alone.
             #[cfg(target_os = "macos")]
             let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);
         }
+        _ => {}
     });
-    bring_out(&window);
+    if shown {
+        bring_out(&window);
+    }
     Ok(())
 }
 

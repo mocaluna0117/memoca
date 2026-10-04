@@ -8,6 +8,7 @@ import { OpenNoteFromQuickWindow, QuickNoteShortcut } from "@/components/notes/q
 import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
 import { PwaPrompts } from "@/components/shell/pwa-prompts";
+import { useShellRefresh } from "@/components/shell/shell-refresh";
 import { WorkspaceDnd } from "@/components/shell/workspace-dnd";
 import { VaultDialog } from "@/components/vault/vault-dialog";
 import { VaultRecordSync } from "@/components/vault/vault-record-sync";
@@ -31,6 +32,9 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   const client = useConvex();
   const { engine, status } = useSync();
   const router = useRouter();
+
+  // Kept hidden by the desktop shell: a new version loaded out of sight.
+  useShellRefresh();
 
   // The vault closes after a period of no use, counted from the last
   // activity, and says so when it does.
@@ -90,8 +94,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
-
-
   // Puts right what earlier versions left behind: folder names they sealed,
   // plaintext notes and files inside locks, an unfinished unlock, Inbox's old
   // lock. Runs when the vault opens, when the network returns, when sync
@@ -108,15 +110,22 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       const report = await repairLocks(client, engine());
       if (cancelled) return;
       if (report.inboxUnlocked) {
-        toast("Inbox はロックできなくなったため、Inbox のロックを外しました。ロックしていたメモは、ロックされたままです。");
+        toast(
+          "Inbox はロックできなくなったため、Inbox のロックを外しました。ロックしていたメモは、ロックされたままです。",
+        );
       }
       if (report.namesRestored > 0) {
-        toast.success(`ロックしたフォルダの名前を、ロック中も表示されるようにしました（${report.namesRestored} 件）`);
+        toast.success(
+          `ロックしたフォルダの名前を、ロック中も表示されるようにしました（${report.namesRestored} 件）`,
+        );
       }
       if (report.unlockResumed) toast.success("フォルダのロックを外す処理を再開しました");
-      if (report.notesLocked > 0) toast.success(`ロックが途中だったメモ ${report.notesLocked} 件をロックしました`);
+      if (report.notesLocked > 0)
+        toast.success(`ロックが途中だったメモ ${report.notesLocked} 件をロックしました`);
       if (report.attachmentsLocked > 0) {
-        toast.success(`ロックしたメモの添付ファイル ${report.attachmentsLocked} 件を暗号化しました`);
+        toast.success(
+          `ロックしたメモの添付ファイル ${report.attachmentsLocked} 件を暗号化しました`,
+        );
       }
       if (report.copiesLocked > 0) {
         toast.success(
