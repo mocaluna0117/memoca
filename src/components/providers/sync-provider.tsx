@@ -69,6 +69,7 @@ const IDLE: SyncStatus = {
   pending: 0,
   lastSyncAt: null,
   catchingUp: false,
+  quotaFull: false,
 };
 
 /**

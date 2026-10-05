@@ -22,8 +22,12 @@ const PUSH_OP_LIMIT = 50;
 /** Poll cadence while another device is actively editing. */
 const FAST_INTERVAL_MS = 1_000;
 const IDLE_INTERVAL_MS = 5_000;
+/** How long an edit refused for want of room waits before it is sent again. */
+const QUOTA_RETRY_MS = 60_000;
 /** Bodies fetched per round when catching up. */
 const BODY_BATCH = 30;
+/** Folders, and notes, asked about per call when looking for ones the server has let go of. */
+const GHOST_BATCH = 200;
 /** Notes whose bodies are pulled eagerly after the first sync. */
 const PREFETCH_LIMIT = 200;
 /**
@@ -39,6 +43,8 @@ export type SyncStatus = {
   pending: number;
   lastSyncAt: number | null;
   catchingUp: boolean;
+  /** Edits are waiting for room: the account is full, and they are not saved on the server. */
+  quotaFull: boolean;
 };
 
 type Listener = (status: SyncStatus) => void;
@@ -55,12 +61,14 @@ export class SyncEngine {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private interval = IDLE_INTERVAL_MS;
   private draining = false;
+  private checkingGhosts = false;
   private listeners = new Set<Listener>();
   private status: SyncStatus = {
     state: "idle",
     pending: 0,
     lastSyncAt: null,
     catchingUp: false,
+    quotaFull: false,
   };
 
   constructor(private client: ConvexReactClient) {}
@@ -105,6 +113,7 @@ export class SyncEngine {
     this.set({ lastSyncAt });
     if (lastSyncAt && Date.now() - lastSyncAt > FULL_RESYNC_AFTER_MS) {
       await setMeta(META.cursor, 0);
+      await setMeta(META.ghostsChecked, false);
     }
     if (!(await getMeta<boolean>(META.pinPlacesPulled, false))) {
       await setMeta(META.cursor, 0);
@@ -253,11 +262,63 @@ export class SyncEngine {
     void this.refreshReadings();
 
     if (!batch.complete) await this.resubscribe();
-    // Inbox may just have arrived, for a note made before it did.
-    else
+    else {
+      // Inbox may just have arrived, for a note made before it did.
       void import("./mutations")
         .then(({ fileAwaitingInbox }) => fileAwaitingInbox())
         .catch(() => 0);
+      void this.dropGhosts();
+    }
+  }
+
+  /**
+   * Lets go of the folders and notes kept here that the server no longer has.
+   *
+   * A purge reaches a device as a tombstone, and tombstones are kept only so
+   * long: a device behind for longer, or one that missed a tombstone dropped
+   * too soon, would keep the item for good, in its trash or its tree. Asked
+   * once everything has been pulled, after a full resync and once on any
+   * device that has not asked before. What this device has made or changed
+   * and not yet sent is not asked about.
+   */
+  private async dropGhosts(): Promise<void> {
+    if (this.checkingGhosts || (await getMeta<boolean>(META.ghostsChecked, false))) return;
+    this.checkingGhosts = true;
+    try {
+      const database = db();
+      const pending = new Set((await database.outbox.toArray()).map((entry) => entry.entityId));
+      const known = <T extends { seq: number }>(rows: T[], id: (row: T) => string) =>
+        rows.filter((row) => row.seq > 0 && !pending.has(id(row))).map(id);
+      const folderIds = known(await database.folders.toArray(), (folder) => folder.folderId);
+      const noteIds = known(await database.notes.toArray(), (note) => note.noteId);
+
+      for (let at = 0; at < Math.max(folderIds.length, noteIds.length); at += GHOST_BATCH) {
+        if (this.stopped) return;
+        const gone = await this.client.query(api.sync.missing, {
+          folderIds: folderIds.slice(at, at + GHOST_BATCH),
+          noteIds: noteIds.slice(at, at + GHOST_BATCH),
+        });
+        if (!gone) return;
+        await database.transaction(
+          "rw",
+          [database.folders, database.notes, database.updates, database.snapshots, database.bodies],
+          async () => {
+            for (const folderId of gone.folderIds) await database.folders.delete(folderId);
+            for (const noteId of gone.noteIds) {
+              await database.notes.delete(noteId);
+              await database.updates.where("noteId").equals(noteId).delete();
+              await database.snapshots.delete(noteId);
+              await database.bodies.delete(noteId);
+            }
+          },
+        );
+      }
+      await setMeta(META.ghostsChecked, true);
+    } catch {
+      // Asked again after the next pull that brings everything.
+    } finally {
+      this.checkingGhosts = false;
+    }
   }
 
   /** Pulls snapshots and updates for notes this device is behind on. */
@@ -392,7 +453,12 @@ export class SyncEngine {
       const { flushUploads } = await import("@/lib/media/attachments");
       await flushUploads(this.client).catch(() => {});
       for (;;) {
-        const entries = await database.outbox.orderBy("createdAt").limit(PUSH_OP_LIMIT).toArray();
+        const now = Date.now();
+        const entries = await database.outbox
+          .orderBy("createdAt")
+          .filter((entry) => !(entry.retryAt && entry.retryAt > now))
+          .limit(PUSH_OP_LIMIT)
+          .toArray();
         this.set({ pending: await database.outbox.count() });
         if (entries.length === 0) break;
 
@@ -430,7 +496,11 @@ export class SyncEngine {
       // A file for a note that has only now reached the server waited above.
       if ((await database.pendingUploads.count()) > 0)
         await flushUploads(this.client).catch(() => {});
-      this.set({ state: "idle", pending: await database.outbox.count() });
+      this.set({
+        state: "idle",
+        pending: await database.outbox.count(),
+        quotaFull: (await database.outbox.filter((entry) => entry.retryAt !== undefined).count()) > 0,
+      });
       // Everything of ours is sent: a good moment, and this loop keeps
       // running while nothing else happens, which a quiet note needs.
       void this.reportRefs();
@@ -450,6 +520,11 @@ export class SyncEngine {
    * matter are a stale clock, which the client has already corrected, and a
    * stale key epoch, which means the note was locked or unlocked elsewhere and
    * the local edit has to be re-derived against the new epoch.
+   *
+   * An edit to a note's text refused because the account is full is the
+   * exception: it is kept, and sent again from time to time until there is
+   * room. Dropped, it would be gone from this device too once the note was
+   * closed, and what came after it would wait on other devices for it.
    */
   private async handleRejection(
     opId: string,
@@ -458,6 +533,11 @@ export class SyncEngine {
     reason?: string,
   ): Promise<void> {
     const database = db();
+    if (reason === "quotaExceeded" && kind === "update") {
+      await database.outbox.update(opId, { retryAt: Date.now() + QUOTA_RETRY_MS });
+      this.set({ quotaFull: true });
+      return;
+    }
     if (reason === "clockSkew") {
       const entry = await database.outbox.get(opId);
       if (entry && entry.attempts < 3) {

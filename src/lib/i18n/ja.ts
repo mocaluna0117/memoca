@@ -59,6 +59,7 @@ export const ja = {
     error: "同期エラー",
     pending: (n: number) => `未送信 ${n} 件`,
     catchingUp: "読み込み中",
+    quotaFull: "容量がいっぱいで保存できていません",
   },
   empty: {
     noNotes: "まだメモがありません",

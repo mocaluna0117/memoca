@@ -16,7 +16,7 @@ export function SyncBadge({ className }: { className?: string }) {
   const Icon =
     status.state === "offline"
       ? CloudOff
-      : status.state === "error"
+      : status.state === "error" || status.quotaFull
         ? TriangleAlert
         : busy
           ? Loader2
@@ -27,11 +27,13 @@ export function SyncBadge({ className }: { className?: string }) {
       ? t.sync.offline
       : status.state === "error"
         ? t.sync.error
-        : pending > 0
-          ? t.sync.pending(pending)
-          : status.catchingUp
-            ? t.sync.catchingUp
-            : t.sync.idle;
+        : status.quotaFull
+          ? t.sync.quotaFull
+          : pending > 0
+            ? t.sync.pending(pending)
+            : status.catchingUp
+              ? t.sync.catchingUp
+              : t.sync.idle;
 
   return (
     <Tooltip>
@@ -42,7 +44,7 @@ export function SyncBadge({ className }: { className?: string }) {
           aria-label={label}
           className={cn(
             "text-muted-foreground inline-flex items-center gap-1.5 text-xs",
-            status.state === "error" && "text-destructive",
+            (status.state === "error" || status.quotaFull) && "text-destructive",
             className,
           )}
         >

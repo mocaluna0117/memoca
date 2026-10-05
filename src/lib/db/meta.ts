@@ -13,6 +13,11 @@ export const META = {
    * pull from where it left off would not bring again.
    */
   pinPlacesPulled: "pinPlacesPulled",
+  /**
+   * Asked the server, after pulling everything, which folders and notes kept
+   * here it no longer has (SyncEngine.dropGhosts). Cleared to ask again.
+   */
+  ghostsChecked: "ghostsChecked",
   lastHlc: "lastHlc",
   /** Last known account snapshot, so the app renders before Convex answers. */
   profile: "profile",

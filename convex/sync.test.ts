@@ -333,6 +333,37 @@ describe("push", () => {
   });
 });
 
+describe("what the server no longer has", () => {
+  test("names only ids with no row at all, tombstones aside, and only the asker's", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    await seedUser(t, AUTH_B);
+    const asA = t.withIdentity({ subject: AUTH_A });
+    const asB = t.withIdentity({ subject: AUTH_B });
+
+    await asA.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [folderOp("a", "f1"), noteOp("b", "n1"), noteOp("c", "n2")],
+    });
+    await t.run(async (ctx) => {
+      const n2 = await ctx.db
+        .query("notes")
+        .filter((q) => q.eq(q.field("noteId"), "n2"))
+        .first();
+      await ctx.db.patch(n2!._id, { purged: true });
+    });
+    await asB.mutation(api.sync.push, { deviceId: DEVICE_2, ops: [noteOp("d", "theirs")] });
+
+    expect(
+      await asA.query(api.sync.missing, {
+        folderIds: ["f1", "gone-folder"],
+        noteIds: ["n1", "n2", "gone-note", "theirs"],
+      }),
+    ).toEqual({ folderIds: ["gone-folder"], noteIds: ["gone-note", "theirs"] });
+    expect(await t.query(api.sync.missing, { folderIds: [], noteIds: [] })).toBeNull();
+  });
+});
+
 describe("pull cursor", () => {
   test("the cursor stops at the lowest full page so no table is skipped", async () => {
     const t = setup();

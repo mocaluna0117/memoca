@@ -52,6 +52,12 @@ export type OutboxEntry = {
   createdAt: number;
   attempts: number;
   lastError?: string;
+  /**
+   * Refused for want of room: kept, and not sent again before this. Only an
+   * edit to a note's text is held so, as dropping it would lose what was
+   * written.
+   */
+  retryAt?: number;
 };
 
 export type PendingUpload = {

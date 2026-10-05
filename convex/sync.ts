@@ -196,6 +196,45 @@ export function publicAttachment(a: Doc<"attachments">) {
   };
 }
 
+/** Ids asked about per call to {@link missing}, of each kind. */
+const MISSING_BATCH = 200;
+
+/**
+ * Which of the folders and notes a device holds the server has no row of at
+ * all, not even a tombstone.
+ *
+ * A tombstone is kept only so long, and a device behind for longer never
+ * hears of the purge: it asks this after pulling everything again, and lets
+ * go of what is named.
+ */
+export const missing = query({
+  args: { folderIds: v.array(v.string()), noteIds: v.array(v.string()) },
+  handler: async (ctx, args) => {
+    const user = await getUser(ctx);
+    if (!user) return null;
+    if (args.folderIds.length > MISSING_BATCH || args.noteIds.length > MISSING_BATCH) {
+      throw new Error(`At most ${MISSING_BATCH} ids of each kind`);
+    }
+    const folderIds: string[] = [];
+    for (const folderId of args.folderIds) {
+      const row = await ctx.db
+        .query("folders")
+        .withIndex("by_user_folder", (q) => q.eq("userId", user._id).eq("folderId", folderId))
+        .unique();
+      if (!row) folderIds.push(folderId);
+    }
+    const noteIds: string[] = [];
+    for (const noteId of args.noteIds) {
+      const row = await ctx.db
+        .query("notes")
+        .withIndex("by_user_note", (q) => q.eq("userId", user._id).eq("noteId", noteId))
+        .unique();
+      if (!row) noteIds.push(noteId);
+    }
+    return { folderIds, noteIds };
+  },
+});
+
 /* -------------------------------------------------------------------------- */
 /*  Push                                                                       */
 /* -------------------------------------------------------------------------- */
