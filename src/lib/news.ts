@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-05-desktop-app-hotkey",
+    date: "2026-10-05",
+    title: "デスクトップ版の Memoca をホットキーで開く",
+    details: [
+      "デスクトップ版（0.4.5）で、Memoca 全体のウィンドウもホットキーで開けるようになりました。使っているときにもう一度押すと隠れます。",
+      "キーは ⌘⇧M（Windows は Ctrl＋Shift＋M）です。即席メモと同じキーなので、即席メモのホットキーを別のキー（例：⌘M）に変えると使えるようになります。メニューの「ホットキーを変える（設定ファイルを開く）…」で、appShortcut に別のキーも書けます。",
+    ],
+  },
+  {
     id: "2026-10-04-windows-freeze",
     date: "2026-10-04",
     title: "Windows 版で Memoca を開くとアプリが固まっていたのを修正",

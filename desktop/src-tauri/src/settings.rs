@@ -1,7 +1,7 @@
 //! What the person chose, kept in settings.json in the app's configuration
 //! folder (~/Library/Application Support/io.github.mocaluna0117.memoca on a
-//! Mac, %APPDATA%\io.github.mocaluna0117.memoca on Windows): the hotkey,
-//! which is changed there (the menu opens the file), the hot corner and
+//! Mac, %APPDATA%\io.github.mocaluna0117.memoca on Windows): the hotkeys,
+//! which are changed there (the menu opens the file), the hot corner and
 //! whether the window is pinned, which the menu sets, and the window's size
 //! and, pinned, where it was, which the window keeps as it is put away.
 
@@ -12,6 +12,10 @@ use tauri::{AppHandle, Manager};
 
 /// The hotkey unless the file says otherwise: ⌘⇧M on a Mac, Ctrl+Shift+M elsewhere.
 pub const DEFAULT_SHORTCUT: &str = "CmdOrCtrl+Shift+M";
+
+/// Memoca's own window's hotkey unless the file says otherwise: the same
+/// keys as the quick note's, and so taken by it, until that is changed.
+pub const DEFAULT_APP_SHORTCUT: &str = "CmdOrCtrl+Shift+M";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -27,6 +31,8 @@ pub enum Corner {
 pub struct Settings {
     /// The hotkey, as Tauri writes one ("CmdOrCtrl+Shift+M").
     pub shortcut: String,
+    /// The hotkey for Memoca's own window (app_window.rs).
+    pub app_shortcut: String,
     /// The corner the pointer is held in to bring the window out; none by default.
     pub hot_corner: Option<Corner>,
     /// Kept out when another app is clicked, rather than put away.
@@ -41,6 +47,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             shortcut: DEFAULT_SHORTCUT.into(),
+            app_shortcut: DEFAULT_APP_SHORTCUT.into(),
             hot_corner: None,
             pinned: false,
             size: None,
@@ -170,6 +177,7 @@ mod tests {
             panic!("not saved")
         };
         assert_eq!(saved.shortcut, "Ctrl+Shift+Space");
+        assert_eq!(saved.app_shortcut, DEFAULT_APP_SHORTCUT);
         assert!(saved.pinned);
         assert_eq!(saved.hot_corner, None);
     }
