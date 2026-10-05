@@ -58,7 +58,8 @@ jobs:
           node-version: 24
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: npx playwright install --with-deps chromium
+      # WebKit for the Mac desktop app's engine (e2e/ime-commit.spec.ts).
+      - run: npx playwright install --with-deps chromium webkit
       - run: pnpm build
 
       - name: Start the site
