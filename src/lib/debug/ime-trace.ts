@@ -15,7 +15,7 @@ import { inShell } from "@/lib/quick/shell";
 
 type Entry = Record<string, string | number | boolean | null>;
 
-const KEEP = 200;
+const KEEP = 400;
 
 /** Where the caret is, in counts only. */
 function where(): Entry {
@@ -62,6 +62,11 @@ export function startImeTrace(onCopied: () => void): () => void {
       entry.dataLen = event.data?.length ?? null;
     }
     Object.assign(entry, where());
+    const composing = (
+      document.querySelector(".ProseMirror") as
+        (Element & { editor?: { view: { composing: boolean } } }) | null
+    )?.editor?.view.composing;
+    entry.pmComposing = composing ?? null;
     entries.push(entry);
     if (entries.length > KEEP) entries.shift();
     pending.set(event, entry);
@@ -77,6 +82,86 @@ export function startImeTrace(onCopied: () => void): () => void {
       entry.atAfter = after.at;
     }, 0);
   };
+
+  /** A node as a short name: its tag, and the first of its classes or its node type. */
+  const short = (node: Node | null): string => {
+    if (!node) return "-";
+    if (node.nodeType === Node.TEXT_NODE) return "#text";
+    const element = node as Element;
+    const kind =
+      element.getAttribute?.("data-node-type") ?? element.getAttribute?.("data-content-type");
+    const cls = element.classList?.[0];
+    return `${element.nodeName.toLowerCase()}${kind ? `[${kind}]` : cls ? `.${cls}` : ""}`;
+  };
+  const push = (entry: Entry) => {
+    entries.push({ t: Math.round(performance.now() - start), ...entry });
+    if (entries.length > KEEP) entries.shift();
+  };
+
+  // What changed in the editor's DOM, by kind of node only.
+  const mutations = new MutationObserver((records) => {
+    for (const record of records) {
+      push({
+        type: `dom:${record.type}`,
+        target: short(record.target),
+        parent: short(record.target.parentNode),
+        added: Array.from(record.addedNodes, short).join(",") || null,
+        removed: Array.from(record.removedNodes, short).join(",") || null,
+      });
+    }
+  });
+  // What the editor itself did: each transaction's steps, by kind and size.
+  type Steps = { steps: { constructor: { name: string }; toJSON(): Record<string, unknown> }[] };
+  type Editorish = {
+    view: { composing: boolean };
+    on(
+      event: "transaction",
+      handler: (props: { transaction: Steps & { docChanged: boolean } }) => void,
+    ): void;
+    off(
+      event: "transaction",
+      handler: (props: { transaction: Steps & { docChanged: boolean } }) => void,
+    ): void;
+  };
+  let watched: Editorish | null = null;
+  const onTransaction = ({ transaction }: { transaction: Steps & { docChanged: boolean } }) => {
+    if (!transaction.docChanged) return;
+    push({
+      type: "pm:transaction",
+      composing: watched?.view.composing ?? null,
+      steps: transaction.steps
+        .map((step) => {
+          const json = step.toJSON() as {
+            stepType?: string;
+            from?: number;
+            to?: number;
+            slice?: { content?: unknown[]; openStart?: number; openEnd?: number };
+          };
+          const nodes = (json.slice?.content ?? []).length;
+          return `${json.stepType}:${json.from}-${json.to}+${nodes}(${json.slice?.openStart ?? 0},${json.slice?.openEnd ?? 0})`;
+        })
+        .join(" "),
+    });
+  };
+  const watch = () => {
+    const dom = document.querySelector(".ProseMirror") as (Element & { editor?: Editorish }) | null;
+    const editor = dom?.editor ?? null;
+    if (editor === watched) return;
+    watched?.off("transaction", onTransaction);
+    mutations.disconnect();
+    watched = editor;
+    if (!dom || !editor) return;
+    editor.on("transaction", onTransaction);
+    mutations.observe(dom, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ["class", "data-is-empty-and-focused", "data-placeholder"],
+    });
+  };
+  const watching = setInterval(watch, 1000);
+  watch();
 
   const types = [
     "keydown",
@@ -98,6 +183,9 @@ export function startImeTrace(onCopied: () => void): () => void {
   window.addEventListener("keydown", copy, true);
 
   return () => {
+    clearInterval(watching);
+    mutations.disconnect();
+    watched?.off("transaction", onTransaction);
     for (const type of types) document.removeEventListener(type, record, true);
     window.removeEventListener("keydown", copy, true);
   };
