@@ -285,7 +285,7 @@ function EditorSurface({
           dragHandle,
           selectMedia(),
           linesAbove(),
-          imeCommit,
+          imeCommit(),
         ],
         dropCursor: { hooks: { computeDropPosition } },
         // An image Memoca copied alone, pasted back as the block it was.

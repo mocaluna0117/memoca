@@ -1,59 +1,66 @@
 import { createExtension } from "@blocknote/core";
-import { Plugin } from "prosemirror-state";
+
+/** A line as far as this needs it. */
+type Line = { id: string; content?: unknown; children: unknown[] };
 
 /**
- * Keeps a line whose only text is a word being committed from the input
- * method from being taken out whole.
+ * What a commit of a word from the input method should have left, if it
+ * left the caret in a new line next to the one the word was written in:
+ * the word in the line it was written in, and no new line. Null when
+ * nothing needs putting right.
  *
- * On committing, WebKit (the Mac desktop app's, at least) first deletes the
- * word being composed, then inserts the word chosen. Deleting it leaves the
- * line with nothing in it, and when the line is the only one in its group,
- * as an item indented under another is, WebKit takes the line's elements out
- * altogether, leaving a bare line break in the group. ProseMirror reads that
- * as a new, empty line: the word stays in the line it was in, the caret
- * moves to the new one, and the word chosen goes there too, so it came out
- * twice. (ProseMirror undoes Safari's same doing in ul and ol, which
- * BlockNote's lists are not.)
- *
- * An element of ProseMirror's own kind put at the end of the line first,
- * the zero-width image it draws beside a widget in Safari, keeps WebKit from
- * counting the line as empty, so only the word goes. ProseMirror leaves it
- * out when it reads the line (mark-placeholder), and it is taken away once
- * the word is in.
+ * In the Mac desktop app's WebKit, committing a word first deletes the word
+ * being composed. A line alone in its group, as an item indented under
+ * another is, is then left empty, and WebKit takes it out of the page
+ * altogether. ProseMirror finds the group empty and, a group needing a line,
+ * makes a new one there; the caret goes to it, and the word chosen with it.
+ * The line the word was written in stays, with the word or empty. (Safari
+ * does not delete the word first, so the web app never did this.)
  */
-export function keepLineThroughCommit(selection: Selection | null): HTMLElement | null {
-  const anchor = selection?.anchorNode ?? null;
-  const element = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
-  const line = element?.closest(".bn-inline-content");
-  if (!line) return null;
-  const keeper = document.createElement("img");
-  keeper.className = "ProseMirror-separator";
-  keeper.setAttribute("mark-placeholder", "true");
-  keeper.alt = "";
-  line.appendChild(keeper);
-  return keeper;
+export function strayLine(
+  started: string | null,
+  now: Line | undefined,
+  before: Line | undefined,
+): { keep: string; drop: string } | null {
+  if (!started || !now || now.id === started) return null;
+  // Only the new line right after it, with nothing under it.
+  if (!before || before.id !== started || now.children.length > 0) return null;
+  return { keep: started, drop: now.id };
 }
 
-export const imeCommit = createExtension({
+export const imeCommit = createExtension(({ editor }) => ({
   key: "memocaImeCommit",
-  prosemirrorPlugins: [
-    new Plugin({
-      props: {
-        handleDOMEvents: {
-          beforeinput: (_view, event) => {
-            // WebKit's only: Chrome takes no change to the line while composing well.
-            if (event.inputType !== "deleteCompositionText" || !/Apple/.test(navigator.vendor)) {
-              return false;
-            }
-            const keeper = keepLineThroughCommit(document.getSelection());
-            if (keeper) {
-              const done = () => setTimeout(() => keeper.remove());
-              document.addEventListener("compositionend", done, { once: true });
-            }
-            return false;
-          },
-        },
+  mount({ dom, signal }) {
+    // WebKit's only: elsewhere a word is committed in its own line.
+    if (!/Apple/.test(navigator.vendor)) return;
+    let started: string | null = null;
+    dom.addEventListener(
+      "compositionstart",
+      () => {
+        started = editor.getTextCursorPosition().block.id;
       },
-    }),
-  ],
-});
+      { signal },
+    );
+    dom.addEventListener(
+      "compositionend",
+      () => {
+        const from = started;
+        started = null;
+        // Once ProseMirror has taken in the commit and finished composing.
+        setTimeout(() => {
+          const view = editor.prosemirrorView;
+          if (!view || view.composing) return;
+          const now = editor.getTextCursorPosition().block as Line;
+          const fix = strayLine(from, now, editor.getPrevBlock(now.id) as Line | undefined);
+          if (!fix) return;
+          editor.transact(() => {
+            editor.updateBlock(fix.keep, { content: now.content } as never);
+            editor.removeBlocks([fix.drop]);
+            editor.setTextCursorPosition(fix.keep, "end");
+          });
+        });
+      },
+      { signal },
+    );
+  },
+}));
