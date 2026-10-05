@@ -453,6 +453,12 @@ export const lockNote = mutation({
     if (args.coversThroughSeq !== note.lastUpdateSeq) {
       return { status: "rejected" as const, reason: "behind" };
     }
+    // The title sent is the one this device had when it asked. One renamed
+    // since, by a newer stamp, would be put back, and the stamp with it, and
+    // the device that renamed it would keep its name and never say it again.
+    if (isNewer(note.ts.title, args.ts)) {
+      return { status: "rejected" as const, reason: "titleChanged" };
+    }
     if (!args.snapshot.iv) return { status: "rejected" as const, reason: "missingIv" };
     if (args.snapshot.payload && args.snapshot.payload.byteLength > SNAPSHOT_INLINE_LIMIT) {
       return { status: "rejected" as const, reason: "snapshotTooLargeInline" };
@@ -543,6 +549,12 @@ export const unlockNote = mutation({
     }
     if (args.coversThroughSeq !== note.lastUpdateSeq) {
       return { status: "rejected" as const, reason: "behind" };
+    }
+    // The title sent is the one this device had when it asked. One renamed
+    // since, by a newer stamp, would be put back, and the stamp with it, and
+    // the device that renamed it would keep its name and never say it again.
+    if (isNewer(note.ts.title, args.ts)) {
+      return { status: "rejected" as const, reason: "titleChanged" };
     }
     if (args.snapshot.iv) return { status: "rejected" as const, reason: "unexpectedIv" };
     if (await tooManyUpdates(ctx, user._id, args.noteId)) {

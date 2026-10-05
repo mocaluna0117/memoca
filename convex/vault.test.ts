@@ -794,3 +794,58 @@ describe("sizes counted against the quota", () => {
     expect(row!.locked).toBe(false);
   });
 });
+
+describe("a lock or unlock racing a rename", () => {
+  const sealed = () => ({ ct: new Uint8Array(32).buffer, iv: new Uint8Array(12).buffer });
+
+  test("is refused, and the newer name and its stamp stay", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [
+        {
+          kind: "note",
+          opId: "create",
+          noteId: "n1",
+          create: { noteKind: "note", folderId: null, sortKey: "m" },
+        },
+      ],
+    });
+    // Renamed on another device after this one stamped its lock.
+    await as.mutation(api.sync.push, {
+      deviceId: "device-2",
+      ops: [
+        {
+          kind: "note",
+          opId: "rename",
+          noteId: "n1",
+          title: { value: "新しい名前", preview: null, ts: { t: 5000, d: "device-2" } },
+        },
+      ],
+    });
+
+    const result = await as.mutation(api.vault.lockNote, {
+      noteId: "n1",
+      keyEpoch: 1,
+      coversThroughSeq: 0,
+      wrappedKey: sealed(),
+      titleSealed: sealed(),
+      snapshot: { payload: new Uint8Array(8).buffer, size: 8, iv: new Uint8Array(12).buffer },
+      attachments: [],
+      ts: { t: 4000, d: "device-1" },
+    });
+
+    expect(result).toEqual({ status: "rejected", reason: "titleChanged" });
+    const note = await t.run(async (ctx) =>
+      ctx.db
+        .query("notes")
+        .filter((q) => q.eq(q.field("noteId"), "n1"))
+        .unique(),
+    );
+    expect(note!.locked).toBe(false);
+    expect(note!.title).toBe("新しい名前");
+    expect(note!.ts.title).toEqual({ t: 5000, d: "device-2" });
+  });
+});

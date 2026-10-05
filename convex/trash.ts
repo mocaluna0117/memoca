@@ -300,49 +300,63 @@ export const purgeMore = internalMutation({
  *
  * Retention is a per-user setting, so the scan takes everything older than the
  * shortest possible window and then checks each row against its own owner's
- * choice.
+ * choice. Each table is gone through a page at a time to its end: items of
+ * someone keeping their trash longer, oldest first, would otherwise fill
+ * every page and keep anyone else's from ever being reached.
  */
 export const purgeExpired = internalMutation({
   args: {},
   handler: async (ctx) => {
+    for (const table of ["notes", "folders"] as const) {
+      await ctx.scheduler.runAfter(0, internal.trash.purgeExpiredPage, { table, cursor: null });
+    }
+  },
+});
+
+/** Rows of trash looked at per page by {@link purgeExpiredPage}. */
+const EXPIRED_PAGE = 200;
+
+export const purgeExpiredPage = internalMutation({
+  args: {
+    table: v.union(v.literal("notes"), v.literal("folders")),
+    cursor: v.union(v.string(), v.null()),
+  },
+  handler: async (ctx, { table, cursor }) => {
     const now = Date.now();
     const scanCutoff = now - MIN_RETENTION_DAYS * 24 * 60 * 60 * 1000;
-
-    const notes = await ctx.db
-      .query("notes")
+    const page = await ctx.db
+      .query(table)
       .withIndex("by_purge", (q) =>
         q.eq("purged", false).gt("deletedAt", 0).lt("deletedAt", scanCutoff),
       )
-      .take(200);
-    const folders = await ctx.db
-      .query("folders")
-      .withIndex("by_purge", (q) =>
-        q.eq("purged", false).gt("deletedAt", 0).lt("deletedAt", scanCutoff),
-      )
-      .take(200);
+      .paginate({ numItems: EXPIRED_PAGE, cursor });
 
-    const byUser = new Map<Id<"users">, { folderIds: string[]; noteIds: string[] }>();
-    const due = async (userId: Id<"users">, deletedAt: number) => {
-      const user = await ctx.db.get(userId);
-      if (!user) return false;
-      return deletedAt < now - user.settings.trashRetentionDays * 24 * 60 * 60 * 1000;
-    };
-
-    for (const note of notes) {
-      if (note.deletedAt === null || !(await due(note.userId, note.deletedAt))) continue;
-      const entry = byUser.get(note.userId) ?? { folderIds: [], noteIds: [] };
-      entry.noteIds.push(note.noteId);
-      byUser.set(note.userId, entry);
-    }
-    for (const folder of folders) {
-      if (folder.deletedAt === null || !(await due(folder.userId, folder.deletedAt))) continue;
-      const entry = byUser.get(folder.userId) ?? { folderIds: [], noteIds: [] };
-      entry.folderIds.push(folder.folderId);
-      byUser.set(folder.userId, entry);
+    const retention = new Map<Id<"users">, number | null>();
+    const byUser = new Map<Id<"users">, string[]>();
+    for (const row of page.page) {
+      if (row.deletedAt === null) continue;
+      if (!retention.has(row.userId)) {
+        const user = await ctx.db.get(row.userId);
+        retention.set(row.userId, user ? user.settings.trashRetentionDays : null);
+      }
+      const days = retention.get(row.userId);
+      if (days == null || row.deletedAt >= now - days * 24 * 60 * 60 * 1000) continue;
+      const id = "noteId" in row ? row.noteId : row.folderId;
+      byUser.set(row.userId, [...(byUser.get(row.userId) ?? []), id]);
     }
 
-    for (const [userId, targets] of byUser) {
-      await ctx.scheduler.runAfter(0, internal.trash.purgeMore, { userId, ...targets });
+    for (const [userId, ids] of byUser) {
+      await ctx.scheduler.runAfter(0, internal.trash.purgeMore, {
+        userId,
+        folderIds: table === "folders" ? ids : [],
+        noteIds: table === "notes" ? ids : [],
+      });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.trash.purgeExpiredPage, {
+        table,
+        cursor: page.continueCursor,
+      });
     }
     return { users: byUser.size };
   },

@@ -1,5 +1,5 @@
 import { convexTest } from "convex-test";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { api, internal } from "./_generated/api";
 import schema from "./schema";
 
@@ -213,5 +213,64 @@ describe("tombstones", () => {
     await t.mutation(internal.trash.dropOldTombstones, {});
     const note = await t.run(async (ctx) => ctx.db.query("notes").first());
     expect(note!.purgedAt).toBeGreaterThan(Date.now() - DAY);
+  });
+});
+
+describe("trash past its time", () => {
+  test("is purged for everyone, however much of someone else's longer-kept trash comes first", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup();
+      const as = await signedIn(t);
+      await as.mutation(api.sync.push, { deviceId: "device-1", ops: [noteOp("c", "model")] });
+      await t.run(async (ctx) => {
+        const model = (await ctx.db.query("notes").first())!;
+        const { _id, _creationTime, ...fields } = model;
+        void _id;
+        void _creationTime;
+        // Someone who keeps their trash 90 days: more than a page of it, the oldest of all.
+        await ctx.db.patch(model.userId, {
+          settings: { ...(await ctx.db.get(model.userId))!.settings, trashRetentionDays: 90 },
+        });
+        for (let i = 0; i < 250; i += 1) {
+          await ctx.db.insert("notes", {
+            ...fields,
+            noteId: `kept-${i}`,
+            deletedAt: Date.now() - 40 * DAY - i,
+          });
+        }
+        // Someone who keeps it 7 days, with one note trashed 10 days ago.
+        const other = await ctx.db.insert("users", {
+          authId: "authuser_b",
+          email: "b@example.com",
+          role: "user",
+          quotaBytes: 10_000_000,
+          usedBytes: 0,
+          reservedBytes: 0,
+          settings: {
+            theme: "system",
+            trashRetentionDays: 7,
+            autoLockMinutes: 5,
+            prefetchBodies: true,
+          },
+          createdAt: Date.now(),
+        });
+        await ctx.db.insert("notes", {
+          ...fields,
+          userId: other,
+          noteId: "due",
+          deletedAt: Date.now() - 10 * DAY,
+        });
+      });
+
+      await t.mutation(internal.trash.purgeExpired, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const notes = await t.run(async (ctx) => ctx.db.query("notes").collect());
+      expect(notes.find((n) => n.noteId === "due")!.purged).toBe(true);
+      expect(notes.filter((n) => n.noteId.startsWith("kept-") && n.purged)).toHaveLength(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
