@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-05-desktop-open-at-start",
+    date: "2026-10-05",
+    title: "起動直後の「Memoca を開く」を修正",
+    details: [
+      "デスクトップ版（0.4.6）で、アプリを起動した直後に即席メモの「Memoca を開く」やホットキーを押すと、何も開かないことがありました。そのときも開くようにしました。",
+    ],
+  },
+  {
     id: "2026-10-05-quota-full-edits-kept",
     date: "2026-10-05",
     title: "容量がいっぱいのときの書き込みを守る",

@@ -187,6 +187,11 @@ pub struct Downloads(Mutex<HashMap<String, PathBuf>>);
 /// made twice.
 static MAKING: AtomicBool = AtomicBool::new(false);
 
+/// What was asked of the window while it was being made, the last of it:
+/// done once it is. Dropped, a 「Memoca を開く」 pressed while the hidden
+/// window was still being made at start showed nothing.
+static WANTED: Mutex<Option<(Url, bool)>> = Mutex::new(None);
+
 /// Makes the window, on a thread of its own. On Windows, a window made on
 /// the main thread from within a command the page sent, a menu's choice or
 /// another event's handler never gets its WebView2, and the whole app
@@ -200,14 +205,50 @@ fn make_apart(app: &AppHandle, url: Url, shown: bool) {
 /// Makes the window, here: on a thread other than the main one.
 fn make(app: &AppHandle, url: Url, shown: bool) {
     if MAKING.swap(true, Ordering::SeqCst) {
+        *WANTED.lock().unwrap() = Some((url, shown));
         return;
     }
+    let made = url.clone();
     if window(app).is_none() {
         if let Err(error) = create(app, url, shown) {
             eprintln!("Memoca: could not make its window: {error}");
         }
     }
     MAKING.store(false, Ordering::SeqCst);
+    let wanted = WANTED.lock().unwrap().take();
+    if let (Some((url, shown)), Some(window)) = (wanted, window(app)) {
+        match after_making(&made, &url, shown) {
+            AfterMaking::BringOut => bring_out(&window),
+            AfterMaking::Open => open_at(app, url),
+            AfterMaking::Go => {
+                let _ = window.navigate(url);
+            }
+            AfterMaking::Nothing => {}
+        }
+    }
+}
+
+/// What a request that came while the window was being made on `made`
+/// still needs, now that it is.
+#[derive(Debug, PartialEq)]
+enum AfterMaking {
+    /// Only to be brought out: it is on the page asked for.
+    BringOut,
+    /// Brought out on another page, or a note.
+    Open,
+    /// Sent to another page, hidden as it is.
+    Go,
+    /// Hidden, on the page asked for, as it was made.
+    Nothing,
+}
+
+fn after_making(made: &Url, url: &Url, shown: bool) -> AfterMaking {
+    match (shown, url == made) {
+        (true, true) => AfterMaking::BringOut,
+        (true, false) => AfterMaking::Open,
+        (false, false) => AfterMaking::Go,
+        (false, true) => AfterMaking::Nothing,
+    }
 }
 
 /// Makes the window on `url`, brought out if `shown`, else left hidden.
@@ -312,5 +353,20 @@ mod tests {
         assert!(!is_app_page(
             &Url::parse("https://example.com/app").unwrap()
         ));
+    }
+
+    #[test]
+    fn a_request_made_while_the_window_was_being_made_is_done_after() {
+        let app = page("/app");
+        assert_eq!(after_making(&app, &app, true), AfterMaking::BringOut);
+        assert_eq!(
+            after_making(&app, &page("/app?n=abc"), true),
+            AfterMaking::Open
+        );
+        assert_eq!(
+            after_making(&app, &page("/sign-in"), false),
+            AfterMaking::Go
+        );
+        assert_eq!(after_making(&app, &app, false), AfterMaking::Nothing);
     }
 }
