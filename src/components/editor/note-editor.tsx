@@ -50,6 +50,7 @@ import { pasteOwnImage } from "@/components/editor/copy-image";
 import { dragHandle } from "@/components/editor/drag-handle";
 import { fromTitle, linesAbove } from "@/components/editor/line-above";
 import { selectMedia } from "@/components/editor/select-media";
+import { imeEnter } from "@/components/editor/ime-enter";
 import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
@@ -284,6 +285,7 @@ function EditorSurface({
           dragHandle,
           selectMedia(),
           linesAbove(),
+          imeEnter,
         ],
         dropCursor: { hooks: { computeDropPosition } },
         // An image Memoca copied alone, pasted back as the block it was.

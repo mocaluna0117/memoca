@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-06-desktop-ime-enter",
+    date: "2026-10-06",
+    title: "Mac のデスクトップ版で変換確定の文字が増える不具合を修正",
+    details: [
+      "Mac のデスクトップ版で、日本語の変換を Enter で確定すると、打った文字が次の行にもう一度入ることがありました（字下げした箇条書きで起きやすい）。確定の Enter では行が増えないようにしました。",
+      "アプリの更新は要りません。次にメモを開いたときから直っています。",
+    ],
+  },
+  {
     id: "2026-10-05-desktop-open-at-start",
     date: "2026-10-05",
     title: "起動直後の「Memoca を開く」を修正",
