@@ -187,7 +187,9 @@ test("on a phone, a note opened again from the list, or after a reload, opens wh
 }, testInfo) => {
   test.skip(testInfo.project.name !== "mobile", "the page scrolled on a phone");
   await twoNotes(page);
-  await readFrom(page, "行40");
+  // Not 行40: a phone's screen is taller than the twenty lines after it, so
+  // the page ends before that line reaches the top.
+  await readFrom(page, "行30");
 
   await showList(page);
   await row(page, "別").click();
@@ -201,8 +203,8 @@ test("on a phone, a note opened again from the list, or after a reload, opens wh
 
   await showList(page);
   await row(page, "長い").click();
-  await atTop(page, "行40");
+  await atTop(page, "行30");
 
   await page.reload();
-  await atTop(page, "行40", 25_000);
+  await atTop(page, "行30", 25_000);
 });
