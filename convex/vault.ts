@@ -7,6 +7,7 @@ import {
   REPLACE_BODY_LIMIT,
   SNAPSHOT_INLINE_LIMIT,
 } from "./lib/constants";
+import { uploadedSize } from "./lib/files";
 import { isNewer } from "./lib/hlc";
 import { sealedV, stampV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
@@ -252,7 +253,7 @@ async function replaceBody(
   seq: SeqWriter,
   keyEpoch: number,
   coversThroughSeq: number,
-  snapshot: { payload?: ArrayBuffer; storageId?: Id<"_storage">; size: number; iv?: ArrayBuffer },
+  snapshot: Snapshot,
 ) {
   // Every update row goes, including the plaintext ones being replaced. This is
   // the step that actually makes the old content unreadable on the server.
@@ -328,6 +329,45 @@ async function plaintextAttachmentsLeft(
   return null;
 }
 
+type Snapshot = { payload?: ArrayBuffer; storageId?: Id<"_storage">; size: number; iv?: ArrayBuffer };
+type Swap = {
+  attachmentId: string;
+  storageId: Id<"_storage">;
+  bytes: number;
+  metaSealed?: { ct: ArrayBuffer; iv: ArrayBuffer };
+  wrappedKey?: { ct: ArrayBuffer; iv: ArrayBuffer };
+  contentIv?: ArrayBuffer;
+  name?: string;
+  mime?: string;
+};
+
+/**
+ * The snapshot and files a lock or unlock puts in place, with their sizes as
+ * stored rather than as the client gave them; or why they cannot be taken.
+ * Checked before anything is written.
+ */
+async function measured<S extends Snapshot | null>(
+  ctx: MutationCtx,
+  snapshot: S,
+  swaps: Swap[],
+): Promise<{ snapshot: S; swaps: Swap[] } | "missingUpload"> {
+  let sized = snapshot;
+  if (snapshot?.storageId) {
+    const size = await uploadedSize(ctx, snapshot.storageId);
+    if (size === null) return "missingUpload";
+    sized = { ...snapshot, size };
+  } else if (snapshot?.payload) {
+    sized = { ...snapshot, size: snapshot.payload.byteLength };
+  }
+  const sizedSwaps: Swap[] = [];
+  for (const swap of swaps) {
+    const bytes = await uploadedSize(ctx, swap.storageId);
+    if (bytes === null) return "missingUpload";
+    sizedSwaps.push({ ...swap, bytes });
+  }
+  return { snapshot: sized, swaps: sizedSwaps };
+}
+
 const attachmentSwapV = v.array(
   v.object({
     attachmentId: v.string(),
@@ -346,18 +386,10 @@ const attachmentSwapV = v.array(
 async function swapAttachments(
   ctx: MutationCtx,
   userId: Id<"users">,
+  noteId: string,
   seq: SeqWriter,
   locked: boolean,
-  swaps: {
-    attachmentId: string;
-    storageId: Id<"_storage">;
-    bytes: number;
-    metaSealed?: { ct: ArrayBuffer; iv: ArrayBuffer };
-    wrappedKey?: { ct: ArrayBuffer; iv: ArrayBuffer };
-    contentIv?: ArrayBuffer;
-    name?: string;
-    mime?: string;
-  }[],
+  swaps: Swap[],
 ): Promise<number> {
   let delta = 0;
   for (const swap of swaps) {
@@ -367,7 +399,8 @@ async function swapAttachments(
         q.eq("userId", userId).eq("attachmentId", swap.attachmentId),
       )
       .unique();
-    if (!row || row.status !== "committed") continue;
+    // Only the note's own files: another note's is not this lock's to change.
+    if (!row || row.status !== "committed" || row.noteId !== noteId) continue;
     if (row.storageId) await ctx.storage.delete(row.storageId);
     delta += swap.bytes - row.bytes;
     await ctx.db.patch(row._id, {
@@ -437,6 +470,8 @@ export const lockNote = mutation({
       Date.now(),
     );
     if (leftover) return { status: "rejected" as const, reason: leftover };
+    const sized = await measured(ctx, args.snapshot, args.attachments);
+    if (sized === "missingUpload") return { status: "rejected" as const, reason: sized };
 
     const seq = await openSeq(ctx, user._id);
     await replaceBody(
@@ -446,14 +481,15 @@ export const lockNote = mutation({
       seq,
       args.keyEpoch,
       args.coversThroughSeq,
-      args.snapshot,
+      sized.snapshot,
     );
     const attachmentDelta = await swapAttachments(
       ctx,
       user._id,
+      args.noteId,
       seq,
       true,
-      args.attachments,
+      sized.swaps,
     );
 
     await ctx.db.patch(note._id, {
@@ -466,7 +502,7 @@ export const lockNote = mutation({
       preview: null,
       snapshotSeq: args.coversThroughSeq,
       sinceSnapshot: { count: 0, bytes: 0 },
-      bodyBytes: args.snapshot.size,
+      bodyBytes: sized.snapshot.size,
       ts: { ...note.ts, lock: args.ts, title: args.ts },
       seq: seq.next(),
       updatedAt: Date.now(),
@@ -474,7 +510,7 @@ export const lockNote = mutation({
     await ctx.db.patch(user._id, {
       usedBytes: Math.max(
         0,
-        user.usedBytes - note.bodyBytes + args.snapshot.size + attachmentDelta,
+        user.usedBytes - note.bodyBytes + sized.snapshot.size + attachmentDelta,
       ),
     });
     await seq.commit();
@@ -512,6 +548,8 @@ export const unlockNote = mutation({
     if (await tooManyUpdates(ctx, user._id, args.noteId)) {
       return { status: "rejected" as const, reason: "compactFirst" };
     }
+    const sized = await measured(ctx, args.snapshot, args.attachments);
+    if (sized === "missingUpload") return { status: "rejected" as const, reason: sized };
 
     const seq = await openSeq(ctx, user._id);
     await replaceBody(
@@ -521,14 +559,15 @@ export const unlockNote = mutation({
       seq,
       args.keyEpoch,
       args.coversThroughSeq,
-      args.snapshot,
+      sized.snapshot,
     );
     const attachmentDelta = await swapAttachments(
       ctx,
       user._id,
+      args.noteId,
       seq,
       false,
-      args.attachments,
+      sized.swaps,
     );
 
     await ctx.db.patch(note._id, {
@@ -541,7 +580,7 @@ export const unlockNote = mutation({
       preview: args.preview,
       snapshotSeq: args.coversThroughSeq,
       sinceSnapshot: { count: 0, bytes: 0 },
-      bodyBytes: args.snapshot.size,
+      bodyBytes: sized.snapshot.size,
       ts: { ...note.ts, lock: args.ts, title: args.ts },
       seq: seq.next(),
       updatedAt: Date.now(),
@@ -549,7 +588,7 @@ export const unlockNote = mutation({
     await ctx.db.patch(user._id, {
       usedBytes: Math.max(
         0,
-        user.usedBytes - note.bodyBytes + args.snapshot.size + attachmentDelta,
+        user.usedBytes - note.bodyBytes + sized.snapshot.size + attachmentDelta,
       ),
     });
     await seq.commit();
@@ -639,10 +678,15 @@ export const lockAttachments = mutation({
           .take(500)
       ).map((a) => a.attachmentId),
     );
-    const swaps = args.attachments.filter((a) => own.has(a.attachmentId));
+    const sized = await measured(
+      ctx,
+      null,
+      args.attachments.filter((a) => own.has(a.attachmentId)),
+    );
+    if (sized === "missingUpload") return { status: "rejected" as const, reason: sized };
 
     const seq = await openSeq(ctx, user._id);
-    const delta = await swapAttachments(ctx, user._id, seq, true, swaps);
+    const delta = await swapAttachments(ctx, user._id, args.noteId, seq, true, sized.swaps);
     await ctx.db.patch("users", user._id, { usedBytes: Math.max(0, user.usedBytes + delta) });
     await seq.commit();
     return { status: "ok" as const };

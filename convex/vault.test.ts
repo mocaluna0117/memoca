@@ -635,3 +635,162 @@ describe("note locks", () => {
     ).toEqual({ status: "rejected", reason: "notLocked" });
   });
 });
+
+describe("sizes counted against the quota", () => {
+  const stamp = (t: number) => ({ t, d: "device-1" });
+  const sealed = () => ({ ct: new Uint8Array(32).buffer, iv: new Uint8Array(12).buffer });
+
+  async function withNote(noteId: string) {
+    const t = setup();
+    const userId = await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [
+        {
+          kind: "note",
+          opId: `op-${noteId}`,
+          noteId,
+          create: { noteKind: "note", folderId: null, sortKey: "m" },
+        },
+      ],
+    });
+    return { t, as, userId };
+  }
+
+  const usage = (t: ReturnType<typeof setup>, userId: Id<"users">) =>
+    t.run(async (ctx) => (await ctx.db.get(userId))!.usedBytes);
+
+  async function storedFile(t: ReturnType<typeof setup>, userId: Id<"users">, noteId: string) {
+    return t.run(async (ctx) => {
+      const storageId = await ctx.storage.store(new Blob(["plain file"]));
+      await ctx.db.insert("attachments", {
+        userId,
+        attachmentId: `file-of-${noteId}`,
+        noteId,
+        status: "committed",
+        storageId,
+        reservedBytes: 0,
+        bytes: 10,
+        mime: "image/webp",
+        name: "a.webp",
+        locked: false,
+        width: null,
+        height: null,
+        unreferencedAt: null,
+        deletedAt: null,
+        expiresAt: null,
+        seq: 1,
+        createdAt: 0,
+      });
+      await ctx.db.patch(userId, { usedBytes: 10 });
+      return storageId;
+    });
+  }
+
+  const upload = (t: ReturnType<typeof setup>, size: number) =>
+    t.run(async (ctx) => ctx.storage.store(new Blob([new Uint8Array(size)])));
+
+  test("are the stored ones, whatever size a lock declares", async () => {
+    const { t, as, userId } = await withNote("n1");
+    await storedFile(t, userId, "n1");
+    const snapshotId = await upload(t, 300);
+    const fileId = await upload(t, 40);
+
+    const result = await as.mutation(api.vault.lockNote, {
+      noteId: "n1",
+      keyEpoch: 1,
+      coversThroughSeq: 0,
+      wrappedKey: sealed(),
+      titleSealed: sealed(),
+      snapshot: { storageId: snapshotId, size: 1, iv: new Uint8Array(12).buffer },
+      attachments: [
+        {
+          attachmentId: "file-of-n1",
+          storageId: fileId,
+          bytes: 0,
+          metaSealed: sealed(),
+          wrappedKey: sealed(),
+          contentIv: new Uint8Array(12).buffer,
+        },
+      ],
+      ts: stamp(2000),
+    });
+
+    expect(result.status).toBe("ok");
+    expect(await usage(t, userId)).toBe(300 + 40);
+  });
+
+  test("of a compacted note is its snapshot's", async () => {
+    const { t, as, userId } = await withNote("n1");
+    await as.mutation(api.notes.compact, {
+      noteId: "n1",
+      keyEpoch: 0,
+      coversThroughSeq: 0,
+      payload: new Uint8Array(64).buffer,
+      size: 0,
+    });
+    expect(await usage(t, userId)).toBe(64);
+  });
+
+  test("a file already used elsewhere is not taken, so it is never deleted from under it", async () => {
+    const { t, as, userId } = await withNote("n1");
+    const shared = await storedFile(t, userId, "n1");
+
+    const result = await as.mutation(api.notes.compact, {
+      noteId: "n1",
+      keyEpoch: 0,
+      coversThroughSeq: 0,
+      storageId: shared,
+      size: 0,
+    });
+
+    expect(result).toEqual({ status: "rejected", reason: "missingUpload" });
+  });
+
+  test("a lock changes only its own note's files", async () => {
+    const { t, as, userId } = await withNote("n1");
+    await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [
+        {
+          kind: "note",
+          opId: "op-other",
+          noteId: "other",
+          create: { noteKind: "note", folderId: null, sortKey: "m" },
+        },
+      ],
+    });
+    const theirs = await storedFile(t, userId, "other");
+    const replacement = await upload(t, 40);
+
+    await as.mutation(api.vault.lockNote, {
+      noteId: "n1",
+      keyEpoch: 1,
+      coversThroughSeq: 0,
+      wrappedKey: sealed(),
+      titleSealed: sealed(),
+      snapshot: { payload: new Uint8Array(8).buffer, size: 8, iv: new Uint8Array(12).buffer },
+      attachments: [
+        {
+          attachmentId: "file-of-other",
+          storageId: replacement,
+          bytes: 40,
+          metaSealed: sealed(),
+          wrappedKey: sealed(),
+          contentIv: new Uint8Array(12).buffer,
+        },
+      ],
+      ts: stamp(2000),
+    });
+
+    const row = await t.run(async (ctx) =>
+      ctx.db
+        .query("attachments")
+        .filter((q) => q.eq(q.field("attachmentId"), "file-of-other"))
+        .unique(),
+    );
+    expect(row!.storageId).toBe(theirs);
+    expect(row!.locked).toBe(false);
+  });
+});

@@ -9,6 +9,7 @@ import {
   query,
 } from "./_generated/server";
 import { PULL_BYTE_BUDGET, SNAPSHOT_INLINE_LIMIT } from "./lib/constants";
+import { uploadedSize } from "./lib/files";
 import { openSeq } from "./lib/seq";
 import { requireUser } from "./lib/user";
 
@@ -180,6 +181,11 @@ export const compact = mutation({
     if (args.payload && args.payload.byteLength > SNAPSHOT_INLINE_LIMIT) {
       return { status: "rejected" as const, reason: "snapshotTooLargeInline" };
     }
+    // The size counted against the quota is the snapshot's own, not the one given.
+    const size = args.storageId
+      ? await uploadedSize(ctx, args.storageId)
+      : (args.payload?.byteLength ?? null);
+    if (size === null) return { status: "rejected" as const, reason: "missingUpload" };
 
     const seq = await openSeq(ctx, user._id);
     const now = Date.now();
@@ -198,7 +204,7 @@ export const compact = mutation({
       payload: args.payload,
       storageId: args.storageId,
       iv: args.iv,
-      size: args.size,
+      size,
       seq: seq.next(),
       createdAt: now,
     });
@@ -221,10 +227,10 @@ export const compact = mutation({
     await ctx.db.patch(note._id, {
       snapshotSeq: args.coversThroughSeq,
       sinceSnapshot: { count: 0, bytes: 0 },
-      bodyBytes: args.size,
+      bodyBytes: size,
     });
     await ctx.db.patch(user._id, {
-      usedBytes: Math.max(0, user.usedBytes - note.bodyBytes + args.size),
+      usedBytes: Math.max(0, user.usedBytes - note.bodyBytes + size),
     });
     await seq.commit();
 
