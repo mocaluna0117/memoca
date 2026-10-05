@@ -157,6 +157,13 @@ export function paginate(
   let from = 0;
   while (from < end) {
     const room = slices.length === 0 ? first : rest;
+    if (room <= 0) {
+      // A title as tall as a sheet has the first to itself. A sheet with no
+      // room at all, of a note not laid out, would never get to the end.
+      if (slices.length > 0) throw new RangeError("A sheet has no room for the note");
+      slices.push([0, 0]);
+      continue;
+    }
     const limit = from + room;
     if (limit >= end) {
       slices.push([from, end]);

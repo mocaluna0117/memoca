@@ -147,11 +147,19 @@ export function NoteEditor({
   const [failed, setFailed] = useState<{ noteId: string; why: string } | null>(null);
 
   useEffect(() => {
+    // Let go of exactly once, by whichever comes second: the document
+    // arriving or the effect being cleaned up. Both letting go of it would
+    // take another holder's hold too, and the document could be destroyed
+    // under them.
     let cancelled = false;
+    let held = false;
     void acquireDoc(noteId).then(
       (doc) => {
         if (cancelled) void releaseDoc(noteId);
-        else setLoaded({ noteId, doc });
+        else {
+          held = true;
+          setLoaded({ noteId, doc });
+        }
       },
       // A locked note whose key this vault cannot open. Say so instead of
       // showing a skeleton forever.
@@ -162,7 +170,7 @@ export function NoteEditor({
     );
     return () => {
       cancelled = true;
-      void releaseDoc(noteId);
+      if (held) void releaseDoc(noteId);
     };
   }, [noteId]);
 

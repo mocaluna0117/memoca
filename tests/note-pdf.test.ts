@@ -70,4 +70,15 @@ describe("where a note's sheets end", async () => {
   test("an empty note is one sheet", () => {
     expect(paginate([], 0, { first: 100, rest: 100 })).toEqual([[0, 0]]);
   });
+
+  test("a title as tall as a sheet has the first to itself", () => {
+    expect(paginate([50, 100], 100, { first: -20, rest: 100 })).toEqual([
+      [0, 0],
+      [0, 100],
+    ]);
+  });
+
+  test("a note not laid out, with sheets of no room, is refused rather than paged for ever", () => {
+    expect(() => paginate([], 16, { first: 0, rest: 0 })).toThrow(RangeError);
+  });
 });

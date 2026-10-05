@@ -298,7 +298,7 @@ export class SyncEngine {
           folderIds: folderIds.slice(at, at + GHOST_BATCH),
           noteIds: noteIds.slice(at, at + GHOST_BATCH),
         });
-        if (!gone) return;
+        if (!gone || this.stopped) return;
         await database.transaction(
           "rw",
           [database.folders, database.notes, database.updates, database.snapshots, database.bodies],
@@ -337,6 +337,8 @@ export class SyncEngine {
       );
 
       const result = await this.client.query(api.notes.getBodies, { items });
+      // Stopped while asking: the local data may be another account's by now.
+      if (this.stopped) return;
       for (const body of result.bodies) {
         await this.ingestBody(body);
       }
