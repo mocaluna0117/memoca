@@ -221,15 +221,23 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     return () => clearTimeout(timer);
   }, [view]);
 
-  useEffect(
-    () => () => {
-      abort.current?.abort();
-      if (recoveredKey.current) wipe(recoveredKey.current);
-      if (createdRawRef.current) wipe(createdRawRef.current);
-      if (offerRawRef.current) wipe(offerRawRef.current);
-    },
-    [],
-  );
+  // On closing for good, not on StrictMode's cleanup and set-up again at
+  // mount: that would cancel the sheet the tap started, and the prompt
+  // would then offer a second one.
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      queueMicrotask(() => {
+        if (mounted.current) return;
+        abort.current?.abort();
+        if (recoveredKey.current) wipe(recoveredKey.current);
+        if (createdRawRef.current) wipe(createdRawRef.current);
+        if (offerRawRef.current) wipe(offerRawRef.current);
+      });
+    };
+  }, []);
 
   // Focus the screen's main control. A text field only with a mouse or
   // trackpad: on a phone it would raise the keyboard over the prompt.

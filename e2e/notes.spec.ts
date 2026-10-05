@@ -137,7 +137,8 @@ test.describe("notes", () => {
     await panel.getByRole("link", { name: "ゴミ箱" }).click();
     await expect(page.getByText("消すメモ").filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 });
     await page.getByRole("button", { name: "復元" }).first().click();
-    await expect(page.getByText("消すメモ").filter({ visible: true })).toHaveCount(0);
+    // Out of the trash, and back in the sidebar's tree.
+    await expect(page.getByRole("main").getByText("消すメモ")).toHaveCount(0);
 
     await page.goto("/app");
     await showList(page);
@@ -319,6 +320,8 @@ test.describe("folders", () => {
     }
     await panel.getByRole("button", { name: "いち の操作" }).click();
     await page.getByRole("menuitem", { name: "サブフォルダを追加" }).click();
+    // Until the menu is gone it keeps the focus, and Enter would add another.
+    await expect(page.getByRole("menu")).toHaveCount(0);
     await renameNew("子");
 
     await row("Inbox").focus();
