@@ -348,63 +348,73 @@ export class SyncEngine {
 
   private async ingestBody(body: RemoteBody): Promise<void> {
     const database = db();
-    let through = 0;
-
-    if (body.snapshot) {
-      const bytes = body.snapshot.payload
-        ? new Uint8Array(body.snapshot.payload)
-        : body.snapshot.url
+    const snapshot = body.snapshot;
+    const bytes = !snapshot
+      ? null
+      : snapshot.payload
+        ? new Uint8Array(snapshot.payload)
+        : snapshot.url
           ? // Not kept by the service worker or the browser: a note locked
             // later would leave this copy of its text behind.
-            new Uint8Array(
-              await (await fetch(body.snapshot.url, { cache: "no-store" })).arrayBuffer(),
-            )
+            new Uint8Array(await (await fetch(snapshot.url, { cache: "no-store" })).arrayBuffer())
           : null;
-      if (bytes) {
-        await database.snapshots.put({
-          noteId: body.noteId,
-          data: bytes,
-          iv: body.snapshot.iv ? new Uint8Array(body.snapshot.iv) : undefined,
-          keyEpoch: body.keyEpoch,
-          throughSeq: body.snapshot.coversThroughSeq,
-        });
-        // Everything the snapshot already contains can go.
+
+    // Written all at once, and not at all once the engine has stopped: by
+    // then the local data may have been wiped for another account.
+    const through = await database.transaction(
+      "rw",
+      [database.snapshots, database.updates],
+      async () => {
+        if (this.stopped) return null;
+        let through = 0;
+        if (snapshot && bytes) {
+          await database.snapshots.put({
+            noteId: body.noteId,
+            data: bytes,
+            iv: snapshot.iv ? new Uint8Array(snapshot.iv) : undefined,
+            keyEpoch: body.keyEpoch,
+            throughSeq: snapshot.coversThroughSeq,
+          });
+          // Everything the snapshot already contains can go.
+          await database.updates
+            .where("noteId")
+            .equals(body.noteId)
+            .filter((u) => u.seq !== null && u.seq <= snapshot.coversThroughSeq)
+            .delete();
+          through = snapshot.coversThroughSeq;
+        }
+        // What was kept here under another key (from before a lock or unlock)
+        // is in what just came, and that key cannot open it any more.
         await database.updates
           .where("noteId")
           .equals(body.noteId)
-          .filter((u) => u.seq !== null && u.seq <= body.snapshot!.coversThroughSeq)
+          .filter((u) => u.keyEpoch !== body.keyEpoch && u.pushed === 1)
           .delete();
-        through = body.snapshot.coversThroughSeq;
-      }
-    }
-    // What was kept here under another key (from before a lock or unlock)
-    // is in what just came, and that key cannot open it any more.
-    await database.updates
-      .where("noteId")
-      .equals(body.noteId)
-      .filter((u) => u.keyEpoch !== body.keyEpoch && u.pushed === 1)
-      .delete();
 
-    for (const update of body.updates) {
-      const existing = await database.updates.where("opId").equals(update.opId).first();
-      if (existing) {
-        if (existing.seq !== update.seq) {
-          await database.updates.update(existing.localId!, { seq: update.seq, pushed: 1 });
+        for (const update of body.updates) {
+          const existing = await database.updates.where("opId").equals(update.opId).first();
+          if (existing) {
+            if (existing.seq !== update.seq) {
+              await database.updates.update(existing.localId!, { seq: update.seq, pushed: 1 });
+            }
+          } else {
+            await database.updates.add({
+              noteId: body.noteId,
+              seq: update.seq,
+              opId: update.opId,
+              keyEpoch: update.keyEpoch,
+              data: new Uint8Array(update.payload),
+              iv: update.iv ? new Uint8Array(update.iv) : undefined,
+              pushed: 1,
+              createdAt: Date.now(),
+            });
+          }
+          through = Math.max(through, update.seq);
         }
-      } else {
-        await database.updates.add({
-          noteId: body.noteId,
-          seq: update.seq,
-          opId: update.opId,
-          keyEpoch: update.keyEpoch,
-          data: new Uint8Array(update.payload),
-          iv: update.iv ? new Uint8Array(update.iv) : undefined,
-          pushed: 1,
-          createdAt: Date.now(),
-        });
-      }
-      through = Math.max(through, update.seq);
-    }
+        return through;
+      },
+    );
+    if (through === null || this.stopped) return;
 
     await reloadDoc(body.noteId);
     await this.refreshText(body.noteId, through, body.keyEpoch);
@@ -426,6 +436,7 @@ export class SyncEngine {
       text = await withDetachedDoc(noteId, (doc) => extractText(doc));
     }
 
+    if (this.stopped) return;
     await database.bodies.put({
       noteId,
       throughSeq,
