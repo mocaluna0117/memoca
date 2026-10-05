@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { swipe } from "./gestures";
 import { createNote, editor, openApp, showList, signUp } from "./helpers";
 
 const NOTE = '[data-scroll="note"]';
@@ -103,18 +104,12 @@ test.describe("on a phone", () => {
       window.scrollTo(0, 0);
     });
 
-    // A real touch drag, through Chromium's input pipeline, on the note text.
+    // A real touch drag, through Chromium's touch input, on the note text.
+    // (Not Input.synthesizeScrollGesture: headless Chromium on Linux, as in
+    // CI, does not scroll for it.)
     const box = (await page.getByText("5 行目", { exact: true }).boundingBox())!;
     const x = box.x + box.width / 2;
-    const cdp = await page.context().newCDPSession(page);
-    await cdp.send("Input.synthesizeScrollGesture", {
-      x,
-      y: box.y + 200,
-      yDistance: -400,
-      gestureSourceType: "touch",
-      speed: 800,
-    });
-    await cdp.detach();
+    await swipe(page, { x, y: box.y + 400 }, { x, y: box.y });
     await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(100);
   });
 
