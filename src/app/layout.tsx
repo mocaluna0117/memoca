@@ -1,8 +1,10 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SerwistProvider } from "@serwist/turbopack/react";
 import { AppProviders } from "@/components/providers/app-providers";
 import { getToken } from "@/lib/auth/server";
+import { NONCE_HEADER } from "@/lib/csp";
 import { t } from "@/lib/i18n/ja";
 import "./globals.css";
 
@@ -30,6 +32,7 @@ export const viewport: Viewport = {
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
   const initialToken = await getToken();
+  const nonce = (await headers()).get(NONCE_HEADER) ?? undefined;
   return (
     <html
       lang="ja"
@@ -40,7 +43,7 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
         {/* Not reloaded when the network returns: sync picks up by itself, and a
             reload would throw away what was being typed, a draft included. */}
         <SerwistProvider swUrl="/serwist/sw.js" cacheOnNavigation reloadOnOnline={false}>
-          <AppProviders initialToken={initialToken}>{children}</AppProviders>
+          <AppProviders initialToken={initialToken} nonce={nonce}>{children}</AppProviders>
         </SerwistProvider>
       </body>
     </html>

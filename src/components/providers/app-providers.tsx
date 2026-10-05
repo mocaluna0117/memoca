@@ -23,9 +23,12 @@ const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!, {
 export function AppProviders({
   children,
   initialToken,
+  nonce,
 }: {
   children: ReactNode;
   initialToken?: string | null;
+  /** This page's script nonce (lib/csp.ts), for the theme's inline script. */
+  nonce?: string;
 }) {
   return (
     <ConvexWithBetterAuth
@@ -34,7 +37,13 @@ export function AppProviders({
       authClient={authClient as unknown as AuthClientForConvex}
       initialToken={initialToken}
     >
-      <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+      <ThemeProvider
+        attribute="class"
+        defaultTheme="system"
+        enableSystem
+        disableTransitionOnChange
+        nonce={nonce}
+      >
         <TooltipProvider delayDuration={300}>
           {children}
           <Toaster position="top-center" richColors closeButton />
