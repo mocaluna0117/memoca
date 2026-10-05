@@ -4,6 +4,8 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, internalMutation, mutation } from "./_generated/server";
 import { MAX_REFS_PER_NOTE, TOMBSTONE_MS, UNREFERENCED_GRACE_MS } from "./lib/constants";
 import { fileTombstone } from "./lib/files";
+import { type Stamp, isNewer } from "./lib/hlc";
+import { stampV } from "./lib/ops";
 import { allNotesReported, dropNoteRefs, isInUse, settleUse } from "./lib/refs";
 import { type SeqWriter, openSeq } from "./lib/seq";
 import { requireUser } from "./lib/user";
@@ -81,6 +83,7 @@ async function purgeNote(
 
   await ctx.db.patch(note._id, {
     purged: true,
+    purgedAt: Date.now(),
     title: null,
     titleSealed: undefined,
     preview: null,
@@ -137,12 +140,27 @@ async function collectSubtree(
   return { folders, notes };
 }
 
+/**
+ * Whether a purge asked for still applies: the item is in the trash, or the
+ * asking device put it there after it was last taken out, by a trashing on
+ * its way here still. One taken out of the trash on another device since is
+ * left alone: emptying a trash that showed it then would delete it for good.
+ */
+function stillTrashed(
+  row: { deletedAt: number | null; ts: { trash: Stamp } },
+  trashedAt: Stamp | undefined,
+): boolean {
+  if (row.deletedAt !== null) return true;
+  return trashedAt !== undefined && isNewer(trashedAt, row.ts.trash);
+}
+
 async function purgeTargets(
   ctx: MutationCtx,
   user: Doc<"users">,
   seq: SeqWriter,
   folderIds: string[],
   noteIds: string[],
+  trashedAt: Record<string, Stamp> = {},
 ): Promise<{ freed: number; more: boolean }> {
   let freed = 0;
   let budget = PURGE_BATCH;
@@ -157,6 +175,11 @@ async function purgeTargets(
 
   const subtrees = [];
   for (const folderId of folderIds) {
+    const root = await ctx.db
+      .query("folders")
+      .withIndex("by_user_folder", (q) => q.eq("userId", user._id).eq("folderId", folderId))
+      .unique();
+    if (!root || root.purged || !stillTrashed(root, trashedAt[folderId])) continue;
     const subtree = await collectSubtree(ctx, user._id, folderId);
     for (const note of subtree.notes) purging.add(note.noteId);
     subtrees.push(subtree);
@@ -186,7 +209,7 @@ async function purgeTargets(
       .query("notes")
       .withIndex("by_user_note", (q) => q.eq("userId", user._id).eq("noteId", noteId))
       .unique();
-    if (!note || note.purged) continue;
+    if (!note || note.purged || !stillTrashed(note, trashedAt[noteId])) continue;
     freed += await purgeNote(ctx, note, seq, othersReported);
     budget -= 1;
   }
@@ -196,6 +219,7 @@ async function purgeTargets(
       if (folder.system !== null) continue;
       await ctx.db.patch(folder._id, {
         purged: true,
+        purgedAt: Date.now(),
         name: null,
         nameSealed: undefined,
         seq: seq.next(),
@@ -208,7 +232,15 @@ async function purgeTargets(
 
 /** Permanent delete from the trash screen. */
 export const purge = mutation({
-  args: { folderIds: v.array(v.string()), noteIds: v.array(v.string()) },
+  args: {
+    folderIds: v.array(v.string()),
+    noteIds: v.array(v.string()),
+    /**
+     * When the asking device put each of them in the trash, by id. Older
+     * clients send nothing, and only what is in the trash here goes.
+     */
+    trashedAt: v.optional(v.record(v.string(), stampV)),
+  },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx);
     const seq = await openSeq(ctx, user._id);
@@ -218,6 +250,7 @@ export const purge = mutation({
       seq,
       args.folderIds,
       args.noteIds,
+      args.trashedAt,
     );
     if (freed > 0) {
       await ctx.db.patch(user._id, { usedBytes: Math.max(0, user.usedBytes - freed) });
@@ -228,6 +261,7 @@ export const purge = mutation({
         userId: user._id,
         folderIds: args.folderIds,
         noteIds: args.noteIds,
+        trashedAt: args.trashedAt,
       });
     }
     return { freed, complete: !more };
@@ -239,6 +273,7 @@ export const purgeMore = internalMutation({
     userId: v.id("users"),
     folderIds: v.array(v.string()),
     noteIds: v.array(v.string()),
+    trashedAt: v.optional(v.record(v.string(), stampV)),
   },
   handler: async (ctx, args) => {
     const user = await ctx.db.get(args.userId);
@@ -250,6 +285,7 @@ export const purgeMore = internalMutation({
       seq,
       args.folderIds,
       args.noteIds,
+      args.trashedAt,
     );
     if (freed > 0) {
       await ctx.db.patch(user._id, { usedBytes: Math.max(0, user.usedBytes - freed) });
@@ -312,37 +348,44 @@ export const purgeExpired = internalMutation({
   },
 });
 
+/** Tombstones of notes, and of folders, looked at per run; it runs again at once while there are more. */
+const TOMBSTONE_BATCH = 300;
+
 /**
  * Drops tombstones old enough that no realistic client is still behind them.
  * A device offline longer than this resets its cursor and resyncs from scratch.
+ *
+ * Old enough is counted from the purge: not from the last edit, which may be
+ * long before, nor from the trashing, which a folder purged with its parent
+ * never had. A tombstone from before purges were dated is dated when first
+ * seen here, so it too is kept the whole time from now.
  */
 export const dropOldTombstones = internalMutation({
   args: {},
   handler: async (ctx) => {
-    const cutoff = Date.now() - TOMBSTONE_MS;
+    const now = Date.now();
+    const cutoff = now - TOMBSTONE_MS;
     let removed = 0;
-    const notes = await ctx.db
-      .query("notes")
-      .withIndex("by_purge", (q) => q.eq("purged", true))
-      .take(300);
-    for (const row of notes) {
-      if (row.updatedAt < cutoff) {
-        await ctx.db.delete(row._id);
-        removed += 1;
-      }
+    let full = false;
+    for (const table of ["notes", "folders"] as const) {
+      const undated = await ctx.db
+        .query(table)
+        .withIndex("by_purged_at", (q) => q.eq("purged", true).eq("purgedAt", undefined))
+        .take(TOMBSTONE_BATCH);
+      for (const row of undated) await ctx.db.patch(row._id, { purgedAt: now });
+      const old = await ctx.db
+        .query(table)
+        .withIndex("by_purged_at", (q) =>
+          q.eq("purged", true).gt("purgedAt", 0).lt("purgedAt", cutoff),
+        )
+        .take(TOMBSTONE_BATCH);
+      for (const row of old) await ctx.db.delete(row._id);
+      removed += old.length;
+      full ||= undated.length === TOMBSTONE_BATCH || old.length === TOMBSTONE_BATCH;
     }
-    const folders = await ctx.db
-      .query("folders")
-      .withIndex("by_purge", (q) => q.eq("purged", true))
-      .take(300);
-    for (const row of folders) {
-      if ((row.deletedAt ?? 0) < cutoff) {
-        await ctx.db.delete(row._id);
-        removed += 1;
-      }
-    }
+    if (full) await ctx.scheduler.runAfter(0, internal.trash.dropOldTombstones, {});
     // Files deleted as long ago, in batches of their own until none are left.
-    await ctx.scheduler.runAfter(0, internal.trash.dropOldFileTombstones, {});
+    else await ctx.scheduler.runAfter(0, internal.trash.dropOldFileTombstones, {});
     return { removed };
   },
 });

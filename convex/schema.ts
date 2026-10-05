@@ -116,6 +116,12 @@ export default defineSchema({
     system: v.union(v.literal("inbox"), v.literal("templates"), v.null()),
     deletedAt: v.union(v.number(), v.null()),
     purged: v.boolean(),
+    /**
+     * When it was purged, from which its tombstone is kept. Missing on
+     * tombstones from before this was recorded, until the weekly pass that
+     * drops old ones first sees them.
+     */
+    purgedAt: v.optional(v.number()),
     ts: folderStamps,
     deviceId: v.string(),
     seq: v.number(),
@@ -124,7 +130,8 @@ export default defineSchema({
     .index("by_user_folder", ["userId", "folderId"])
     .index("by_user_parent", ["userId", "parentId"])
     .index("by_user_system", ["userId", "system"])
-    .index("by_purge", ["purged", "deletedAt"]),
+    .index("by_purge", ["purged", "deletedAt"])
+    .index("by_purged_at", ["purged", "purgedAt"]),
 
   notes: defineTable({
     userId: v.id("users"),
@@ -157,6 +164,8 @@ export default defineSchema({
     lockOrigin: v.optional(v.union(v.literal("note"), v.literal("folder"))),
     deletedAt: v.union(v.number(), v.null()),
     purged: v.boolean(),
+    /** When it was purged; as on folders. */
+    purgedAt: v.optional(v.number()),
     /** seq of the newest row in noteUpdates for this note (0 when none). */
     lastUpdateSeq: v.number(),
     /** `coversThroughSeq` of the current snapshot (0 when none). */
@@ -181,7 +190,8 @@ export default defineSchema({
     .index("by_user_note", ["userId", "noteId"])
     .index("by_user_folder", ["userId", "folderId"])
     .index("by_user_updated", ["userId", "updatedAt"])
-    .index("by_purge", ["purged", "deletedAt"]),
+    .index("by_purge", ["purged", "deletedAt"])
+    .index("by_purged_at", ["purged", "purgedAt"]),
 
   /** Yjs document updates. Append-only until compaction folds them into a snapshot. */
   noteUpdates: defineTable({

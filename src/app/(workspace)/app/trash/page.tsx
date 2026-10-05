@@ -42,6 +42,7 @@ function TrashRow({ entry }: { entry: TrashEntry }) {
     await client.mutation(api.trash.purge, {
       folderIds: entry.kind === "folder" ? [entry.id] : [],
       noteIds: entry.kind === "note" ? [entry.id] : [],
+      trashedAt: { [entry.id]: entry.trashedAt },
     });
     setBusy(false);
     toast.success("完全に削除しました");
@@ -93,6 +94,7 @@ export default function TrashPage() {
     await client.mutation(api.trash.purge, {
       folderIds: entries.filter((e) => e.kind === "folder").map((e) => e.id),
       noteIds: entries.filter((e) => e.kind === "note").map((e) => e.id),
+      trashedAt: Object.fromEntries(entries.map((e) => [e.id, e.trashedAt])),
     });
     setEmptying(false);
     setConfirming(false);

@@ -9,7 +9,7 @@ import {
   trashedFolderIds,
   visibleNotes,
 } from "@/lib/tree";
-import type { Folder, FolderNode, Note } from "@/lib/types";
+import type { Folder, FolderNode, Note, Stamp } from "@/lib/types";
 import { LOCKED_LABEL } from "@/lib/hooks/use-decrypted";
 import { noteName } from "@/lib/note-name";
 import { TEMPLATES_FOLDER_ID } from "@/lib/sync/mutations";
@@ -122,7 +122,15 @@ export function useNoteText(noteId: string | null): string | null {
 }
 
 export type TrashEntry =
-  | { kind: "folder"; id: string; label: string; deletedAt: number; locked: boolean }
+  | {
+      kind: "folder";
+      id: string;
+      label: string;
+      deletedAt: number;
+      /** When this device put it in the trash, which a purge sends with it. */
+      trashedAt: Stamp;
+      locked: boolean;
+    }
   | {
       kind: "note";
       id: string;
@@ -130,6 +138,7 @@ export type TrashEntry =
       /** The label is the note's first line standing in for a title, or 無題のメモ. */
       standIn: boolean;
       deletedAt: number;
+      trashedAt: Stamp;
       locked: boolean;
     };
 
@@ -164,6 +173,7 @@ export function useTrash(): TrashEntry[] {
         id: folder.folderId,
         label: folder.name ?? "ロックされたフォルダ",
         deletedAt: folder.deletedAt,
+        trashedAt: folder.ts.trash,
         locked: folder.locked,
       });
     }
@@ -179,6 +189,7 @@ export function useTrash(): TrashEntry[] {
         label: name.text,
         standIn: name.standIn,
         deletedAt: note.deletedAt,
+        trashedAt: note.ts.trash,
         locked: note.locked,
       });
     }

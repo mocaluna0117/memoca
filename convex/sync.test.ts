@@ -324,6 +324,12 @@ describe("push", () => {
     let node: string | null = "f1";
     for (let i = 0; i < 10 && node; i += 1) node = parents[node] ?? null;
     expect(node).toBeNull();
+
+    // Device 2 holds f2 under f1 at its move's stamp, and takes in only a
+    // newer one: the repair must be stamped later, or device 2 keeps the cycle.
+    const f2 = folders.find((f) => f.folderId === "f2")!;
+    expect(f2.parentId).toBeNull();
+    expect(f2.ts.place.t).toBeGreaterThan(3000);
   });
 });
 

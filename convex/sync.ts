@@ -371,7 +371,7 @@ async function applyFolderOp(
   await ctx.db.patch(existing._id, { ...patch, ts, deviceId, seq: seq.next() });
 
   if (moved) {
-    const repaired = await repairCycle(ctx, session.user._id, op.folderId, seq, deviceId);
+    const repaired = await repairCycle(ctx, session.user._id, op.folderId, seq, deviceId, now);
     if (repaired) return { opId: op.opId, status: "ok", reason: "repaired" };
   }
   return ok(op.opId);
@@ -382,6 +382,11 @@ async function applyFolderOp(
  * write lands second sees the first (the sequence head serialises them), so the
  * cycle is detectable here; we break it by reparenting to the root rather than
  * leaving an orphaned island the UI could never render.
+ *
+ * The repair is stamped later than the move it undoes. The device that made
+ * that move holds it under the move's own stamp, and takes in only a newer
+ * one: under the same stamp, it would keep its half of the cycle and lose
+ * both folders from its tree.
  */
 async function repairCycle(
   ctx: MutationCtx,
@@ -389,6 +394,7 @@ async function repairCycle(
   folderId: string,
   seq: SeqWriter,
   deviceId: string,
+  now: number,
 ): Promise<boolean> {
   const seen = new Set<string>([folderId]);
   let current = await getFolder(ctx, userId, folderId);
@@ -396,7 +402,15 @@ async function repairCycle(
   while (current?.parentId) {
     if (seen.has(current.parentId) || ++depth > MAX_FOLDER_DEPTH) {
       const self = await getFolder(ctx, userId, folderId);
-      if (self) await ctx.db.patch(self._id, { parentId: null, deviceId, seq: seq.next() });
+      if (self) {
+        const place = { t: Math.max(now, self.ts.place.t + 1), d: deviceId };
+        await ctx.db.patch(self._id, {
+          parentId: null,
+          ts: { ...self.ts, place },
+          deviceId,
+          seq: seq.next(),
+        });
+      }
       return true;
     }
     seen.add(current.parentId);
