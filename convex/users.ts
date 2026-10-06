@@ -233,6 +233,7 @@ export const purgeAccount = internalMutation({
       | Id<"attachmentRefs">
       | Id<"noteUpdates">
       | Id<"noteSnapshots">
+      | Id<"noteVersions">
       | Id<"attachments">
       | Id<"notes">
       | Id<"folders">;
@@ -259,6 +260,14 @@ export const purgeAccount = internalMutation({
         if (row.storageId) await ctx.storage.delete(row.storageId);
       }
       await drop(snapshots);
+    }
+    if (work > 0) {
+      const versions = await ctx.db
+        .query("noteVersions")
+        .withIndex("by_user_note_created", (q) => q.eq("userId", userId))
+        .take(work);
+      for (const row of versions) await ctx.storage.delete(row.storageId);
+      await drop(versions);
     }
     if (work > 0) {
       const attachments = await ctx.db

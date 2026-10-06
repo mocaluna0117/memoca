@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   FileDown,
   FolderInput,
+  History,
   LayoutTemplate,
   Lock,
   LockOpen,
@@ -41,6 +42,7 @@ import { useConvex } from "convex/react";
 import { useSync } from "@/components/providers/sync-provider";
 import { copiesLeftNotice, useLockActions } from "@/components/vault/use-lock-actions";
 import { FolderPicker } from "@/components/folders/folder-picker";
+import { VersionHistory } from "@/components/notes/version-history";
 import { useNotePlace } from "@/components/notes/use-note-place";
 import { enterFromTitle } from "@/components/editor/title-enter";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
@@ -139,6 +141,7 @@ export function NotePane({
   const [draft, setDraft] = useState({ noteId, value: title, dirty: false });
   const [busy, setBusy] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [history, setHistory] = useState(false);
 
   if (draft.noteId !== noteId) {
     setDraft({ noteId, value: note ? title : "", dirty: false });
@@ -378,6 +381,13 @@ export function NotePane({
               </DropdownMenuItem>
             )}
             <DropdownMenuItem
+              disabled={hidden}
+              onSelect={() => menu.openDialog(() => setHistory(true))}
+            >
+              <History className="size-4" aria-hidden />
+              変更履歴
+            </DropdownMenuItem>
+            <DropdownMenuItem
               disabled={hidden || exporting}
               onSelect={() => menu.openDialog(() => void exportPdf())}
             >
@@ -456,6 +466,7 @@ export function NotePane({
         rootLabel={t.action.topLevel}
         onPick={(folderId) => moveNoteTo(note, folderId, menuTrigger.current)}
       />
+      <VersionHistory noteId={noteId} open={history} onOpenChange={setHistory} />
     </div>
   );
 }

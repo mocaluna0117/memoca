@@ -21,6 +21,9 @@ crons.cron(
   {},
 );
 
+/** Let go of notes' versions past 30 days. */
+crons.cron("expire note versions", "0 19 * * *", internal.versions.expire, {});
+
 /** Drop tombstones older than any plausible offline client. */
 crons.cron("drop old tombstones", "30 19 * * 0", internal.trash.dropOldTombstones);
 

@@ -518,10 +518,21 @@ export class SyncEngine {
           bytes += size;
         }
 
+        // The notes these edits change, as they were before them, where a
+        // version of one is due (lib/sync/versions): read now, kept once sent.
+        const { stateBeforeEdits, keepVersion } = await import("./versions");
+        const before = new Map<string, Uint8Array>();
+        for (const entry of entries.slice(0, ops.length)) {
+          if (entry.kind !== "update" || before.has(entry.entityId)) continue;
+          const state = await stateBeforeEdits(entry.entityId);
+          if (state) before.set(entry.entityId, state);
+        }
+
         const response = await this.client.mutation(api.sync.push, {
           deviceId: this.device,
           ops: ops as never,
         });
+        for (const [noteId, state] of before) void keepVersion(this.client, noteId, state);
         syncClock(response.serverTime);
 
         const byId = new Map(response.results.map((r) => [r.opId, r]));

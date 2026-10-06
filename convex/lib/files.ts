@@ -45,5 +45,10 @@ export async function uploadedSize(
     .withIndex("by_storage", (q) => q.eq("storageId", storageId))
     .first();
   if (snapshot) return null;
+  const version = await ctx.db
+    .query("noteVersions")
+    .withIndex("by_storage", (q) => q.eq("storageId", storageId))
+    .first();
+  if (version) return null;
   return file.size;
 }

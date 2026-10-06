@@ -16,6 +16,8 @@ export const ctx = {
 
   yjsUpdate: (noteId: string, epoch: number) => `yupd:v1:${noteId}:${epoch}`,
   yjsSnapshot: (noteId: string, epoch: number) => `ysnap:v1:${noteId}:${epoch}`,
+  /** An earlier version of a note, kept to put it back (lib/sync/versions). */
+  noteVersion: (noteId: string, epoch: number) => `yver:v1:${noteId}:${epoch}`,
   noteTitle: (noteId: string, epoch: number) => `title:v1:${noteId}:${epoch}`,
   folderName: (folderId: string) => `folder:v1:${folderId}`,
   attachmentBody: (attachmentId: string) => `att:v1:${attachmentId}`,

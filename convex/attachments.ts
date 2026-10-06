@@ -464,6 +464,11 @@ export const reconcileStorage = internalMutation({
         .withIndex("by_storage", (q) => q.eq("storageId", file._id))
         .first();
       if (snapshot) continue;
+      const version = await ctx.db
+        .query("noteVersions")
+        .withIndex("by_storage", (q) => q.eq("storageId", file._id))
+        .first();
+      if (version) continue;
       // Give a just-uploaded file time to have its row written.
       if (Date.now() - file._creationTime < RESERVATION_TTL_MS) continue;
       await ctx.storage.delete(file._id);

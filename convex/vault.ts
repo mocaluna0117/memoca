@@ -12,6 +12,7 @@ import { isNewer } from "./lib/hlc";
 import { sealedV, stampV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
 import { getUser, requireUser } from "./lib/user";
+import { dropVersions } from "./versions";
 
 const wrapV = v.object({ hkdfSalt: v.bytes(), ct: v.bytes(), iv: v.bytes() });
 
@@ -262,6 +263,9 @@ async function replaceBody(
     .withIndex("by_note_seq", (q) => q.eq("userId", userId).eq("noteId", noteId))
     .take(REPLACE_BODY_LIMIT);
   for (const row of updates) await ctx.db.delete(row._id);
+  // Its earlier versions too: readable ones of a note now locked, or sealed
+  // under a key the note no longer has.
+  await dropVersions(ctx, userId, noteId);
 
   const previous = await ctx.db
     .query("noteSnapshots")

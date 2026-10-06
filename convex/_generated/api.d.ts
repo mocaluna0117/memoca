@@ -21,6 +21,7 @@ import type * as lib_ops from "../lib/ops.js";
 import type * as lib_refs from "../lib/refs.js";
 import type * as lib_seq from "../lib/seq.js";
 import type * as lib_user from "../lib/user.js";
+import type * as lib_versions from "../lib/versions.js";
 import type * as notes from "../notes.js";
 import type * as sync from "../sync.js";
 import type * as testData from "../testData.js";
@@ -28,6 +29,7 @@ import type * as trash from "../trash.js";
 import type * as usage from "../usage.js";
 import type * as users from "../users.js";
 import type * as vault from "../vault.js";
+import type * as versions from "../versions.js";
 
 import type {
   ApiFromModules,
@@ -49,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   "lib/refs": typeof lib_refs;
   "lib/seq": typeof lib_seq;
   "lib/user": typeof lib_user;
+  "lib/versions": typeof lib_versions;
   notes: typeof notes;
   sync: typeof sync;
   testData: typeof testData;
@@ -56,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   usage: typeof usage;
   users: typeof users;
   vault: typeof vault;
+  versions: typeof versions;
 }>;
 
 /**

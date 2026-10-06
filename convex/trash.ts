@@ -9,6 +9,7 @@ import { stampV } from "./lib/ops";
 import { allNotesReported, dropNoteRefs, isInUse, settleUse } from "./lib/refs";
 import { type SeqWriter, openSeq } from "./lib/seq";
 import { requireUser } from "./lib/user";
+import { dropVersions } from "./versions";
 
 /** Notes purged per transaction before the rest is rescheduled. */
 const PURGE_BATCH = 40;
@@ -46,6 +47,7 @@ async function purgeNote(
     await ctx.db.delete(snapshot._id);
   }
   freed += note.bodyBytes;
+  await dropVersions(ctx, note.userId, note.noteId);
 
   // This note's own uses go first, so a file it shares with another note is
   // judged by the other note's use alone.

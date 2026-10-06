@@ -212,6 +212,30 @@ export default defineSchema({
     .index("by_user_op", ["userId", "opId"]),
 
   /** Exactly one row per note: the merged Yjs state up to `coversThroughSeq`. */
+  /**
+   * Earlier versions of a note, kept for a while so it can be put back as it
+   * was (convex/versions.ts): its whole state, saved by a device at most
+   * every ten minutes while it is edited, encrypted as its updates are when
+   * the note is locked. Fewer kept the older they are, none past 30 days,
+   * all gone when the note is purged, locked or unlocked.
+   */
+  noteVersions: defineTable({
+    userId: v.id("users"),
+    noteId: v.string(),
+    keyEpoch: v.number(),
+    /**
+     * Always in file storage, never inline: thinning reads every version of
+     * a note, which with its state inline could be more than a mutation may.
+     */
+    storageId: v.id("_storage"),
+    iv: v.optional(v.bytes()),
+    size: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_user_note_created", ["userId", "noteId", "createdAt"])
+    .index("by_created", ["createdAt"])
+    .index("by_storage", ["storageId"]),
+
   noteSnapshots: defineTable({
     userId: v.id("users"),
     noteId: v.string(),

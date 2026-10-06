@@ -55,10 +55,17 @@ function announce(noteId: string) {
  * Rebuilds a note's CRDT document from what this device has stored: the merged
  * snapshot first, then every update on top, decrypting as needed.
  */
-async function hydrate(noteId: string, note: Note | undefined, doc: Y.Doc): Promise<void> {
+async function hydrate(
+  noteId: string,
+  note: Note | undefined,
+  doc: Y.Doc,
+  { sentOnly = false }: { sentOnly?: boolean } = {},
+): Promise<void> {
   const database = db();
   const snapshot = await database.snapshots.get(noteId);
-  const updates = await database.updates.where("noteId").equals(noteId).toArray();
+  const updates = (await database.updates.where("noteId").equals(noteId).toArray()).filter(
+    (update) => !sentOnly || update.pushed === 1,
+  );
   updates.sort((a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER));
 
   const locked = note?.locked === true;
@@ -495,6 +502,21 @@ export async function withStoredDoc<T>(
     await hydrate(noteId, note, doc);
     const live = handles.get(noteId);
     if (live) Y.applyUpdate(doc, Y.encodeStateAsUpdate(live.doc));
+    return await fn(doc);
+  } finally {
+    doc.destroy();
+  }
+}
+
+/**
+ * The note as the server has it, without what this device has yet to send:
+ * as it was before the edits now going out (see lib/sync/versions).
+ */
+export async function withSentDoc<T>(noteId: string, fn: (doc: Y.Doc) => Promise<T> | T): Promise<T> {
+  const doc = new Y.Doc();
+  try {
+    const note = await db().notes.get(noteId);
+    await hydrate(noteId, note, doc, { sentOnly: true });
     return await fn(doc);
   } finally {
     doc.destroy();
