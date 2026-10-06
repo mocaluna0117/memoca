@@ -166,7 +166,9 @@ export async function insertTemplate(
     return;
   }
   const { block } = editor.getTextCursorPosition();
-  const empty = Array.isArray(block.content) && block.content.length === 0 && block.children.length === 0;
-  if (empty && block.type === "paragraph") editor.replaceBlocks([block], blocks);
+  const empty =
+    Array.isArray(block.content) && block.content.length === 0 && block.children.length === 0;
+  // Whatever line it is (an empty list item, say), as BlockNote's own / menu has it.
+  if (empty) editor.replaceBlocks([block], blocks);
   else editor.insertBlocks(blocks, block, "after");
 }

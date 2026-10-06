@@ -230,4 +230,27 @@ describe("copying from a note, as plain text", () => {
     expect(plainTextBetween(doc, line!.start, a1!.start + 1)).toBe("表\nA B");
     expect(c1).toBeDefined();
   });
+
+  test("an empty item the selection starts in is a line, its mark kept", () => {
+    const editor = BlockNoteEditor.create();
+    editor.replaceBlocks(editor.document, [
+      { type: "bulletListItem" },
+      { type: "bulletListItem", content: "卵" },
+    ]);
+    const doc = editor.prosemirrorState.doc;
+    // From the empty item (its start and end are one) into the next, as Shift+↓ selects.
+    const empty = 3;
+    expect(doc.resolve(empty).parent.content.size).toBe(0);
+    expect(plainTextBetween(doc, empty, doc.content.size)).toBe("・\n・卵");
+  });
+
+  test("a line break at the end of an item leaves an empty line, not one of spaces", () => {
+    const editor = BlockNoteEditor.create();
+    editor.replaceBlocks(editor.document, [
+      { type: "bulletListItem", content: "a\n" },
+      { type: "bulletListItem", content: "b" },
+    ]);
+    const doc = editor.prosemirrorState.doc;
+    expect(plainTextBetween(doc, 0, doc.content.size)).toBe("・a\n\n・b");
+  });
 });

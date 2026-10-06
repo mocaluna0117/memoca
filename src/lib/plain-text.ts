@@ -59,8 +59,9 @@ export function plainTextBetween(doc: Node, from: number, to: number): string {
     if (!node.isTextblock) return true;
     const inside = pos + 1;
     const after = pos + node.nodeSize - 1;
-    // Touched only at its edge: where the selection ends, or starts.
-    if (inside >= to || after <= from) return false;
+    // Touched only at its edge: where the selection ends, or starts. An
+    // empty one it starts in is taken, its edges being one.
+    if (inside >= to || after < from || (after === from && inside < after)) return false;
     const $pos = doc.resolve(pos);
     const text = textOf(node, Math.max(from, inside) - inside, Math.min(to, after) - inside);
     lines.push({ text, mark: markOf(node, $pos), level: levelAt($pos) });
@@ -74,7 +75,9 @@ export function plainTextBetween(doc: Node, from: number, to: number): string {
       // A line break within a list item goes on under its text, not its mark,
       // as wide as the mark: ・ is as wide as a full-width space.
       const under = indent + Array.from(mark, (char) => (char <= "\u00ff" ? " " : "　")).join("");
-      return indent + mark + text.split("\n").join(`\n${under}`);
+      // An empty one (a line break at its end, say) stays empty, not spaces.
+      const [first, ...rest] = text.split("\n");
+      return [indent + mark + first, ...rest.map((line) => (line ? under + line : ""))].join("\n");
     })
     .join("\n");
 }
