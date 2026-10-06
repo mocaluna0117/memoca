@@ -3,6 +3,8 @@
 import { type DragEndEvent, pointerWithin } from "@dnd-kit/core";
 
 import {
+  ArrowUpDown,
+  CheckCircle2,
   ChevronRight,
   FileLock,
   FileText,
@@ -15,6 +17,7 @@ import {
   Inbox,
   CalendarDays,
   LayoutTemplate,
+  ListChecks,
   Lock,
   Loader2,
   LockOpen,
@@ -23,6 +26,7 @@ import {
   Pin,
   PinOff,
   Trash2,
+  X,
 } from "lucide-react";
 import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
@@ -31,13 +35,23 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useFolderTree, useNote, useNotesByFolder, useTopLevelNotes } from "@/lib/hooks/data";
 import { LOCKED_LABEL, useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
-import { useNoteOrders } from "@/lib/hooks/use-note-order";
-import { orderNotes } from "@/lib/note-order";
+import { setNoteOrder, useNoteOrders } from "@/lib/hooks/use-note-order";
+import { NOTE_ORDERS, isNoteOrder, orderNotes } from "@/lib/note-order";
+import { extendTo, toggled } from "@/lib/note-selection";
+import { isApple } from "@/lib/platform";
+import { useClientValue } from "@/lib/hooks/use-client-value";
+import { TemplatePicker } from "@/components/notes/template-picker";
+import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, fillFromTemplate } from "@/lib/templates";
 import { useTreeOpen } from "@/lib/store/tree-open";
 import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
 import { t } from "@/lib/i18n/ja";
@@ -157,8 +171,11 @@ export function FolderTree({
     return ordered;
   }, [notesByFolder, orderOf]);
   const notesIn = (folderId: string) => folderNotes.get(folderId) ?? [];
-  const { moveNoteTo, toggleNoteLock, createNoteIn } = useLockActions();
-  const [movingNote, setMovingNote] = useState<Note | null>(null);
+  const { moveNoteTo, moveNotesTo, toggleNoteLock, createNoteIn } = useLockActions();
+  // The notes being moved, by the move dialog: one, or those chosen.
+  const [movingNotes, setMovingNotes] = useState<Note[] | null>(null);
+  // The folder a note is being made in from a template, while one is picked.
+  const [templateFor, setTemplateFor] = useState<string | null>(null);
   // A note kept in the sidebar being renamed: in place (Enter), or in the
   // dialog its menu opens, as a folder is.
   const [editingNote, setEditingNote] = useState<string | null>(null);
@@ -247,6 +264,8 @@ export function FolderTree({
     return data?.kind === "note" ? data.noteId : undefined;
   };
   const dragName = (active: { data: { current?: unknown } }) => {
+    const taken = notesTaken(draggedNote(active));
+    if (taken.length > 1) return `${taken.length} 件のメモ`;
     const note = noteOf(draggedNote(active));
     return note ? noteName(note.title, note.locked ? null : note.preview).text : nameOf(draggedFolder(active));
   };
@@ -327,6 +346,14 @@ export function FolderTree({
   const dropNote = async (noteId: string, target: NonNullable<ReturnType<typeof dragData>>) => {
     const note = noteOf(noteId);
     if (!note) return;
+    // One of those chosen: all of them, into a folder or to the top level.
+    const taken = notesTaken(noteId);
+    if (taken.length > 1) {
+      if (target.kind === "into" || target.kind === "root") {
+        await moveChosen(taken, target.kind === "into" ? target.folderId : null);
+      }
+      return;
+    }
     if (target.kind === "into") {
       if (note.folderId !== target.folderId) await moveNoteTo(note, target.folderId);
       return;
@@ -423,6 +450,80 @@ export function FolderTree({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- pathTo reads the tree
   }, [explorer, shownFolder, selectedNoteId, tree, only]);
 
+  /**
+   * A new note in a folder from a template, its title and body, opened to be
+   * written in, as the list's header makes one.
+   */
+  const fromTemplate = async (folderId: string, templateId: string) => {
+    const id = await createNoteIn(folderId);
+    if (!id) return;
+    openFolder(folderId);
+    onOpenNote(id, folderId);
+    try {
+      await fillFromTemplate(id, templateId);
+    } catch (error) {
+      toast.error(error instanceof TemplateUnavailableError ? t.templates.unavailable : "テンプレートを使えませんでした。");
+    }
+  };
+
+  // Notes chosen to be moved together, as in the list: with ⌘/Ctrl (⌘ alone
+  // on a Mac, where Ctrl and a click is a right click) or Shift and a click,
+  // or from a row's menu (選択), after which a click (a tap) chooses each.
+  // With where a Shift and a click chooses from (`anchor`), and what was
+  // chosen when it was set (`base`), as in Finder.
+  const [choice, setChoice] = useState<{
+    ids: ReadonlySet<string>;
+    anchor: string | null;
+    base: ReadonlySet<string>;
+  }>({ ids: new Set(), anchor: null, base: new Set() });
+  const apple = useClientValue(() => isApple(navigator.userAgent), false);
+  /** Every note of the tree, those in closed folders included. */
+  const allNotes = [...topNotes, ...[...notesByFolder.values()].flat()];
+  /** The chosen ones still there (not trashed since, say). */
+  const chosen = new Set([...choice.ids].filter((id) => allNotes.some((note) => note.noteId === id)));
+  const stopChoosing = () => setChoice({ ids: new Set(), anchor: null, base: new Set() });
+  /**
+   * The notes chosen, in the tree's order (those in closed folders after),
+   * if `noteId` is one of them; otherwise it alone.
+   */
+  const notesTaken = (noteId: string | undefined): Note[] => {
+    if (!noteId) return [];
+    if (!chosen.has(noteId)) return allNotes.filter((note) => note.noteId === noteId);
+    const shown = rows.flatMap((row) => (row.kind === "note" ? [row.note.noteId] : []));
+    const at = (note: Note) => {
+      const index = shown.indexOf(note.noteId);
+      return index < 0 ? shown.length : index;
+    };
+    return allNotes.filter((note) => chosen.has(note.noteId)).sort((a, b) => at(a) - at(b));
+  };
+  /** Moves the notes chosen; moved, none are chosen any more. */
+  const moveChosen = async (notes: Note[], folderId: string | null) => {
+    if (notes.every((note) => note.folderId === folderId)) {
+      toast("選んだメモは、すでにそのフォルダにあります");
+      return;
+    }
+    if (await moveNotesTo(notes, folderId)) stopChoosing();
+  };
+  /** A click on a note's row: chooses it, or up to it, or opens it. */
+  const onNoteClick = (note: Note, held: { meta: boolean; ctrl: boolean; shift: boolean }) => {
+    const noteId = note.noteId;
+    if (held.shift) {
+      const shown = rows.flatMap((row) => (row.kind === "note" ? [row.note.noteId] : []));
+      const anchor = choice.anchor ?? selectedNoteId ?? noteId;
+      setChoice({ ...choice, ids: extendTo(choice.base, shown, anchor, noteId), anchor });
+      return;
+    }
+    // ⌘ anywhere; Ctrl but on a Mac, where it and a click is a right click.
+    if (held.meta || (!apple && held.ctrl) || chosen.size > 0) {
+      const next = toggled(chosen, noteId);
+      setChoice({ ids: next, anchor: noteId, base: next });
+      return;
+    }
+    // Opened: where a Shift and a click chooses from.
+    setChoice({ ids: new Set(), anchor: noteId, base: new Set() });
+    onOpenNote(noteId, note.folderId);
+  };
+
   /** A new note in a folder, opened to be written in, the folder opened to show it. */
   const newNoteIn = async (folderId: string) => {
     const id = await createNoteIn(folderId);
@@ -463,7 +564,11 @@ export function FolderTree({
 
   const onRowKeyDown = (event: KeyboardEvent<HTMLButtonElement>, row: Row, renamable: boolean) => {
     if (event.nativeEvent.isComposing) return;
-    if (event.key === "Enter" && renamable) {
+    if (event.key === "Escape" && chosen.size > 0) {
+      event.preventDefault();
+      event.stopPropagation();
+      stopChoosing();
+    } else if (event.key === "Enter" && renamable) {
       // Stops the button's own Enter, which would open the folder (or the
       // note) instead.
       event.preventDefault();
@@ -536,6 +641,29 @@ export function FolderTree({
       <p id={hintId} className="sr-only">
         {FOLDER_KEYS_HINT}
       </p>
+      <p className="sr-only" aria-live="polite">
+        {chosen.size > 0 ? `${chosen.size} 件を選択` : ""}
+      </p>
+      {chosen.size > 0 ? (
+        <div
+          role="toolbar"
+          aria-label="選択したメモ"
+          className="bg-background sticky top-0 z-10 mb-1 flex items-center gap-1 rounded-md border px-2 py-1"
+        >
+          <span className="min-w-0 flex-1 truncate text-xs font-medium">{chosen.size} 件を選択</span>
+          <Button
+            size="sm"
+            className="h-7"
+            onClick={() => setMovingNotes(notesTaken([...chosen][0]))}
+          >
+            <FolderInput className="size-4" aria-hidden />
+            移動
+          </Button>
+          <Button size="icon" variant="ghost" className="size-7" aria-label="選択をやめる" onClick={stopChoosing}>
+            <X className="size-4" aria-hidden />
+          </Button>
+        </div>
+      ) : null}
       <div ref={list} className="flex flex-col gap-0.5">
         {rows.map((row) => {
           if (row.kind === "note") {
@@ -548,11 +676,16 @@ export function FolderTree({
                 depth={row.depth}
                 inFolder={note.folderId !== null}
                 selected={selectedNoteId === note.noteId}
+                chosen={chosen.has(note.noteId)}
                 canDrag={canDrag && dragging !== note.noteId}
                 describedBy={hintId}
                 menuContainer={menuContainer}
                 onCloseAutoFocus={onCloseAutoFocus}
-                onOpen={() => onOpenNote(note.noteId, note.folderId)}
+                onOpen={(held) => onNoteClick(note, held)}
+                onChoose={() => {
+                  const next = toggled(chosen, note.noteId);
+                  setChoice({ ids: next, anchor: note.noteId, base: next });
+                }}
                 onKeyDown={(event, renamable) => onRowKeyDown(event, row, renamable)}
                 editing={editingNote === note.noteId}
                 onRename={(value) => renameNote(note.noteId, value)}
@@ -561,7 +694,10 @@ export function FolderTree({
                   setEditingNote(null);
                 }}
                 onRenameInDialog={(title) => openDialog(() => setRenamingNote({ noteId: note.noteId, title }))}
-                onMove={() => openDialog(() => setMovingNote(note))}
+                moveLabel={
+                  chosen.has(note.noteId) && chosen.size > 1 ? `${chosen.size} 件のメモを移動…` : t.action.move
+                }
+                onMove={() => openDialog(() => setMovingNotes(notesTaken(note.noteId)))}
                 onToggleLock={(title, returnFocus) =>
                   new Promise<void>((done) =>
                     openDialog(() => void toggleNoteLock(note, title, returnFocus).finally(done)),
@@ -713,10 +849,40 @@ export function FolderTree({
                     onCloseAutoFocus={onCloseAutoFocus}
                   >
                     {explorer ? (
-                      <DropdownMenuItem onSelect={() => void newNoteIn(node.folderId)}>
-                        <FilePlus className="size-4" aria-hidden />
-                        {t.action.newNote}
-                      </DropdownMenuItem>
+                      <>
+                        <DropdownMenuItem onSelect={() => void newNoteIn(node.folderId)}>
+                          <FilePlus className="size-4" aria-hidden />
+                          {t.action.newNote}
+                        </DropdownMenuItem>
+                        {/* Not in the folder of templates, whose notes are the templates. */}
+                        {node.system === "templates" ? null : (
+                          <DropdownMenuItem onSelect={() => openDialog(() => setTemplateFor(node.folderId))}>
+                            <LayoutTemplate className="size-4" aria-hidden />
+                            {t.templates.fromTemplate}
+                          </DropdownMenuItem>
+                        )}
+                        <DropdownMenuSub>
+                          <DropdownMenuSubTrigger>
+                            <ArrowUpDown className="size-4" aria-hidden />
+                            並び順
+                          </DropdownMenuSubTrigger>
+                          <DropdownMenuSubContent>
+                            <DropdownMenuRadioGroup
+                              value={orderOf(node.folderId)}
+                              onValueChange={(value) => {
+                                if (isNoteOrder(value)) setNoteOrder(node.folderId, value);
+                              }}
+                            >
+                              {NOTE_ORDERS.map((each) => (
+                                <DropdownMenuRadioItem key={each.value} value={each.value}>
+                                  {each.label}
+                                </DropdownMenuRadioItem>
+                              ))}
+                            </DropdownMenuRadioGroup>
+                          </DropdownMenuSubContent>
+                        </DropdownMenuSub>
+                        <DropdownMenuSeparator />
+                      </>
                     ) : null}
                     {/* Templates are its notes, not its folders'; so are the days'. */}
                     {node.system === "templates" || node.system === "journal" ? null : (
@@ -809,15 +975,29 @@ export function FolderTree({
         <RootDropZone owner={owner} />
 
         <FolderPicker
-          open={movingNote !== null}
-          title="メモを移動"
+          open={movingNotes !== null}
+          title={movingNotes && movingNotes.length > 1 ? `${movingNotes.length} 件のメモを移動` : "メモを移動"}
           rootLabel={t.action.topLevel}
-          onOpenChange={(open) => !open && setMovingNote(null)}
+          onOpenChange={(open) => !open && setMovingNotes(null)}
           onPick={async (folderId) => {
-            const note = movingNote;
-            setMovingNote(null);
-            if (note) await moveNoteTo(note, folderId);
+            const notes = movingNotes;
+            setMovingNotes(null);
+            if (!notes || notes.length === 0) return;
+            if (notes.length > 1) await moveChosen(notes, folderId);
+            else if (notes[0]!.folderId !== folderId) await moveNoteTo(notes[0]!, folderId);
           }}
+        />
+
+        <TemplatePicker
+          open={templateFor !== null}
+          onOpenChange={(open) => !open && setTemplateFor(null)}
+          onPick={(templateId) => {
+            const folderId = templateFor;
+            setTemplateFor(null);
+            if (folderId) void fromTemplate(folderId, templateId);
+          }}
+          // The folder of templates, opened in the tree, where they are.
+          onEdit={() => openFolder(TEMPLATES_FOLDER_ID)}
         />
 
         <FolderPicker
@@ -911,6 +1091,7 @@ function TreeNoteRow({
   depth,
   inFolder,
   selected,
+  chosen,
   canDrag,
   describedBy,
   menuContainer,
@@ -921,6 +1102,8 @@ function TreeNoteRow({
   onRename,
   onRenamed,
   onRenameInDialog,
+  onChoose,
+  moveLabel,
   onMove,
   onToggleLock,
   onTrashed,
@@ -932,16 +1115,23 @@ function TreeNoteRow({
   /** In a folder, in the order of that folder's list: not placed among the rows. */
   inFolder: boolean;
   selected: boolean;
+  /** Chosen, to be moved along with the others chosen. */
+  chosen: boolean;
   canDrag: boolean;
   describedBy: string;
   menuContainer?: HTMLElement | null;
   onCloseAutoFocus: (event: Event) => void;
-  onOpen: () => void;
+  /** A click, with the keys held: opens it, or chooses it. */
+  onOpen: (held: { meta: boolean; ctrl: boolean; shift: boolean }) => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>, renamable: boolean) => void;
   editing: boolean;
   onRename: (value: string) => Promise<void> | void;
   onRenamed: (byKeyboard: boolean) => void;
   onRenameInDialog: (title: string) => void;
+  /** Chooses it, or not, from its menu (a phone has no ⌘ to hold). */
+  onChoose: () => void;
+  /** Its menu's move item: this one, or those chosen with it. */
+  moveLabel: string;
   onMove: () => void;
   /** Asks for the vault and locks the note, or takes its lock off; done when it has. */
   onToggleLock: (title: string | null, returnFocus: HTMLElement | null) => Promise<void>;
@@ -955,7 +1145,7 @@ function TreeNoteRow({
   // Its own title, to be changed: none (無題) is an empty one.
   const current = note.locked ? title : (note.title ?? "");
   const name = noteName(title, note.locked ? null : note.preview);
-  const Icon = locking ? Loader2Note : note.locked ? FileLock : FileText;
+  const Icon = locking ? Loader2Note : chosen ? CheckCircle2 : note.locked ? FileLock : FileText;
   return (
     <NoteRowDropZone owner={owner} noteId={note.noteId} disabled={!canDrag || inFolder}>
       <div
@@ -963,7 +1153,7 @@ function TreeNoteRow({
         className={cn(
           "group flex items-center gap-1 rounded-md pr-1 text-sm",
           "has-[[data-tree-note]:focus-visible]:ring-ring has-[[data-tree-note]:focus-visible]:ring-2",
-          selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
+          selected ? "bg-accent text-accent-foreground" : chosen ? "bg-primary/10" : "hover:bg-accent/60",
         )}
         style={{ paddingLeft: `${depth * 12}px` }}
       >
@@ -992,9 +1182,11 @@ function TreeNoteRow({
             describedBy={describedBy}
             className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left outline-none"
           >
-            <Icon className="size-4 shrink-0 opacity-70" aria-hidden />
+            <Icon className={cn("size-4 shrink-0", chosen ? "text-primary" : "opacity-70")} aria-hidden />
             <TruncatedName text={name.text} className={cn(name.standIn && STAND_IN_CLASS)} />
-            <span className="sr-only">（メモ{note.locked ? "、ロック中" : ""}）</span>
+            <span className="sr-only">
+              （メモ{note.locked ? "、ロック中" : ""}{chosen ? "、選択中" : ""}）
+            </span>
           </NoteDragButton>
         )}
         <DropdownMenu modal={false}>
@@ -1026,7 +1218,11 @@ function TreeNoteRow({
             ) : null}
             <DropdownMenuItem onSelect={onMove}>
               <FolderInput className="size-4" aria-hidden />
-              {t.action.move}
+              {moveLabel}
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={onChoose}>
+              <ListChecks className="size-4" aria-hidden />
+              {chosen ? "選択を外す" : "選択"}
             </DropdownMenuItem>
             {/* In a folder, its lock is the note's own menu's to change, as from its list. */}
             {inFolder ? null : locking ? (

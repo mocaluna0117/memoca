@@ -199,7 +199,8 @@ export function NoteDragButton({
   owner: string;
   noteId: string;
   disabled: boolean;
-  onClick: () => void;
+  /** With the keys held, which choose notes rather than open one. */
+  onClick: (held: { meta: boolean; ctrl: boolean; shift: boolean }) => void;
   onKeyDown?: (event: KeyboardEvent<HTMLButtonElement>) => void;
   describedBy?: string;
   className?: string;
@@ -220,7 +221,7 @@ export function NoteDragButton({
       {...listeners}
       onClick={(event) => {
         event.currentTarget.focus();
-        onClick();
+        onClick({ meta: event.metaKey, ctrl: event.ctrlKey, shift: event.shiftKey });
       }}
       onKeyDown={(event) => {
         onKeyDown?.(event);

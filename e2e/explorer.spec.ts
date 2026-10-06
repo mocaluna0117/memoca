@@ -99,6 +99,54 @@ test.describe("folders' notes in the sidebar", () => {
     await expect(page.getByLabel("メモのタイトル")).toHaveValue("釣り");
   });
 
+  test("notes chosen in the tree with ⌘/Ctrl, moved together by the bar", async ({ page }) => {
+    test.skip(test.info().project.name !== "desktop", "a click with ⌘/Ctrl");
+    await newFolder(page, "趣味");
+    await newFolder(page, "仕事");
+    await newNoteIn(page, "仕事", "一");
+    await newNoteIn(page, "仕事", "二");
+    await newNoteIn(page, "仕事", "三");
+
+    await treeNote(page, "一").click({ modifiers: ["ControlOrMeta"] });
+    await treeNote(page, "三").click({ modifiers: ["ControlOrMeta"] });
+    const bar = page.getByRole("toolbar", { name: "選択したメモ" });
+    await expect(bar).toContainText("2 件を選択");
+    await bar.getByRole("button", { name: "移動" }).click();
+    await expect(page.getByRole("dialog", { name: "2 件のメモを移動" })).toBeVisible();
+    await page.getByRole("dialog").getByRole("option", { name: /趣味/ }).click();
+
+    // Moved, none chosen; 趣味, where the note open (三) now is, opened to
+    // show it, with 一; 二 left in 仕事, closed.
+    await expect(bar).toHaveCount(0);
+    await expect(treeNote(page, "一")).toBeVisible();
+    await expect(treeNote(page, "三")).toBeVisible();
+    await expect(treeNote(page, "二")).toBeHidden();
+  });
+
+  test("a folder's menu sets its notes' order, and makes a note from a template", async ({ page }) => {
+    test.skip(test.info().project.name !== "desktop", "the sidebar beside the note");
+    await newFolder(page, "仕事");
+    await newNoteIn(page, "仕事", "い");
+    await newNoteIn(page, "仕事", "あ");
+    await newNoteIn(page, "仕事", "う");
+    const names = () =>
+      page.locator("aside [data-tree-note]").filter({ visible: true }).allTextContents();
+
+    await page.locator("aside").getByRole("button", { name: "仕事 の操作" }).click();
+    await page.getByRole("menuitem", { name: "並び順" }).click();
+    await page.getByRole("menuitemradio", { name: "タイトル順" }).click();
+    await expect.poll(async () => (await names()).map((name) => name.slice(0, 1))).toEqual(["あ", "い", "う"]);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+
+    await page.locator("aside").getByRole("button", { name: "仕事 の操作" }).click();
+    await page.getByRole("menuitem", { name: "テンプレートから作成" }).click();
+    const dialog = page.getByRole("dialog", { name: "テンプレートから作成" });
+    await dialog.getByRole("option", { name: "議事録" }).click();
+    await expect(dialog).toBeHidden();
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("議事録");
+    await expect(treeNote(page, "議事録")).toBeVisible();
+  });
+
   test("all notes are still a list beside the sidebar", async ({ page }) => {
     test.skip(test.info().project.name !== "desktop", "the list beside the sidebar");
     await newFolder(page, "趣味");

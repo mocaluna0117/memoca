@@ -41,6 +41,16 @@ function subscribe(onChange: () => void) {
   };
 }
 
+/** Sets a list's order on this device: a folder's (by its id), or all notes' (`null`). */
+export function setNoteOrder(folderId: string | null, order: NoteOrder) {
+  try {
+    localStorage.setItem(KEY, JSON.stringify({ ...orders(), [folderId ?? "all"]: order }));
+  } catch {
+    // Refused: it stays as it was.
+  }
+  for (const listener of listeners) listener();
+}
+
 /**
  * How a list of notes is ordered on this device, and a way to set it: a
  * folder's list (by its id), or all notes (`null`), each its own. As it
@@ -57,17 +67,7 @@ export function useNoteOrder(folderId: string | null): [NoteOrder, (order: NoteO
     () => orders()[scope] ?? "updated",
     () => "updated" as const,
   );
-  const set = useCallback(
-    (next: NoteOrder) => {
-      try {
-        localStorage.setItem(KEY, JSON.stringify({ ...orders(), [scope]: next }));
-      } catch {
-        // Refused: it stays as it was.
-      }
-      for (const listener of listeners) listener();
-    },
-    [scope],
-  );
+  const set = useCallback((next: NoteOrder) => setNoteOrder(folderId, next), [folderId]);
   return [folderId === null && order === "manual" ? "updated" : order, set];
 }
 
