@@ -1,17 +1,19 @@
-import { BlockNoteSchema, defaultBlockSpecs } from "@blocknote/core";
+import { BlockNoteSchema, defaultBlockSpecs, defaultStyleSpecs } from "@blocknote/core";
 import { ja as blocknoteJa } from "@blocknote/core/locales";
 import { locales as multiColumnLocales, withMultiColumn } from "@blocknote/xl-multi-column";
+import { fontSize } from "@/components/editor/font-size";
 import { memocaFileBlock } from "@/components/editor/pdf-file-block";
 
 /**
  * BlockNote's blocks, with a file block that shows a PDF's pages (see
- * memocaFileBlock), and columns: blocks side by side, in a row of two or
- * more (BlockNote's multi-column, GPL-3.0). A note's, and a template's made
- * without an editor on screen (lib/templates).
+ * memocaFileBlock), a size for text (fontSize), and columns: blocks side by
+ * side, in a row of two or more (BlockNote's multi-column, GPL-3.0). A
+ * note's, and a template's made without an editor on screen (lib/templates).
  */
 export const SCHEMA = withMultiColumn(
   BlockNoteSchema.create({
     blockSpecs: { ...defaultBlockSpecs, file: memocaFileBlock() },
+    styleSpecs: { ...defaultStyleSpecs, fontSize },
   }),
 );
 

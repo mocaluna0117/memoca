@@ -33,6 +33,7 @@ import {
   copiesLockedFile,
   revertCrop,
 } from "@/lib/media/apply-crop";
+import { FontSizeButton } from "@/components/editor/font-size-button";
 import { FileDownloadButton } from "@/components/editor/file-download-button";
 import { idFromRef, isLockedFile } from "@/lib/media/attachments";
 import type { CroppedImage } from "@/lib/media/compress";
@@ -300,5 +301,8 @@ export function MemocaFormattingToolbar() {
   );
   const at = items.findIndex((item) => item.key === "replaceFileButton");
   items.splice(at + 1, 0, <ImageCropButton key="imageCropButton" />);
+  // 文字の大きさ, after the bold, italic, underline and strike buttons.
+  const strike = items.findIndex((item) => item.key === "strikeStyleButton");
+  items.splice(strike + 1, 0, <FontSizeButton key="fontSizeButton" />);
   return <FormattingToolbar>{items}</FormattingToolbar>;
 }
