@@ -23,6 +23,7 @@ import type * as lib_seq from "../lib/seq.js";
 import type * as lib_user from "../lib/user.js";
 import type * as notes from "../notes.js";
 import type * as sync from "../sync.js";
+import type * as testData from "../testData.js";
 import type * as trash from "../trash.js";
 import type * as usage from "../usage.js";
 import type * as users from "../users.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   "lib/user": typeof lib_user;
   notes: typeof notes;
   sync: typeof sync;
+  testData: typeof testData;
   trash: typeof trash;
   usage: typeof usage;
   users: typeof users;

@@ -83,3 +83,22 @@ jobs:
             test-results/
             server.log
           retention-days: 14
+
+  clean-up:
+    name: Delete the accounts the run made
+    needs: [deploy, e2e]
+    # Whatever the suite's outcome: the accounts are made either way.
+    if: always() && needs.deploy.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      # convex/testData.ts: E2E accounts only, and only where TEST_DATA_WIPE is set.
+      - run: npx convex run testData:wipe
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY_E2E }}
