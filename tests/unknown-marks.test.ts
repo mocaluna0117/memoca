@@ -19,7 +19,8 @@ describe("a note written by a later version, with a mark this one does not know"
   test("opens with its text, the mark left out, and nothing taken out of the note", () => {
     const editor = BlockNoteEditor.create();
     const doc = new Y.Doc();
-    blocksToYXmlFragment(editor, [{ type: "paragraph", content: "大きな文字" }], bodyFragment(doc));
+    editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "大きな文字" }]);
+    blocksToYXmlFragment(editor, editor.document, bodyFragment(doc));
     // As a later version marks it: a style this one has no such mark for.
     firstText(bodyFragment(doc))!.format(0, 3, { fontSize: { stringValue: "1.5em" } });
 
