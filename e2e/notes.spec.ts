@@ -418,6 +418,23 @@ test.describe("reading search", () => {
     await expect(
       page.getByText("薬局のメモ").filter({ visible: true }).first(),
     ).toBeVisible();
+
+    // A note written since: its reading worked out when it is searched for.
+    await openApp(page);
+    await createNote(page, "病院の予約", "火曜の午後");
+    await page.goto("/app/search");
+    await page.getByLabel("検索").fill("びょういん");
+    await expect(
+      page.getByText("病院の予約").filter({ visible: true }).first(),
+    ).toBeVisible({ timeout: 30_000 });
+
+    // Turned off, the dictionary goes from the device with it.
+    await page.goto("/app/settings");
+    await page.getByRole("button", { name: "無効にして辞書を削除" }).click();
+    await expect(page.getByRole("button", { name: /有効にする/ })).toBeVisible();
+    expect(
+      await page.evaluate(async () => (await (await caches.open("memoca-yomi")).keys()).length),
+    ).toBe(0);
   });
 
   test("renaming a note is not undone by editing its body", async ({ page }) => {

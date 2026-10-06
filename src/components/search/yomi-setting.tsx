@@ -61,10 +61,11 @@ export function YomiSetting() {
         ) : null}
       </p>
       <Button variant="outline" size="sm" onClick={() => void disable()} disabled={busy}>
-        無効にする
+        無効にして辞書を削除
       </Button>
-      <p className="text-muted-foreground text-xs">
-        無効にすると、計算済みの読みは端末から削除されます。
+      <p className="text-muted-foreground text-xs leading-relaxed">
+        辞書は、かなで検索したときだけ読み込み、使い終わるとメモリから外します。
+        無効にすると、端末に保存した辞書（11MB）と計算済みの読みを削除します。
       </p>
     </div>
   );

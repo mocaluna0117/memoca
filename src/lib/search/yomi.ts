@@ -19,7 +19,33 @@ type YomiResponse =
  * The dictionary behind this is an 11 MB download, so nothing starts until
  * something actually needs a reading. Once fetched it is cached by the service
  * worker and stays available offline.
+ *
+ * Used only while searching: the readings of notes written since are worked
+ * out when something is searched for in kana (see useSearch), not in the
+ * background, and the dictionary, loaded into a worker for it, is let go of
+ * from memory once it has not been asked anything for a while.
  */
+
+/** How long the dictionary stays loaded after the last reading asked of it. */
+const IDLE_MS = 30_000;
+let idle: ReturnType<typeof setTimeout> | null = null;
+
+/** The worker ended, the dictionary out of memory: loaded again when next needed. */
+function releaseWorker() {
+  if (idle) clearTimeout(idle);
+  idle = null;
+  worker?.terminate();
+  worker = null;
+  for (const waiting of pending.values()) waiting.reject(new Error("released"));
+  pending.clear();
+  setState("idle");
+}
+
+/** Lets the dictionary go a while after the last reading asked of it. */
+function releaseLater() {
+  if (idle) clearTimeout(idle);
+  idle = pending.size === 0 ? setTimeout(releaseWorker, IDLE_MS) : null;
+}
 
 type Pending = {
   resolve: (readings: string[]) => void;
@@ -61,6 +87,7 @@ function ensureWorker(): Worker | null {
     const message = event.data;
     const waiting = pending.get(message.id);
     pending.delete(message.id);
+    releaseLater();
     if (message.type === "error") {
       setState("unavailable");
       waiting?.reject(new Error(message.message));
@@ -74,6 +101,9 @@ function ensureWorker(): Worker | null {
     setState("unavailable");
     for (const waiting of pending.values()) waiting.reject(new Error("worker failed"));
     pending.clear();
+    // Tried afresh next time (once the network is back, say).
+    worker?.terminate();
+    worker = null;
   };
   worker = created;
   return created;
@@ -83,7 +113,9 @@ function send(request: { type: "warm" } | { type: "readings"; texts: string[] })
   const active = ensureWorker();
   if (!active) return Promise.reject(new Error("worker unavailable"));
   const id = nextId++;
-  if (state === "idle") setState("loading");
+  if (idle) clearTimeout(idle);
+  idle = null;
+  if (state === "idle" || state === "unavailable") setState("loading");
   return new Promise<string[]>((resolve, reject) => {
     pending.set(id, { resolve, reject });
     active.postMessage({ ...request, id });
@@ -141,8 +173,22 @@ export async function enableYomi(
   return true;
 }
 
+/** Where the service worker keeps the dictionary (src/app/sw.ts). */
+const DICTIONARY_CACHE = "memoca-yomi";
+
+/**
+ * Turns reading search off: the dictionary, out of memory and off the device
+ * (the service worker's copy, 11 MB), and the readings worked out with it.
+ * Turned on again, the dictionary is downloaded again.
+ */
 export async function disableYomi(): Promise<void> {
   await setMeta(META.yomi, false);
+  releaseWorker();
+  try {
+    await caches.delete(DICTIONARY_CACHE);
+  } catch {
+    // No Cache Storage here (not a secure context): nothing was kept in it.
+  }
   // The readings are derived data; drop them so nothing stale is searched.
   const database = db();
   const rows = await database.bodies.toArray();
@@ -176,10 +222,20 @@ export async function refreshReading(noteId: string): Promise<void> {
   if (readings) await db().bodies.update(noteId, { reading: readings[0] ?? "" });
 }
 
+/** The pass filling in readings now, for another asked for meanwhile to wait on rather than repeat. */
+let filling: Promise<void> | null = null;
+
 /** Fills in readings for every note that does not have one yet. */
-export async function backfillReadings(
-  onProgress?: (done: number, total: number) => void,
-): Promise<void> {
+export function backfillReadings(onProgress?: (done: number, total: number) => void): Promise<void> {
+  if (!filling) {
+    filling = fill(onProgress).finally(() => {
+      filling = null;
+    });
+  }
+  return filling;
+}
+
+async function fill(onProgress?: (done: number, total: number) => void): Promise<void> {
   if (!(await isYomiEnabled())) return;
   const database = db();
   const missing = (await database.bodies.toArray()).filter(
