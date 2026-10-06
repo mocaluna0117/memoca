@@ -20,7 +20,7 @@ export const LOCKED_LABEL = "ロックされたメモ";
 const LOCKED_FOLDER_LABEL = "ロックされたフォルダ";
 
 /** A locked note's title, decrypted: the vault has to be open. */
-async function decryptTitle(note: Note): Promise<string> {
+export async function decryptTitle(note: Note): Promise<string> {
   const noteKey = await vault.noteKey(note.noteId, note.keyEpoch, note.wrappedKey!);
   const plain = await open(
     noteKey,

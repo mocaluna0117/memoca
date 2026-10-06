@@ -13,6 +13,7 @@ import { YomiSetting } from "@/components/search/yomi-setting";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
 import { ConvertImages } from "@/components/settings/convert-images";
+import { ExportAll } from "@/components/settings/export-all";
 import { SignOutElsewhere } from "@/components/settings/sign-out-elsewhere";
 import { StorageBreakdown } from "@/components/settings/storage-breakdown";
 import {
@@ -185,6 +186,15 @@ export default function SettingsPage() {
           ) : null}
           {me ? <ConvertImages allowance={me} /> : null}
           {me?.role === "admin" ? <ImageDiagnostics maxImageBytes={me.limits.maxImageBytes} /> : null}
+        </Section>
+
+        <Separator />
+
+        <Section
+          title="書き出し"
+          description="ゴミ箱以外のすべてのメモを、フォルダの形のまま Markdown（.md）にして、画像などのファイルと一緒に 1 つの ZIP で保存します。ほかのアプリへの移行や、手元での保管に使えます。"
+        >
+          <ExportAll />
         </Section>
 
         <Separator />
