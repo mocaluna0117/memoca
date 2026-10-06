@@ -196,6 +196,19 @@
   }
 }
 
+/* A tooltip's label on one line. BlockNote's toolbar's are laid out in a
+   box with next to no room, so as narrow as their words allow, and Japanese
+   allows a break after every character: 右揃え stood a character a line.
+   Kept whole, a long one still breaks at the tooltip's widest, its lines
+   held to the tooltip's width rather than running out of it. */
+[data-slot="tooltip-content"] {
+  word-break: keep-all;
+  overflow-wrap: break-word;
+}
+[data-slot="tooltip-content"] > * {
+  max-width: 100%;
+}
+
 /* Columns, side by side where the note is wide enough, one under another
    where it is not (a phone): too narrow, each would be a word a line. By
    the note's own width rather than the screen's, so a note made a PDF,

@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-06-tooltip-one-line",
+    date: "2026-10-06",
+    title: "ボタンの説明が 1 行に",
+    details: [
+      "画像や文字を選んだときに出るメニューで、ボタンにマウスを乗せると出る説明（「右揃え」など）が 1 文字ずつ縦に並んでいたのを、横 1 行で出るようにしました。",
+    ],
+  },
+  {
     id: "2026-10-06-today-note",
     date: "2026-10-06",
     title: "今日のメモ",
