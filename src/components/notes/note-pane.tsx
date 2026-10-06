@@ -43,6 +43,7 @@ import { useSync } from "@/components/providers/sync-provider";
 import { copiesLeftNotice, useLockActions } from "@/components/vault/use-lock-actions";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { VersionHistory } from "@/components/notes/version-history";
+import { NoteBacklinks } from "@/components/notes/note-backlinks";
 import { useNotePlace } from "@/components/notes/use-note-place";
 import { enterFromTitle } from "@/components/editor/title-enter";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
@@ -456,6 +457,7 @@ export function NotePane({
               </div>
             ) : null}
             <NoteEditor noteId={noteId} locked={note.locked} readOnly={pendingLock} />
+            <NoteBacklinks noteId={noteId} />
           </>
         )}
       </div>

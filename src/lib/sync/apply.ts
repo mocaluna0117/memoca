@@ -227,6 +227,7 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
             throughSeq: Math.max(body?.throughSeq ?? 0, remote.seq),
             keyEpoch: remote.keyEpoch,
             text: body?.text ?? null,
+            links: body?.links,
             updatedAt: Date.now(),
           });
         } else {

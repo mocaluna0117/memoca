@@ -9,6 +9,7 @@ import { migrateOldQuickBody } from "@/lib/quick/body";
 import type { Note } from "@/lib/types";
 import { enqueue } from "./outbox";
 import { onPeers, tellPeers } from "./peers";
+import { linkTargets } from "@/lib/note-links";
 import { ORIGIN, extractText, firstLine } from "./ydoc";
 
 /** Local edits are batched for this long before becoming one update row. */
@@ -218,6 +219,7 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
     throughSeq: (await database.bodies.get(handle.noteId))?.throughSeq ?? 0,
     keyEpoch: note.keyEpoch,
     text: note.locked ? null : text,
+    links: note.locked ? [] : linkTargets(handle.doc),
     updatedAt: Date.now(),
   });
 

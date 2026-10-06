@@ -1,3 +1,5 @@
+import { noteIdFromLink } from "@/lib/note-links";
+
 /** The kinds of link a note's link may open: pages, mail and calls. */
 const OPENED = new Set(["http:", "https:", "mailto:", "tel:"]);
 
@@ -22,5 +24,29 @@ export function openLinkApart(event: MouseEvent, here: Window = window): boolean
     return true;
   }
   if (OPENED.has(url.protocol)) here.open(url.href, "_blank", "noopener,noreferrer");
+  return true;
+}
+
+/**
+ * Opens a link to a note (lib/note-links) clicked in a note, in the app,
+ * with `open`: true once the click is dealt with, false for any other link,
+ * left to {@link openLinkApart}.
+ */
+export function openNoteLink(
+  event: MouseEvent,
+  open: (noteId: string) => void,
+  here: Window = window,
+): boolean {
+  const target = event.target;
+  const link =
+    target instanceof Element
+      ? target.closest<HTMLAnchorElement>('a[data-inline-content-type="link"]')
+      : null;
+  const noteId = link
+    ? noteIdFromLink(link.getAttribute("href") ?? "", here.location.origin)
+    : null;
+  if (!noteId) return false;
+  event.preventDefault();
+  open(noteId);
   return true;
 }

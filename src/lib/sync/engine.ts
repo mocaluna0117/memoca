@@ -16,6 +16,7 @@ import { onOutboxChanged } from "./signal";
 import { tellPeers } from "./peers";
 import { applyRemote, migrateOpenDoc, reloadDoc, withDetachedDoc } from "./docs";
 import { extractText, firstLine } from "./ydoc";
+import { linkTargets } from "@/lib/note-links";
 
 /** Bytes of operations to send in one push. The server accepts up to 4 MiB. */
 const PUSH_BYTE_BUDGET = 1_000_000;
@@ -280,6 +281,14 @@ export class SyncEngine {
     }
 
     for (const noteId of reload) await reloadDoc(noteId);
+    // A note changed on another device, its whole body here: its text and
+    // links taken from it again, for search and for the notes it links to.
+    // Until now they stayed as they were until the note was edited here.
+    for (const noteId of new Set(incoming.map((update) => update.noteId))) {
+      if (fetching.has(noteId)) continue;
+      const body = await db().bodies.get(noteId);
+      if (body) await this.refreshText(noteId, body.throughSeq, body.keyEpoch).catch(() => {});
+    }
     if (needBodies.length > 0) {
       // A failure here is recoverable: the notes stay marked as behind and the
       // next batch asks for them again.
@@ -465,8 +474,9 @@ export class SyncEngine {
     const readable = !locked || vault.isUnlocked;
 
     let text: string | null = null;
+    let links: string[] = [];
     if (readable) {
-      text = await withDetachedDoc(noteId, (doc) => extractText(doc));
+      [text, links] = await withDetachedDoc(noteId, (doc) => [extractText(doc), linkTargets(doc)] as const);
     }
 
     if (this.stopped) return;
@@ -475,6 +485,7 @@ export class SyncEngine {
       throughSeq,
       keyEpoch,
       text: locked ? null : text,
+      links: locked ? [] : links,
       updatedAt: Date.now(),
     });
 

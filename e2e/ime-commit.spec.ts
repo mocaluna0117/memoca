@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import { createNote, editor, openApp, signUp } from "./helpers";
 import { makeTextLarger } from "./font-size-helpers";
 import { typeAList } from "./list-helpers";
+import { linkNotes } from "./note-links-helpers";
 
 /** The Mac desktop app's user agent (desktop/src-tauri/src/window.rs), in its engine. */
 test.use({
@@ -100,4 +101,9 @@ test("a list typed on the Mac desktop app's keyboard", async ({ page }, testInfo
 test("text made larger from the toolbar on the Mac desktop app", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "the Mac desktop app's window");
   await makeTextLarger(page);
+});
+
+test("a note linked to another on the Mac desktop app", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the Mac desktop app's window");
+  await linkNotes(page);
 });

@@ -42,7 +42,8 @@ import {
 } from "@/lib/media/attachments";
 import { uploadRefusal } from "@/lib/media/refusal";
 import { warmWebpEncoder } from "@/lib/media/webp-encoder";
-import { openLinkApart } from "@/lib/open-link";
+import { openLinkApart, openNoteLink } from "@/lib/open-link";
+import { useWorkspace } from "@/lib/hooks/workspace";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
@@ -55,6 +56,7 @@ import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
+import { NoteLinkMenu, noteLinkInput, noteLinkSlashItem } from "@/components/editor/note-links";
 import { listKeys } from "@/components/editor/list-keys";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { LayoutTemplate } from "lucide-react";
@@ -90,8 +92,6 @@ const OVER_MEDIA: FloatingUIOptions = {
   },
 };
 
-/** A link clicked in a note opens apart from the app's window (see openLinkApart). */
-const LINKS = { onClick: (event: MouseEvent) => openLinkApart(event) };
 
 /**
  * Puts right the block a refused file leaves. BlockNote makes one before the
@@ -223,6 +223,21 @@ function EditorSurface({
     latest.current = { me, locked };
   }, [me, locked]);
   const editorRef = useRef<BlockNoteEditor | null>(null);
+  // A link clicked in a note: one to a note opens it here, any other apart
+  // from the app's window (see openLinkApart). Opened by what the workspace
+  // has when it is clicked.
+  const { openNote } = useWorkspace();
+  const openNoteRef = useRef(openNote);
+  useEffect(() => {
+    openNoteRef.current = openNote;
+  }, [openNote]);
+  const links = useMemo(
+    () => ({
+      onClick: (event: MouseEvent) =>
+        openNoteLink(event, (id) => openNoteRef.current(id)) || openLinkApart(event),
+    }),
+    [],
+  );
   // Where the canvas cannot write WebP, the encoder is fetched while there is
   // a network, ready for the first image.
   useEffect(() => {
@@ -256,10 +271,11 @@ function EditorSurface({
   );
 
   const options = useMemo(
+    // uploadFile reads its refs when a file arrives, never while rendering:
+    // BlockNote only calls it for a paste, a drop or the file panel. So do
+    // the links' when one is clicked.
+    // eslint-disable-next-line react-hooks/refs
     () =>
-      // uploadFile reads its refs when a file arrives, never while rendering:
-      // BlockNote only calls it for a paste, a drop or the file panel.
-      // eslint-disable-next-line react-hooks/refs
       withCollaboration({
         collaboration: {
           fragment: bodyFragment(doc),
@@ -278,7 +294,7 @@ function EditorSurface({
         animations: false,
         uploadFile,
         resolveFileUrl,
-        links: LINKS,
+        links,
         extensions: [
           japaneseLists,
           listKeys(),
@@ -288,13 +304,14 @@ function EditorSurface({
           selectMedia(),
           linesAbove(),
           imeCommit(),
+          noteLinkInput(),
         ],
         dropCursor: { hooks: { computeDropPosition } },
         // An image Memoca copied alone, pasted back as the block it was.
         pasteHandler: ({ event, editor: pasting, defaultPasteHandler }) =>
           pasteOwnImage(event, pasting as unknown as BlockNoteEditor) || defaultPasteHandler(),
       }),
-    [doc, me?.name, uploadFile, resolveFileUrl],
+    [doc, me?.name, uploadFile, resolveFileUrl, links],
   );
 
   const editor = useCreateBlockNote(options, [doc]);
@@ -384,6 +401,7 @@ function EditorSurface({
                   getDefaultReactSlashMenuItems(editor),
                   getMultiColumnSlashMenuItems(editor),
                 ),
+                noteLinkSlashItem(plain),
                 ...(await templateItems()),
               ],
               query,
@@ -398,6 +416,8 @@ function EditorSurface({
           formattingToolbar={MemocaFormattingToolbar}
           floatingUIOptions={mediaSelected ? OVER_MEDIA : undefined}
         />
+        {/* [[: the notes to link to (see note-links). */}
+        <NoteLinkMenu editor={plain} noteId={noteId} />
         <ToolbarOnImageTap />
         <MobileBlockToolbar />
       </BlockNoteView>
