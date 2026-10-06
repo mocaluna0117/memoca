@@ -200,14 +200,12 @@ test.describe("what the device keeps for offline use", () => {
     await expect
       .poll(async () => (await kept(page, "memoca-pages", "/app/settings"))?.status)
       .toBe(200);
-    // A file once shown, and the reading dictionary: stand-ins will do.
+    // A file once shown: a stand-in will do. (The reading dictionary is
+    // kept nowhere, so there is none to keep.)
     await page.evaluate(async () => {
       await (
         await caches.open("memoca-media")
       ).put("https://e2e.convex.cloud/api/storage/e2e", new Response("an image"));
-      await (
-        await caches.open("memoca-yomi")
-      ).put("/kuromoji/e2e.dat.gz", new Response("a dictionary"));
     });
 
     await page.getByRole("button", { name: "ログアウト", exact: true }).click();
@@ -216,7 +214,6 @@ test.describe("what the device keeps for offline use", () => {
     const left = await keptPages(page);
     expect(left.filter(({ address }) => /^\/(app|quick)\b/.test(address))).toEqual([]);
     expect(await page.evaluate(() => caches.has("memoca-media"))).toBe(false);
-    expect(await kept(page, "memoca-yomi", "/kuromoji/e2e.dat.gz")).not.toBeNull();
     const offlinePageKept = await page.evaluate(async () => {
       for (const name of await caches.keys()) {
         if (!name.includes("precache")) continue;

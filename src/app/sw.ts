@@ -136,40 +136,13 @@ const serwist: Serwist = new Serwist({
       },
     },
     {
-      // The reading dictionary is 11 MB across a dozen files, deliberately not
-      // precached: that would make installing the app an 11 MB download for
-      // everyone, including people who never search in kana. It is cached on
-      // first fetch instead, after which reading search works offline. Under a
-      // path with its version (/kuromoji/<version>/): one of a new version
-      // cached, what is cached of any other goes, never to be asked for again.
+      // The reading dictionary (11 MB), and kuromoji with it, kept nowhere:
+      // downloaded each time reading search is turned on to work out the
+      // readings of notes not read yet, into a worker's memory only (see
+      // src/lib/search/yomi.ts). Past every cache, never precached.
       matcher: ({ url }) =>
         url.origin === self.location.origin && url.pathname.startsWith("/kuromoji/"),
-      handler: {
-        handle: async ({ request, url, event }) => {
-          // Not to be kept on this device (used only while searching): past
-          // the cache, as the worker asked (its scripts by ?keep=no, the
-          // dictionary's files by a header).
-          if (request.headers.get("X-Memoca-Keep") === "no" || url.searchParams.get("keep") === "no") {
-            return fetch(request);
-          }
-          const cache = await caches.open("memoca-yomi");
-          const cached = await cache.match(request);
-          if (cached) return cached;
-          const response = await fetch(request);
-          if (response.ok) {
-            const version = url.pathname.split("/").slice(0, 3).join("/") + "/";
-            event.waitUntil(
-              (async () => {
-                await cache.put(request, response.clone());
-                for (const old of await cache.keys()) {
-                  if (!new URL(old.url).pathname.startsWith(version)) await cache.delete(old);
-                }
-              })(),
-            );
-          }
-          return response;
-        },
-      },
+      handler: { handle: ({ request }) => fetch(request) },
     },
     {
       // pdf.js's worker and what it reads (character maps, fonts), only for

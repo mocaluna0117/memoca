@@ -10,7 +10,6 @@ import { SIDEBAR_MODES, type SidebarMode, useSidebarMode } from "@/lib/hooks/use
 import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
-import { YomiSetting } from "@/components/search/yomi-setting";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
 import { ConvertImages } from "@/components/settings/convert-images";
@@ -145,15 +144,6 @@ export default function SettingsPage() {
               <SelectItem value="90">90 日</SelectItem>
             </SelectContent>
           </Select>
-        </Section>
-
-        <Separator />
-
-        <Section
-          title="読みで検索"
-          description="漢字のメモを、読み方（ひらがな・カタカナ）でも探せるようにします。「薬局」を「やっきょく」で見つけられます。"
-        >
-          <YomiSetting />
         </Section>
 
         <Separator />

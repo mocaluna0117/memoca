@@ -8,8 +8,8 @@
  * config", and a search feature is not worth a dependency on that working.
  *
  * Protocol (see src/lib/search/yomi.ts for the typed client):
- *   in   { type: "warm",     id, keep }
- *        { type: "readings", id, keep, texts: string[] }
+ *   in   { type: "warm",     id }
+ *        { type: "readings", id, texts: string[] }
  *   out  { type: "ready",    id }
  *        { type: "readings", id, readings: string[] }
  *        { type: "error",    id, message }
@@ -17,27 +17,18 @@
 
 /* global kuromoji */
 
-// Whether the dictionary is kept on the device, as the page says with each
-// request (the first one's, which the dictionary is loaded for, counts). Not
-// kept: fetched past the browser's HTTP cache, and marked for the service
-// worker not to cache it either, so it is in this worker's memory only, gone
-// when the page ends the worker.
-var keep = true;
+// The dictionary is kept nowhere on the device: fetched past the browser's
+// HTTP cache (the service worker caches none of it either, src/app/sw.ts), it
+// is in this worker's memory only, gone when the page ends the worker.
 var plainFetch = self.fetch.bind(self);
 self.fetch = function (input, init) {
-  if (keep) return plainFetch(input, init);
-  return plainFetch(input, {
-    ...init,
-    cache: "no-store",
-    headers: { "X-Memoca-Keep": "no" },
-  });
+  return plainFetch(input, { ...init, cache: "no-store" });
 };
 
 // The dictionary's version (scripts/copy-kuromoji-dict.mjs builds it): kuromoji,
-// adapted to load it, and the Brotli decoder it is undone with, loaded with the
-// dictionary, once it is known whether they are kept (marked ?keep=no for the
-// service worker not to cache them, if not).
+// adapted to load it, and the Brotli decoder it is undone with.
 var DICTIONARY = "/kuromoji/2";
+importScripts(DICTIONARY + "/brotli.js", DICTIONARY + "/kuromoji.js");
 
 let tokenizer = null;
 let building = null;
@@ -46,19 +37,10 @@ function build() {
   if (tokenizer) return Promise.resolve(tokenizer);
   if (!building) {
     building = new Promise((resolve, reject) => {
-      try {
-        var mark = keep ? "" : "?keep=no";
-        importScripts(DICTIONARY + "/brotli.js" + mark, DICTIONARY + "/kuromoji.js" + mark);
-      } catch (cause) {
-        building = null;
-        reject(cause);
-        return;
-      }
       // A root-relative path, never an absolute URL: kuromoji joins this with
       // each filename and then collapses repeated slashes, which turns
       // "https://host" into "https:/host" and quietly 404s. Relative keeps it
-      // on our own origin anyway, so the service worker can cache it and
-      // reading search keeps working with no network.
+      // on our own origin anyway.
       kuromoji.builder({ dicPath: DICTIONARY }).build((error, built) => {
         if (error) {
           building = null;
@@ -88,7 +70,6 @@ function readingOf(active, text) {
 
 self.onmessage = function (event) {
   const request = event.data;
-  if (!tokenizer && !building && typeof request.keep === "boolean") keep = request.keep;
   build().then(
     function (active) {
       if (request.type === "warm") {

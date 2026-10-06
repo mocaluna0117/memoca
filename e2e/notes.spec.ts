@@ -377,7 +377,9 @@ const dictionaryKept = (page: Page) =>
   );
 
 test.describe("reading search", () => {
-  test("a kanji note is found by typing its reading; the dictionary kept nowhere", async ({ page }) => {
+  test("turned on beside the field, a kanji note is found by its reading; the dictionary kept nowhere", async ({
+    page,
+  }) => {
     // Turning this on downloads an 11 MB dictionary, so allow for that.
     test.slow();
     await signUp(page);
@@ -385,7 +387,7 @@ test.describe("reading search", () => {
     await createNote(page, "薬局のメモ", "金曜に歯医者へ行く");
     await waitForSynced(page);
 
-    // A dictionary kept before there was a choice: gone once the app starts.
+    // A dictionary an earlier version kept: gone once the app starts.
     await page.evaluate(async () => {
       await (await caches.open("memoca-yomi")).put("/kuromoji/base.dat.gz", new Response("kept before"));
     });
@@ -394,78 +396,48 @@ test.describe("reading search", () => {
 
     await page.goto("/app/search");
     const field = page.getByLabel("検索");
-    await expect(field).toBeVisible();
     await field.fill("やっきょく");
+    // Off: found by what is written only, and told how to find it by reading.
+    await expect(page.getByText("0 件見つかりました")).toBeVisible();
+    await expect(page.getByText("「読みでも探す」をオンにすると", { exact: false })).toBeVisible();
 
-    // Reading search is off by default, so the offer appears instead of a hit.
-    const enable = page.getByRole("button", { name: "有効にする" });
-    await expect(enable).toBeVisible();
-    await enable.click();
-    await expect(enable).toBeHidden({ timeout: 180_000 });
-
-    await field.fill("");
-    await field.fill("やっきょく");
-    await expect(page.getByText("薬局のメモ").filter({ visible: true }).first()).toBeVisible({ timeout: 30_000 });
+    const reading = page.getByRole("switch", { name: "読みでも探す" });
+    await reading.click();
+    await expect(reading).toBeChecked();
+    await expect(page.getByText("薬局のメモ").filter({ visible: true }).first()).toBeVisible({ timeout: 60_000 });
     // The body's reading is searchable too.
     await field.fill("はいしゃ");
     await expect(page.getByText("薬局のメモ").filter({ visible: true }).first()).toBeVisible();
     // Downloaded, but kept nowhere on the device.
     expect(await dictionaryKept(page)).toEqual([]);
 
-    // Turned off: out of memory. A note written since is not found by its
-    // reading until the dictionary is turned on again for it.
-    const dictionary = page.getByRole("switch", { name: "読みの辞書を使う" });
-    await expect(dictionary).toBeChecked();
-    await dictionary.click();
-    // Every note read, there is nothing to turn it on for: not offered.
-    await expect(dictionary).toHaveCount(0);
+    // Off again: not found by reading.
+    await reading.click();
+    await expect(reading).not.toBeChecked();
+    await expect(page.getByText("0 件見つかりました")).toBeVisible();
+
+    // A note written since, read when it is turned on again.
     await openApp(page);
     await createNote(page, "病院の予約", "火曜の午後");
     await page.goto("/app/search");
     await page.getByLabel("検索").fill("びょういん");
-    await expect(page.getByText("読みをまだ調べていないメモが 1 件あります", { exact: false })).toBeVisible();
-    await expect(page.getByText("病院の予約").filter({ visible: true })).toHaveCount(0);
-    // Notes read before are found with no dictionary at all.
-    await page.getByLabel("検索").fill("やっきょく");
-    await expect(page.getByText("薬局のメモ").filter({ visible: true }).first()).toBeVisible();
-
-    await page.getByLabel("検索").fill("びょういん");
-    await page.getByRole("switch", { name: "読みの辞書を使う" }).click();
+    await page.getByRole("switch", { name: "読みでも探す" }).click();
     await expect(page.getByText("病院の予約").filter({ visible: true }).first()).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText("使用中です。1 分使わないと削除します。")).toBeVisible();
     expect(await dictionaryKept(page)).toEqual([]);
   });
 
-  test("kept on the device if chosen; turned off, the dictionary goes", async ({ page }) => {
-    test.slow();
+  test("the dictionary not to be had: said so, and off again", async ({ page, context }) => {
     await signUp(page);
     await openApp(page);
     await createNote(page, "薬局のメモ");
     await waitForSynced(page);
-
-    await page.goto("/app/settings");
-    await page.getByRole("button", { name: /有効にする/ }).click();
-    await page.getByRole("combobox", { name: "読みの辞書" }).click({ timeout: 180_000 });
-    await page.getByRole("option", { name: "端末に残す（オフラインでも使える）" }).click();
-
-    // A dictionary of an earlier version, kept here before.
-    await page.evaluate(async () => {
-      await (await caches.open("memoca-yomi")).put("/kuromoji/base.dat.gz", new Response("an earlier one"));
-    });
-    // Searched for in kana: loaded again, this time kept, the earlier one let go of.
-    await openApp(page);
-    await createNote(page, "病院の予約");
     await page.goto("/app/search");
-    await page.getByLabel("検索").fill("びょういん");
-    await expect(page.getByText("病院の予約").filter({ visible: true }).first()).toBeVisible({ timeout: 60_000 });
-    await expect.poll(() => dictionaryKept(page)).toContain("/kuromoji/2/base.dat.brotli");
-    expect(await dictionaryKept(page)).not.toContain("/kuromoji/base.dat.gz");
-
-    // Turned off, the dictionary goes from the device with it.
-    await page.goto("/app/settings");
-    await page.getByRole("button", { name: "無効にして辞書を削除" }).click();
-    await expect(page.getByRole("button", { name: /有効にする/ })).toBeVisible();
-    expect(await dictionaryKept(page)).toEqual([]);
+    await context.route("**/kuromoji/**", (route) => route.abort());
+    await page.getByLabel("検索").fill("やっきょく");
+    const reading = page.getByRole("switch", { name: "読みでも探す" });
+    await reading.click();
+    await expect(page.getByText("辞書を読み込めませんでした", { exact: false })).toBeVisible({ timeout: 30_000 });
+    await expect(reading).not.toBeChecked();
   });
 
   test("renaming a note is not undone by editing its body", async ({ page }) => {

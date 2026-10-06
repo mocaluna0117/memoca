@@ -1,7 +1,6 @@
 "use client";
 
-import { db, getMeta, setMeta } from "@/lib/db";
-import { META } from "@/lib/db/meta";
+import { db } from "@/lib/db";
 
 /**
  * What the worker sends back. It lives in `public/yomi-worker.js` as plain
@@ -16,20 +15,13 @@ type YomiResponse =
  * Reading lookup for Japanese text, so a note written in kanji can be found by
  * typing how it sounds.
  *
- * The dictionary behind this is an 11 MB download, so nothing starts until
- * something actually needs a reading. Once fetched it is cached by the service
- * worker and stays available offline.
- *
- * Used only while searching: the readings of notes written since are worked
- * out when something is searched for in kana (see useSearch), not in the
- * background, and the dictionary, loaded into a worker for it, is let go of
- * from memory once it has not been asked anything for a while.
- *
- * Kept on the device only if the person chose so (META.yomiKeep). As it
- * starts, it is downloaded when they turn it on to search and kept nowhere:
- * in the worker's memory alone, gone a minute after its last use. The
- * readings worked out with it are kept (they are small), so notes already
- * read are found by their reading with no dictionary at all.
+ * Turned on by the person, on the search page ("読みでも探す"), for as long
+ * as this page is open: never on its own, as it is an 11 MB download. On, the
+ * readings of notes not read yet are worked out, and found as they are. The
+ * dictionary for that is downloaded each time it is needed and kept nowhere:
+ * fetched past every cache into a worker's memory, gone a minute after its last
+ * use (or as soon as it is turned off). The readings worked out are kept (they
+ * are small), so turned on again with every note read, nothing is downloaded.
  */
 
 /** How long the dictionary stays loaded after the last reading asked of it. */
@@ -115,13 +107,7 @@ function ensureWorker(): Worker | null {
   return created;
 }
 
-/** Whether the dictionary is kept on this device; downloaded for each use otherwise. */
-export async function isYomiKept(): Promise<boolean> {
-  return getMeta<boolean>(META.yomiKeep, false);
-}
-
 async function send(request: { type: "warm" } | { type: "readings"; texts: string[] }) {
-  const keep = await isYomiKept();
   const active = ensureWorker();
   if (!active) throw new Error("worker unavailable");
   const id = nextId++;
@@ -130,78 +116,14 @@ async function send(request: { type: "warm" } | { type: "readings"; texts: strin
   if (state === "idle" || state === "unavailable") setState("loading");
   return new Promise<string[]>((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    active.postMessage({ ...request, id, keep });
+    active.postMessage({ ...request, id });
   });
 }
 
-/** Whether the dictionary is in memory now (or on its way), to be used with no download. */
-export function isYomiLoaded(): boolean {
-  return worker !== null && (state === "ready" || state === "loading");
-}
-
-/** Lets the dictionary go from memory now, rather than a minute after its last use. */
-export function releaseYomi(): void {
-  releaseWorker();
-}
-
-/** Where the service worker keeps the dictionary (src/app/sw.ts). */
-const DICTIONARY_CACHE = "memoca-yomi";
-
-/** Deletes the dictionary kept on this device, if any. */
-async function deleteKeptDictionary(): Promise<void> {
-  try {
-    await caches.delete(DICTIONARY_CACHE);
-  } catch {
-    // No Cache Storage here (not a secure context): nothing was kept in it.
-  }
-}
-
-/**
- * Keeps the dictionary on this device, or not. Not kept, what is kept of it
- * goes now, and the one in memory, loaded to be kept, with it.
- */
-export async function setYomiKept(keep: boolean): Promise<void> {
-  await setMeta(META.yomiKeep, keep);
-  releaseWorker();
-  if (!keep) await deleteKeptDictionary();
-}
-
-/**
- * Deletes a dictionary kept on this device that is not to be kept: one kept
- * before the choice was there (when it always was), or one whose deletion did
- * not finish. Once when the app starts.
- */
-export async function tidyYomi(): Promise<void> {
-  if (!(await isYomiKept())) await deleteKeptDictionary();
-}
-
-/**
- * The readings of notes written since, worked out for a search in kana: with
- * the dictionary kept on the device, or in memory now; never a download no one
- * asked for (the person turns it on for that, see the search page).
- */
-export async function readingsForSearch(): Promise<void> {
-  if (!(await isYomiEnabled())) return;
-  if ((await isYomiKept()) || isYomiLoaded()) await backfillReadings();
-}
-
-/** Starts fetching the dictionary without asking for any reading yet. */
-export async function warmYomi(): Promise<boolean> {
-  try {
-    await send({ type: "warm" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export async function readingsFor(texts: string[]): Promise<string[] | null> {
+/** The readings of texts, in katakana; throws when the dictionary cannot be had. */
+async function readingsFor(texts: string[]): Promise<string[]> {
   if (texts.length === 0) return [];
-  try {
-    return await send({ type: "readings", texts });
-  } catch {
-    return null;
-  }
+  return send({ type: "readings", texts });
 }
 
 /** True for a query worth looking up by reading: kana, with no kanji in it. */
@@ -211,52 +133,14 @@ export function isKanaQuery(query: string): boolean {
   return /^[ぁ-ゟァ-ヿーー\s]+$/.test(trimmed);
 }
 
-/* ------------------------------------------------------------- opt-in state */
+/** The pass filling in readings now, for another asked for meanwhile to wait on rather than repeat. */
+let filling: Promise<void> | null = null;
 
 /** Notes whose reading is computed in one round. */
 const BACKFILL_BATCH = 40;
 
-export async function isYomiEnabled(): Promise<boolean> {
-  return getMeta<boolean>(META.yomi, false);
-}
-
-/**
- * Turns reading search on, downloading the dictionary and filling in the
- * readings of everything already stored.
- *
- * Opt-in on purpose: the dictionary is an 11 MB download, and silently spending
- * someone's mobile data on a feature they may not want is not acceptable.
- */
-export async function enableYomi(
-  onProgress?: (done: number, total: number) => void,
-): Promise<boolean> {
-  if (!(await warmYomi())) return false;
-  await setMeta(META.yomi, true);
-  await backfillReadings(onProgress);
-  return true;
-}
-
-/**
- * Turns reading search off: the dictionary, out of memory and off the device
- * (the service worker's copy, 11 MB), and the readings worked out with it.
- * Turned on again, the dictionary is downloaded again.
- */
-export async function disableYomi(): Promise<void> {
-  await setMeta(META.yomi, false);
-  releaseWorker();
-  await deleteKeptDictionary();
-  // The readings are derived data; drop them so nothing stale is searched.
-  const database = db();
-  const rows = await database.bodies.toArray();
-  for (const row of rows) {
-    if (row.reading !== undefined) {
-      await database.bodies.update(row.noteId, { reading: undefined });
-    }
-  }
-}
-
 /** The text a note's reading is computed from: its title and its body. */
-export async function readingSourceFor(noteId: string): Promise<string | null> {
+async function readingSourceFor(noteId: string): Promise<string | null> {
   const database = db();
   const note = await database.notes.get(noteId);
   const body = await database.bodies.get(noteId);
@@ -265,24 +149,8 @@ export async function readingSourceFor(noteId: string): Promise<string | null> {
   return `${note.title ?? ""}\n${text}`.trim();
 }
 
-/** Computes and stores the reading for one note, if the feature is on. */
-export async function refreshReading(noteId: string): Promise<void> {
-  if (!(await isYomiEnabled())) return;
-  const source = await readingSourceFor(noteId);
-  if (source === null) return;
-  if (source.length === 0) {
-    await db().bodies.update(noteId, { reading: "" });
-    return;
-  }
-  const readings = await readingsFor([source]);
-  if (readings) await db().bodies.update(noteId, { reading: readings[0] ?? "" });
-}
-
-/** The pass filling in readings now, for another asked for meanwhile to wait on rather than repeat. */
-let filling: Promise<void> | null = null;
-
-/** Fills in readings for every note that does not have one yet. */
-export function backfillReadings(onProgress?: (done: number, total: number) => void): Promise<void> {
+/** Fills in readings for every note that does not have one yet; throws when the dictionary cannot be had. */
+function backfillReadings(onProgress?: (done: number, total: number) => void): Promise<void> {
   if (!filling) {
     filling = fill(onProgress).finally(() => {
       filling = null;
@@ -292,7 +160,6 @@ export function backfillReadings(onProgress?: (done: number, total: number) => v
 }
 
 async function fill(onProgress?: (done: number, total: number) => void): Promise<void> {
-  if (!(await isYomiEnabled())) return;
   const database = db();
   const missing = (await database.bodies.toArray()).filter(
     (row) => row.reading === undefined || row.reading === null,
@@ -312,7 +179,6 @@ async function fill(onProgress?: (done: number, total: number) => void): Promise
       );
 
     const readings = await readingsFor(wanted.map((entry) => entry.source));
-    if (!readings) return;
     for (const [index, entry] of wanted.entries()) {
       await database.bodies.update(entry.row.noteId, { reading: readings[index] ?? "" });
     }
@@ -327,5 +193,70 @@ async function fill(onProgress?: (done: number, total: number) => void): Promise
     onProgress?.(Math.min(done, missing.length), missing.length);
     // Let the interface breathe between batches.
     await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+/* ------------------------------------------------------- turned on, or off */
+
+let on = false;
+const onListeners = new Set<() => void>();
+
+/** Whether reading search is turned on, for as long as this page is open. */
+export function isYomiOn(): boolean {
+  return on;
+}
+
+export function onYomiOn(listener: () => void): () => void {
+  onListeners.add(listener);
+  return () => onListeners.delete(listener);
+}
+
+function setOn(next: boolean) {
+  if (on === next) return;
+  on = next;
+  for (const listener of onListeners) listener();
+}
+
+/**
+ * Turns reading search on: the readings of notes not read yet worked out,
+ * the dictionary downloaded for it if there are any. Not to be had (no
+ * network, say), it is off again, and the reason thrown.
+ */
+export async function turnYomiOn(onProgress?: (done: number, total: number) => void): Promise<void> {
+  setOn(true);
+  try {
+    await backfillReadings(onProgress);
+  } catch (cause) {
+    setOn(false);
+    releaseWorker();
+    throw cause;
+  }
+}
+
+/** Turns reading search off, the dictionary out of memory at once. */
+export function turnYomiOff(): void {
+  setOn(false);
+  releaseWorker();
+}
+
+/**
+ * With reading search on, the readings of notes written since worked out for
+ * a search in kana (the dictionary downloaded again if it has been let go of).
+ * A failure leaves those notes to the next search.
+ */
+export async function readingsForSearch(): Promise<void> {
+  if (!on) return;
+  await backfillReadings().catch(() => {});
+}
+
+/**
+ * Deletes the dictionary that earlier versions kept on the device (in the
+ * service worker's cache), which nothing keeps now. Once when the app starts.
+ */
+export async function tidyYomi(): Promise<void> {
+  try {
+    await caches.delete("memoca-yomi");
+  } catch {
+    // No Cache Storage here (not a secure context): nothing was kept in it.
   }
 }

@@ -3,10 +3,10 @@
 import { Languages, Loader2, Lock, Search as SearchIcon } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { toast } from "sonner";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { useSearch } from "@/lib/hooks/use-search";
 import { useYomi } from "@/lib/hooks/use-yomi";
@@ -42,35 +42,67 @@ export default function SearchPage() {
   const { hits, total, locked } = useSearch(query);
   const yomi = useYomi();
   const lockedNote = lockedSearchNote(locked);
+  const kana = isKanaQuery(query);
 
-  // Offer reading search exactly where it would have helped: a kana-only query
-  // that found nothing, which is what typing a kanji word's reading looks like.
-  const suggestYomi =
-    yomi.enabled === false && hits.length === 0 && isKanaQuery(query);
-  // The dictionary downloaded for each use (not kept on this device): turned
-  // on here, for notes whose reading is not worked out yet, and off again,
-  // or by itself a minute after its last use.
-  const dictionaryOn = yomi.busy || yomi.state === "ready" || yomi.state === "loading";
-  const dictionarySwitch =
-    yomi.enabled === true && yomi.kept === false && (dictionaryOn || yomi.unread > 0);
+  const turnOn = async () => {
+    try {
+      await yomi.turnOn();
+    } catch (cause) {
+      const offline = typeof navigator !== "undefined" && !navigator.onLine;
+      toast.error(
+        offline
+          ? "オフラインのため、辞書をダウンロードできませんでした。インターネットにつないで、もう一度お試しください。"
+          : `辞書を読み込めませんでした。もう一度お試しください。（${cause instanceof Error ? cause.message : String(cause)}）`,
+      );
+    }
+  };
+
+  // What the switch is doing, said under the field: only while it matters.
+  const status = yomi.busy
+    ? yomi.progress && yomi.progress.total > 0
+      ? `読みを調べています… ${yomi.progress.done} / ${yomi.progress.total}`
+      : "辞書（11MB）をダウンロードしています…"
+    : yomi.on
+      ? null
+      : kana && hits.length === 0
+        ? "「読みでも探す」をオンにすると、「やっきょく」で「薬局」のような漢字のメモも見つかります。辞書（11MB）のダウンロードに少し時間がかかります。"
+        : null;
 
   return (
     <div className="flex flex-1 flex-col">
       <MobileHeader title={t.nav.search} />
       <div className="mx-auto flex w-full max-w-3xl flex-1 flex-col px-4 py-4 sm:px-6 sm:py-6">
-        <div className="relative">
-          <SearchIcon
-            className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
-            aria-hidden
-          />
-          <Input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="メモ名・フォルダ名・本文から探す"
-            aria-label="検索"
-            autoFocus
-            className="pl-9"
-          />
+        <div className="flex items-center gap-3">
+          <div className="relative min-w-0 flex-1">
+            <SearchIcon
+              className="text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2"
+              aria-hidden
+            />
+            <Input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="メモ名・フォルダ名・本文から探す"
+              aria-label="検索"
+              autoFocus
+              className="pl-9"
+            />
+          </div>
+          {/* Reading search, turned on for a search: the dictionary downloaded
+              for the notes not read yet, kept nowhere (lib/search/yomi.ts). */}
+          <label
+            className="flex shrink-0 cursor-pointer items-center gap-2 text-sm"
+            title="ひらがなで、漢字のメモも探します。オンにすると辞書（11MB）をダウンロードするので、少し時間がかかります。辞書は端末に残さず、1 分使わないと削除します。"
+          >
+            {yomi.busy ? (
+              <Loader2 className="text-muted-foreground size-4 animate-spin" aria-hidden />
+            ) : null}
+            <span className="whitespace-nowrap">読みでも探す</span>
+            <Switch
+              checked={yomi.on}
+              disabled={yomi.busy}
+              onCheckedChange={(next) => (next ? void turnOn() : yomi.turnOff())}
+            />
+          </label>
         </div>
 
         <p className="text-muted-foreground mt-2 text-xs">
@@ -78,6 +110,12 @@ export default function SearchPage() {
             ? `${total} 件のメモから探せます`
             : `${hits.length} 件見つかりました`}
         </p>
+        {status ? (
+          <p className="text-muted-foreground mt-1 flex items-start gap-1.5 text-xs leading-relaxed" role="status">
+            <Languages className="mt-0.5 size-3.5 shrink-0 opacity-60" aria-hidden />
+            <span>{status}</span>
+          </p>
+        ) : null}
         {lockedNote ? (
           <p className="text-muted-foreground mt-1 flex flex-wrap items-center gap-x-2 text-xs">
             <Lock className="size-3 shrink-0 opacity-60" aria-hidden />
@@ -94,55 +132,8 @@ export default function SearchPage() {
           </p>
         ) : null}
 
-        {dictionarySwitch ? (
-          <div className="bg-card mt-3 flex items-center gap-3 rounded-lg border px-3 py-2">
-            <Languages className="text-muted-foreground size-4 shrink-0" aria-hidden />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm">読みの辞書（11MB）</p>
-              <p className="text-muted-foreground text-xs leading-relaxed">
-                {yomi.busy
-                  ? yomi.progress && yomi.progress.total > 0
-                    ? `読みを調べています ${yomi.progress.done} / ${yomi.progress.total}`
-                    : "ダウンロード中…"
-                  : dictionaryOn
-                    ? "使用中です。1 分使わないと削除します。"
-                    : `読みをまだ調べていないメモが ${yomi.unread} 件あります。オンにすると、辞書をダウンロードして調べます。`}
-              </p>
-            </div>
-            <Switch
-              checked={dictionaryOn}
-              disabled={yomi.busy}
-              aria-label="読みの辞書を使う"
-              onCheckedChange={(on) => (on ? void yomi.use() : yomi.release())}
-            />
-          </div>
-        ) : null}
-
-        {suggestYomi ? (
-          <div className="bg-card mt-3 flex items-start gap-3 rounded-lg border p-3">
-            <Languages className="text-muted-foreground mt-0.5 size-5 shrink-0" aria-hidden />
-            <div className="min-w-0 flex-1 space-y-2">
-              <p className="text-sm font-medium">読み方でも探せます</p>
-              <p className="text-muted-foreground text-xs leading-relaxed">
-                有効にすると「やっきょく」で「薬局」のような漢字のメモが見つかります。
-                日本語の辞書（11MB）をダウンロードして、メモの読みを調べます。
-              </p>
-              <Button size="sm" onClick={() => void yomi.enable()} disabled={yomi.busy}>
-                {yomi.busy ? (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                ) : null}
-                {yomi.busy
-                  ? yomi.progress && yomi.progress.total > 0
-                    ? `読み込み中 ${yomi.progress.done} / ${yomi.progress.total}`
-                    : "ダウンロード中…"
-                  : "有効にする"}
-              </Button>
-            </div>
-          </div>
-        ) : null}
-
         <ScrollArea className="mt-3 min-h-0 flex-1">
-          {query.trim().length > 0 && hits.length === 0 && !suggestYomi ? (
+          {query.trim().length > 0 && hits.length === 0 ? (
             <p className="text-muted-foreground py-16 text-center text-sm">
               {t.empty.noResults}
             </p>
