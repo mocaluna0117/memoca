@@ -26,6 +26,10 @@ test.describe("a name cut short", () => {
     await expect(tooltip).toHaveCount(0);
     // but a moment later.
     await expect(tooltip).toBeVisible({ timeout: 2_000 });
+    // To the right, past the sidebar, the rows and their buttons left clear.
+    const sidebar = (await aside.boundingBox())!;
+    const box = (await tooltip.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
 
     // Away from it, gone; a name shown whole has none.
     // In steps, as a mouse goes: the tooltip closes on the pointer moving on

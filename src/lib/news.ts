@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-07-name-tooltip-right",
+    date: "2026-10-07",
+    title: "名前の全体はサイドバーの右に",
+    details: [
+      "切れた名前にマウスを乗せると出る名前の全体を、サイドバー（または一覧）の右側に出すようにしました。下の行やボタンに重なりません。マウスを名前から離すと、すぐに消えます。",
+    ],
+  },
+  {
     id: "2026-10-07-name-tooltip",
     date: "2026-10-07",
     title: "切れた名前を全部見られるように",
