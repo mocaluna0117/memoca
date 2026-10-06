@@ -1,6 +1,6 @@
 "use client";
 
-import { FolderIcon, Inbox, LayoutTemplate, Lock } from "lucide-react";
+import { CalendarDays, FolderIcon, Inbox, LayoutTemplate, Lock } from "lucide-react";
 import { useMemo } from "react";
 import {
   Command,
@@ -119,6 +119,8 @@ export function FolderPicker({
                     <Inbox className="size-4 opacity-70" aria-hidden />
                   ) : node.system === "templates" ? (
                     <LayoutTemplate className="size-4 opacity-70" aria-hidden />
+                  ) : node.system === "journal" ? (
+                    <CalendarDays className="size-4 opacity-70" aria-hidden />
                   ) : node.locked ? (
                     <Lock className="size-4 opacity-70" aria-hidden />
                   ) : (

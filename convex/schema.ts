@@ -113,7 +113,7 @@ export default defineSchema({
      * one whose notes are the templates new notes are made from. Neither is
      * trashed or locked.
      */
-    system: v.union(v.literal("inbox"), v.literal("templates"), v.null()),
+    system: v.union(v.literal("inbox"), v.literal("templates"), v.literal("journal"), v.null()),
     deletedAt: v.union(v.number(), v.null()),
     purged: v.boolean(),
     /**

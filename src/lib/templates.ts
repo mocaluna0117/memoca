@@ -122,6 +122,16 @@ export async function fillFromTemplate(noteId: string, templateId: string): Prom
 }
 
 /**
+ * Fills a note just made with a template's body only, its title left as it
+ * is: a day's note, named by its day (lib/journal). Nothing when none of
+ * the template is on this device yet.
+ */
+export async function fillBodyFromTemplate(noteId: string, templateId: string): Promise<void> {
+  const body = await bodyCopy(templateId);
+  if (body.length > 0) await writeBody(noteId, (fragment) => fragment.insert(0, body));
+}
+
+/**
  * Keeps a copy of a note as a template: a new note in the folder of them,
  * with its title and body. Not for a locked note: the copy would be
  * plaintext.

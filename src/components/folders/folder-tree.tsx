@@ -12,6 +12,7 @@ import {
   FolderOpen,
   FolderPlus,
   Inbox,
+  CalendarDays,
   LayoutTemplate,
   Lock,
   Loader2,
@@ -591,8 +592,8 @@ export function FolderTree({
                     portalContainer={menuContainer}
                     onCloseAutoFocus={onCloseAutoFocus}
                   >
-                    {/* Templates are its notes, not its folders'. */}
-                    {node.system === "templates" ? null : (
+                    {/* Templates are its notes, not its folders'; so are the days'. */}
+                    {node.system === "templates" || node.system === "journal" ? null : (
                       <DropdownMenuItem
                         onSelect={async () => {
                           const id = await createFolder({
@@ -751,6 +752,7 @@ function FolderGlyph({
   if (busy) return <Loader2 className="size-4 shrink-0 animate-spin opacity-70" aria-hidden />;
   if (system === "inbox") return <Inbox className="size-4 shrink-0 opacity-70" aria-hidden />;
   if (system === "templates") return <LayoutTemplate className="size-4 shrink-0 opacity-70" aria-hidden />;
+  if (system === "journal") return <CalendarDays className="size-4 shrink-0 opacity-70" aria-hidden />;
   if (lock === "own") return <FolderLock className="size-4 shrink-0 opacity-70" aria-hidden />;
   const Icon = open ? FolderOpen : FolderIcon;
   return (

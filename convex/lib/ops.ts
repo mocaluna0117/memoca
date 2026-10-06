@@ -17,7 +17,7 @@ export const folderOpV = v.object({
     v.object({
       parentId: v.union(v.string(), v.null()),
       sortKey: v.string(),
-      system: v.union(v.literal("inbox"), v.literal("templates"), v.null()),
+      system: v.union(v.literal("inbox"), v.literal("templates"), v.literal("journal"), v.null()),
     }),
   ),
   name: v.optional(

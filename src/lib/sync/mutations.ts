@@ -166,6 +166,47 @@ export async function ensureTemplatesFolder(): Promise<{ folderId: string; made:
   return { folderId, made: true };
 }
 
+export const JOURNAL_FOLDER_ID = "journal";
+
+/**
+ * The folder of the days' notes (lib/journal), made if this device has none.
+ * Below Inbox; like it, never trashed, moved or locked, and like the
+ * templates' folder, with no folders of its own.
+ */
+export async function ensureJournalFolder(): Promise<string> {
+  const folderId = JOURNAL_FOLDER_ID;
+  const existing = await db().folders.get(folderId);
+  if (existing && !existing.purged) return folderId;
+  const { ts, device } = await now();
+  const name = "日記";
+  const sortKey = "a0";
+  await db().folders.put({
+    folderId,
+    parentId: null,
+    name,
+    icon: null,
+    sortKey,
+    locked: false,
+    system: "journal",
+    deletedAt: null,
+    purged: false,
+    ts: { name: ts, place: ts, trash: zero(device), lock: zero(device) },
+    seq: 0,
+  });
+  await enqueue({
+    kind: "folder",
+    entityId: folderId,
+    payload: {
+      kind: "folder",
+      folderId,
+      create: { parentId: null, sortKey, system: "journal" },
+      name: { value: name, icon: null, ts },
+      place: { parentId: null, sortKey, ts },
+    },
+  });
+  return folderId;
+}
+
 export async function renameFolder(folderId: string, name: string): Promise<void> {
   const database = db();
   const folder = await database.folders.get(folderId);
@@ -309,9 +350,11 @@ export async function createNote(opts: {
    * (or, on a device that has not received its Inbox yet, the top level).
    */
   topLevel?: boolean;
+  /** Its id, when the caller knows it: a day's note (lib/journal). A new one otherwise. */
+  noteId?: string;
 }): Promise<string> {
   const { ts, device } = await now();
-  const noteId = uuidv7();
+  const noteId = opts.noteId ?? uuidv7();
   const folderId = opts.topLevel ? null : (opts.folderId ?? (await inboxFolderId()));
   // For Inbox, which this device has not received yet: filed there once it
   // has (fileAwaitingInbox), not left in the sidebar.
