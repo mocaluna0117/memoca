@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-06-quota-200mb",
+    date: "2026-10-06",
+    title: "保存できる容量が 200MB に",
+    details: [
+      "1 人あたりの保存容量を 100MB から 200MB に増やしました。画像やファイルを、これまでの倍まで置けます。",
+      "使っている量と空きは、設定の「保存容量」で確かめられます。",
+    ],
+  },
+  {
     id: "2026-10-06-delete-unused-now",
     date: "2026-10-06",
     title: "使われなくなったファイルを今すぐ削除",
