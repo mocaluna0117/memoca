@@ -40,6 +40,8 @@ export type DragData =
   | { owner: string; kind: "before"; folderId: string }
   /** The strip above a note's row in the sidebar, to put a folder or a note before it. */
   | { owner: string; kind: "beforeNote"; noteId: string }
+  /** The strip below the last note's row of a folder in the sidebar, to put a note after it. */
+  | { owner: string; kind: "afterNote"; noteId: string }
   /** Where a folder, or a note, goes to the top level. */
   | { owner: string; kind: "root" };
 

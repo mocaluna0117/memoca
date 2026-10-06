@@ -46,7 +46,7 @@ import {
 import { useFolderTree, useNote, useNotesByFolder, useTopLevelNotes } from "@/lib/hooks/data";
 import { LOCKED_LABEL, useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { setNoteOrder, useNoteOrders } from "@/lib/hooks/use-note-order";
-import { NOTE_ORDERS, isNoteOrder, orderNotes } from "@/lib/note-order";
+import { NOTE_ORDERS, isNoteOrder, orderNotes, placeAt } from "@/lib/note-order";
 import { extendTo, toggled } from "@/lib/note-selection";
 import { isApple } from "@/lib/platform";
 import { useClientValue } from "@/lib/hooks/use-client-value";
@@ -67,6 +67,7 @@ import {
   createFolder,
   moveFolder,
   moveNote,
+  placePinned,
   renameFolder,
   renameNote,
   setFolderTrashed,
@@ -363,6 +364,14 @@ export function FolderTree({
       else await moveNoteTo(note, null);
       return;
     }
+    // Beside a note of a folder: placed among that folder's.
+    if (target.kind === "beforeNote" || target.kind === "afterNote") {
+      const beside = noteOf(target.noteId);
+      if (beside && beside.folderId !== null) {
+        await dropBeside(note, beside, target.kind === "afterNote");
+        return;
+      }
+    }
     if (target.kind !== "before" && target.kind !== "beforeNote") return;
     if (target.kind === "beforeNote" && target.noteId === noteId) return;
     const place = placeBefore(target, `n:${noteId}`);
@@ -373,6 +382,71 @@ export function FolderTree({
     }
     // To the top level, which no lock covers: a move there is only a move.
     else await moveNote(noteId, null, place.sortKey);
+  };
+
+  // One placing at a time, each from the order the one before left.
+  const placing = useRef<Promise<void>>(Promise.resolve());
+  /**
+   * Puts a note of a folder at `index` among those of its kind (pinned, or
+   * not: pinned notes stay above) shown there, itself left out: the pinned
+   * among the pinned, by their own places; the others by sort keys, as
+   * the list places them by hand.
+   */
+  const placeInFolder = (note: Note, folderId: string, index: number) => {
+    const others = notesIn(folderId).filter(
+      (each) => each.pinned === note.pinned && each.noteId !== note.noteId,
+    );
+    if (index < 0 || index > others.length) return placing.current;
+    placing.current = placing.current
+      .then(async () => {
+        if (note.pinned) {
+          await placePinned(
+            note.noteId,
+            others.map((each) => each.noteId),
+            index,
+          );
+          return;
+        }
+        const { key, rekeyed } = placeAt(others, index);
+        for (const each of [...rekeyed, { noteId: note.noteId, sortKey: key }]) {
+          // Moved to another folder since (on another device, say): left there.
+          const now = await db().notes.get(each.noteId);
+          if (each.noteId !== note.noteId && now?.folderId !== folderId) continue;
+          await moveNote(each.noteId, folderId, each.sortKey);
+        }
+      })
+      .catch(() => {});
+    return placing.current;
+  };
+
+  /** Says why a folder's notes were not placed by hand. */
+  const notManual = () => toast("並べ替えは、並び順が「手動」のフォルダでできます。フォルダの「…」メニューの「並び順」で変えられます。");
+
+  /**
+   * A note dropped just above (or, the last, below) a note of a folder: from
+   * another folder, moved into this one, and placed there where it is placed
+   * by hand; from this one, placed there, where it is placed by hand or both
+   * are pinned (pinned notes stay above the others).
+   */
+  const dropBeside = async (note: Note, beside: Note, after: boolean) => {
+    if (note.noteId === beside.noteId) return;
+    const folderId = beside.folderId!;
+    const manual = orderOf(folderId) === "manual";
+    if (note.folderId !== folderId) {
+      if (!(await moveNoteTo(note, folderId))) return;
+      if (!manual || note.pinned || beside.pinned) return;
+    } else if (note.pinned !== beside.pinned) {
+      return;
+    } else if (!note.pinned && !manual) {
+      notManual();
+      return;
+    }
+    const others = notesIn(folderId).filter(
+      (each) => each.pinned === note.pinned && each.noteId !== note.noteId,
+    );
+    const at = others.findIndex((each) => each.noteId === beside.noteId);
+    if (at < 0) return;
+    await placeInFolder(note, folderId, after ? at + 1 : at);
   };
 
   // A small threshold so a plain click still selects the folder (see
@@ -534,8 +608,21 @@ export function FolderTree({
 
   /** Moves a row one place up or down among its siblings: at the top level, folders and notes alike. */
   const nudge = async (row: Row, direction: -1 | 1) => {
-    // A folder's notes are in the order its list is set to.
-    if (row.kind === "note" && row.note.folderId !== null) return;
+    // A folder's notes: where they are placed by hand, or among the pinned.
+    if (row.kind === "note" && row.note.folderId !== null) {
+      const { note } = row;
+      const folderId = note.folderId!;
+      if (!note.pinned && orderOf(folderId) !== "manual") {
+        notManual();
+        return;
+      }
+      const group = notesIn(folderId).filter((each) => each.pinned === note.pinned);
+      const index = group.findIndex((each) => each.noteId === note.noteId) + direction;
+      if (index < 0 || index >= group.length) return;
+      refocus.current = rowKey(row);
+      await placeInFolder(note, folderId, index);
+      return;
+    }
     if (row.kind === "folder" && row.node.parentId !== null) {
       const node = row.node;
       const siblings = siblingsOf(tree, node.folderId);
@@ -665,12 +752,17 @@ export function FolderTree({
         </div>
       ) : null}
       <div ref={list} className="flex flex-col gap-0.5">
-        {rows.map((row) => {
+        {rows.map((row, index) => {
           if (row.kind === "note") {
             const { note } = row;
+            const next = rows[index + 1];
             return (
               <TreeNoteRow
                 key={note.noteId}
+                last={
+                  note.folderId !== null &&
+                  (next?.kind !== "note" || next.note.folderId !== note.folderId)
+                }
                 owner={owner}
                 note={note}
                 depth={row.depth}
@@ -1090,6 +1182,7 @@ function TreeNoteRow({
   note,
   depth,
   inFolder,
+  last,
   selected,
   chosen,
   canDrag,
@@ -1112,8 +1205,10 @@ function TreeNoteRow({
   note: Note;
   /** How far in it is: 0 at the top level. */
   depth: number;
-  /** In a folder, in the order of that folder's list: not placed among the rows. */
+  /** In a folder: its lock is not changed from here. */
   inFolder: boolean;
+  /** The last of its folder's notes shown, with a strip below it to drop a note after it. */
+  last: boolean;
   selected: boolean;
   /** Chosen, to be moved along with the others chosen. */
   chosen: boolean;
@@ -1147,7 +1242,7 @@ function TreeNoteRow({
   const name = noteName(title, note.locked ? null : note.preview);
   const Icon = locking ? Loader2Note : chosen ? CheckCircle2 : note.locked ? FileLock : FileText;
   return (
-    <NoteRowDropZone owner={owner} noteId={note.noteId} disabled={!canDrag || inFolder}>
+    <NoteRowDropZone owner={owner} noteId={note.noteId} disabled={!canDrag} last={last}>
       <div
         ref={button}
         className={cn(

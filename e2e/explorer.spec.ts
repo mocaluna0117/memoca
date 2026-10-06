@@ -147,6 +147,54 @@ test.describe("folders' notes in the sidebar", () => {
     await expect(treeNote(page, "議事録")).toBeVisible();
   });
 
+  test("a folder's notes placed by hand in the tree: dragged, and by Option and the arrows", async ({ page }) => {
+    test.skip(test.info().project.name !== "desktop", "dragged with a mouse");
+    await newFolder(page, "仕事");
+    for (const title of ["い", "あ", "う"]) await newNoteIn(page, "仕事", title);
+    const names = async () =>
+      (await page.locator("aside [data-tree-note]").filter({ visible: true }).allTextContents()).map(
+        (name) => name.slice(0, 1),
+      );
+    // By hand until chosen: as made, the newest first.
+    await expect.poll(names).toEqual(["う", "あ", "い"]);
+
+    /** Drags a note's row to a point, in steps, as a mouse does. */
+    const drag = async (name: string, to: { x: number; y: number }) => {
+      const from = (await treeNote(page, name).boundingBox())!;
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(to.x, to.y, { steps: 12 });
+      await page.mouse.up();
+    };
+
+    // The last, above the first.
+    const first = (await treeNote(page, "う").boundingBox())!;
+    await drag("い", { x: first.x + first.width / 2, y: first.y });
+    await expect.poll(names).toEqual(["い", "う", "あ"]);
+
+    // The second, below the last.
+    const last = (await treeNote(page, "あ").boundingBox())!;
+    await drag("う", { x: last.x + last.width / 2, y: last.y + last.height + 1 });
+    await expect.poll(names).toEqual(["い", "あ", "う"]);
+
+    // By the keys: up one, focus kept on it.
+    await treeNote(page, "う").focus();
+    await page.keyboard.press("Alt+ArrowUp");
+    await expect.poll(names).toEqual(["い", "う", "あ"]);
+    await expect(treeNote(page, "う")).toBeFocused();
+
+    // Ordered otherwise, not placed: said why.
+    await page.locator("aside").getByRole("button", { name: "仕事 の操作" }).click();
+    await page.getByRole("menuitem", { name: "並び順" }).click();
+    await page.getByRole("menuitemradio", { name: "タイトル順" }).click();
+    await expect.poll(names).toEqual(["あ", "い", "う"]);
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await treeNote(page, "う").focus();
+    await page.keyboard.press("Alt+ArrowUp");
+    await expect(page.getByText("並べ替えは、並び順が「手動」のフォルダでできます", { exact: false })).toBeVisible();
+    await expect.poll(names).toEqual(["あ", "い", "う"]);
+  });
+
   test("all notes are still a list beside the sidebar", async ({ page }) => {
     test.skip(test.info().project.name !== "desktop", "the list beside the sidebar");
     await newFolder(page, "趣味");

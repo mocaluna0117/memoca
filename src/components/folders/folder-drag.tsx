@@ -150,18 +150,22 @@ export function RootDropZone({ owner }: { owner: string }) {
 }
 
 /**
- * A note's row in the sidebar (one at the top level, in no folder): the
- * strip above it, to put what is dragged before it, round the row.
+ * A note's row in the sidebar: the strip above it, to put what is dragged
+ * before it, round the row; and, the last of a folder's notes, the strip
+ * below it, to put a note after it.
  */
 export function NoteRowDropZone({
   owner,
   noteId,
   disabled,
+  last = false,
   children,
 }: {
   owner: string;
   noteId: string;
   disabled: boolean;
+  /** The last of its folder's notes shown. */
+  last?: boolean;
   children: ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({
@@ -169,8 +173,24 @@ export function NoteRowDropZone({
     data: { owner, kind: "beforeNote", noteId } satisfies DragData,
     disabled,
   });
+  const { setNodeRef: setAfterRef, isOver: overAfter } = useDroppable({
+    id: `${owner}/afterNote/${noteId}`,
+    data: { owner, kind: "afterNote", noteId } satisfies DragData,
+    disabled: disabled || !last,
+  });
   return (
     <div className="relative">
+      {last ? (
+        <div
+          ref={setAfterRef}
+          className={cn(
+            "absolute inset-x-0 -bottom-1 z-10 h-2",
+            overAfter &&
+              "before:bg-primary before:absolute before:inset-x-0 before:bottom-1 before:h-0.5 before:rounded-full",
+          )}
+          aria-hidden
+        />
+      ) : null}
       <div
         ref={setNodeRef}
         className={cn(
