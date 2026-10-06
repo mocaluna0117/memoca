@@ -81,6 +81,24 @@ test.describe("folders' notes in the sidebar", () => {
     await hideFolders(page);
   });
 
+  test("one folder open at a time: another opened, the one open closes", async ({ page }) => {
+    test.skip(test.info().project.name !== "desktop", "the sidebar beside the note");
+    await newFolder(page, "仕事");
+    await newNoteIn(page, "仕事", "議事録");
+    await newFolder(page, "趣味");
+    await newNoteIn(page, "趣味", "釣り");
+
+    // 趣味 opened for its new note, 仕事 closed.
+    await expect(treeNote(page, "釣り")).toBeVisible();
+    await expect(treeNote(page, "議事録")).toBeHidden();
+
+    await folderRow(page, "仕事").click();
+    await expect(treeNote(page, "議事録")).toBeVisible();
+    await expect(treeNote(page, "釣り")).toBeHidden();
+    // The note open stays open.
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("釣り");
+  });
+
   test("all notes are still a list beside the sidebar", async ({ page }) => {
     test.skip(test.info().project.name !== "desktop", "the list beside the sidebar");
     await newFolder(page, "趣味");

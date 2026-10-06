@@ -169,6 +169,31 @@ export function FolderTree({
   const expanded = useTreeOpen((s) => s.open);
   const toggle = useTreeOpen((s) => s.toggle);
   const expand = useTreeOpen((s) => s.expand);
+  const only = useTreeOpen((s) => s.only);
+  /** A folder and every folder it is in. */
+  const pathTo = (folderId: string) => {
+    const path: string[] = [];
+    for (let node = findNode(tree, folderId); node; ) {
+      path.push(node.folderId);
+      node = node.parentId ? findNode(tree, node.parentId) : null;
+    }
+    return path;
+  };
+  /**
+   * Opens a folder. Here, one at a time, as in an explorer kept tidy: the
+   * folders it is in stay open, every other closes.
+   */
+  const openFolder = (folderId: string) => {
+    if (!explorer) {
+      expand([folderId]);
+      return;
+    }
+    const path = pathTo(folderId);
+    only(path.length > 0 ? path : [folderId]);
+  };
+  /** Its row clicked, or its chevron: closed if open, else opened. */
+  const toggleRow = (folderId: string) =>
+    expanded.has(folderId) ? toggle(folderId) : openFolder(folderId);
   const [renaming, setRenaming] = useState<FolderNode | null>(null);
   const [moving, setMoving] = useState<FolderNode | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -279,7 +304,7 @@ export function FolderTree({
         return;
       }
       await moveFolderTo(sourceId, targetId);
-      expand([targetId]);
+      openFolder(targetId);
       return;
     }
     if (target.kind !== "before" && target.kind !== "beforeNote") return;
@@ -388,22 +413,20 @@ export function FolderTree({
     if (!explorer || !shownFolder) return;
     const key = `${selectedNoteId ?? ""}:${shownFolder}`;
     if (revealed.current === key) return;
-    const path: string[] = [];
-    for (let node = findNode(tree, shownFolder); node; ) {
-      path.push(node.folderId);
-      node = node.parentId ? findNode(tree, node.parentId) : null;
-    }
+    const path = pathTo(shownFolder);
     // Not loaded yet: once it is.
     if (path.length === 0) return;
     revealed.current = key;
-    expand(path);
-  }, [explorer, shownFolder, selectedNoteId, tree, expand]);
+    // The one open, as one opened by its row is.
+    only(path);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pathTo reads the tree
+  }, [explorer, shownFolder, selectedNoteId, tree, only]);
 
   /** A new note in a folder, opened to be written in, the folder opened to show it. */
   const newNoteIn = async (folderId: string) => {
     const id = await createNoteIn(folderId);
     if (!id) return;
-    expand([folderId]);
+    openFolder(folderId);
     onOpenNote(id, folderId);
   };
 
@@ -487,7 +510,7 @@ export function FolderTree({
     const isOpen = expanded.has(node.folderId);
     switch (key) {
       case "ArrowRight":
-        if (hasChildren && !isOpen) toggle(node.folderId);
+        if (hasChildren && !isOpen) openFolder(node.folderId);
         // The first of what is inside: the row after it.
         else if (hasChildren) focusKey(rows[index + 1]);
         return true;
@@ -587,7 +610,7 @@ export function FolderTree({
                   }
                   aria-expanded={hasChildren ? expanded.has(node.folderId) : undefined}
                   tabIndex={hasChildren ? undefined : -1}
-                  onClick={() => hasChildren && toggle(node.folderId)}
+                  onClick={() => hasChildren && toggleRow(node.folderId)}
                   className={cn(
                     "flex size-5 shrink-0 items-center justify-center rounded",
                     !hasChildren && "invisible",
@@ -630,7 +653,7 @@ export function FolderTree({
                     disabled={!canDrag || isSystem}
                     // Opened and closed, as an explorer's folder is, or its
                     // notes shown in the list beside.
-                    onClick={() => (explorer ? toggle(node.folderId) : onSelect(node.folderId))}
+                    onClick={() => (explorer ? toggleRow(node.folderId) : onSelect(node.folderId))}
                     // A locked folder's name is unreadable until the vault is
                     // open, and there is nothing to edit in a placeholder.
                     onKeyDown={(event) => onRowKeyDown(event, row, node.name !== null)}
@@ -702,7 +725,7 @@ export function FolderTree({
                             parentId: node.folderId,
                             name: "新しいフォルダ",
                           });
-                          expand([node.folderId]);
+                          openFolder(node.folderId);
                           onCreated(id);
                         }}
                       >

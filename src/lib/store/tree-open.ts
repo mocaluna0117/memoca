@@ -28,6 +28,8 @@ type TreeOpenStore = {
   toggle: (folderId: string) => void;
   /** Opens every one of them, those open already staying so. */
   expand: (folderIds: string[]) => void;
+  /** Opens these, and closes every other. */
+  only: (folderIds: string[]) => void;
 };
 
 /**
@@ -48,6 +50,13 @@ export const useTreeOpen = create<TreeOpenStore>((set, get) => ({
     const current = get().open;
     if (folderIds.every((id) => current.has(id))) return;
     const next = new Set([...current, ...folderIds]);
+    save(next);
+    set({ open: next });
+  },
+  only: (folderIds) => {
+    const current = get().open;
+    if (current.size === folderIds.length && folderIds.every((id) => current.has(id))) return;
+    const next = new Set(folderIds);
     save(next);
     set({ open: next });
   },
