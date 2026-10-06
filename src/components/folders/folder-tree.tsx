@@ -10,6 +10,7 @@ import {
   FolderInput,
   FolderLock,
   FolderOpen,
+  FilePlus,
   FolderPlus,
   Inbox,
   CalendarDays,
@@ -33,8 +34,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useFolderTree, useTopLevelNotes } from "@/lib/hooks/data";
-import { useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
+import { useFolderTree, useNote, useNotesByFolder, useTopLevelNotes } from "@/lib/hooks/data";
+import { LOCKED_LABEL, useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
+import { useNoteOrders } from "@/lib/hooks/use-note-order";
+import { orderNotes } from "@/lib/note-order";
+import { useTreeOpen } from "@/lib/store/tree-open";
 import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
 import { t } from "@/lib/i18n/ja";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
@@ -73,13 +77,16 @@ import { dragData, shownUnderPointer, useWorkspaceDrag } from "@/components/shel
 const FOLDER_KEYS_HINT =
   "上下の矢印キーで移動、右と左の矢印キーで開閉します。Enter で名前を変更、スペースで開きます。Option（Alt）と上下の矢印キーで並べ替えます。";
 
-/** A row of the tree: a folder, or a note kept at the top level, in no folder. */
-type Row = { kind: "folder"; node: FolderNode } | { kind: "note"; note: Note };
+/**
+ * A row of the tree: a folder, or a note: kept at the top level, in no
+ * folder (at depth 0), or, shown as an explorer shows files, in its folder.
+ */
+type Row = { kind: "folder"; node: FolderNode } | { kind: "note"; note: Note; depth: number };
 /** What is at the top level, in order, with the sort key that orders it. */
-type TopItem = Row & { key: string };
+type TopItem = ({ kind: "folder"; node: FolderNode } | { kind: "note"; note: Note }) & { key: string };
 
 /** A row's own id among every row's, folders' and notes'. */
-const rowKey = (row: Row) => (row.kind === "folder" ? `f:${row.node.folderId}` : `n:${row.note.noteId}`);
+const rowKey = (row: Row | TopItem) => (row.kind === "folder" ? `f:${row.node.folderId}` : `n:${row.note.noteId}`);
 
 /**
  * The top level in order: the folders but Inbox (shown first whatever its
@@ -99,12 +106,17 @@ export function topLevelOrder(tree: FolderNode[], notes: Note[]): TopItem[] {
 }
 
 type Props = {
+  /**
+   * Each folder's notes shown inside it, as VS Code's explorer shows files: a
+   * folder's row opens and closes it rather than showing its notes beside.
+   */
+  explorer?: boolean;
   selectedFolderId: string | null;
   onSelect: (folderId: string | null) => void;
   /** The note open, to show which of those kept in the sidebar it is. */
   selectedNoteId?: string | null;
-  /** Opens a note kept in the sidebar; with null, closes the one open. */
-  onOpenNote?: (noteId: string | null) => void;
+  /** Opens a note of the tree, in its folder (null: none); with null, closes the one open. */
+  onOpenNote?: (noteId: string | null, folderId?: string | null) => void;
   /** Selects a new folder without dismissing the panel it was created in. */
   onCreated?: (folderId: string) => void;
   /** Set when this tree lives inside the mobile drawer. */
@@ -112,6 +124,7 @@ type Props = {
 };
 
 export function FolderTree({
+  explorer = false,
   selectedFolderId,
   onSelect,
   selectedNoteId = null,
@@ -122,7 +135,28 @@ export function FolderTree({
   const tree = useFolderTree();
   const topNotes = useTopLevelNotes();
   const top = useMemo(() => topLevelOrder(tree, topNotes), [tree, topNotes]);
-  const { moveNoteTo, toggleNoteLock } = useLockActions();
+  // Each folder's notes, in the order its list is set to on this device.
+  const notesByFolder = useNotesByFolder(explorer);
+  const orderOf = useNoteOrders();
+  const folderNotes = useMemo(() => {
+    const ordered = new Map<string, Note[]>();
+    for (const [folderId, notes] of notesByFolder) {
+      const order = orderOf(folderId);
+      const names =
+        order === "title"
+          ? new Map(
+              notes.map((note) => [
+                note.noteId,
+                note.locked ? LOCKED_LABEL : noteName(note.title, note.preview).text,
+              ]),
+            )
+          : undefined;
+      ordered.set(folderId, orderNotes(notes, order, names));
+    }
+    return ordered;
+  }, [notesByFolder, orderOf]);
+  const notesIn = (folderId: string) => folderNotes.get(folderId) ?? [];
+  const { moveNoteTo, toggleNoteLock, createNoteIn } = useLockActions();
   const [movingNote, setMovingNote] = useState<Note | null>(null);
   // A note kept in the sidebar being renamed: in place (Enter), or in the
   // dialog its menu opens, as a folder is.
@@ -132,7 +166,9 @@ export function FolderTree({
   const busy = useLockProgress((s) => s.busy);
   // Which lock covers each folder, its own or a parent's.
   const coverage = useMemo(() => lockCoverage(allNodes(tree)), [tree]);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const expanded = useTreeOpen((s) => s.open);
+  const toggle = useTreeOpen((s) => s.toggle);
+  const expand = useTreeOpen((s) => s.expand);
   const [renaming, setRenaming] = useState<FolderNode | null>(null);
   const [moving, setMoving] = useState<FolderNode | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -173,7 +209,9 @@ export function FolderTree({
   const owner = useId();
   const nameOf = (folderId: string | undefined) =>
     (folderId && findNode(tree, folderId)?.name) || "フォルダ";
-  const noteOf = (noteId: string | undefined) => topNotes.find((note) => note.noteId === noteId);
+  const noteOf = (noteId: string | undefined) =>
+    topNotes.find((note) => note.noteId === noteId) ??
+    [...notesByFolder.values()].flat().find((note) => note.noteId === noteId);
   const draggedFolder = (active: { data: { current?: unknown } }) => {
     const data = dragData(active);
     return data?.kind === "folder" ? data.folderId : undefined;
@@ -241,7 +279,7 @@ export function FolderTree({
         return;
       }
       await moveFolderTo(sourceId, targetId);
-      setExpanded((current) => new Set(current).add(targetId));
+      expand([targetId]);
       return;
     }
     if (target.kind !== "before" && target.kind !== "beforeNote") return;
@@ -257,18 +295,19 @@ export function FolderTree({
   };
 
   /**
-   * A note kept in the sidebar, dropped: into a folder (locked first, as a
-   * move there does), or among the top level's folders and notes.
+   * A note of the tree, dropped: into a folder (locked first, as a move there
+   * does), or among the top level's folders and notes.
    */
   const dropNote = async (noteId: string, target: NonNullable<ReturnType<typeof dragData>>) => {
     const note = noteOf(noteId);
     if (!note) return;
     if (target.kind === "into") {
-      await moveNoteTo(note, target.folderId);
+      if (note.folderId !== target.folderId) await moveNoteTo(note, target.folderId);
       return;
     }
     if (target.kind === "root") {
-      await moveNote(noteId, null);
+      if (note.folderId === null) await moveNote(noteId, null);
+      else await moveNoteTo(note, null);
       return;
     }
     if (target.kind !== "before" && target.kind !== "beforeNote") return;
@@ -276,7 +315,10 @@ export function FolderTree({
     const place = placeBefore(target, `n:${noteId}`);
     if (!place) return;
     // Above a folder inside another: into that one, as the move would be.
-    if (place.parentId !== null) await moveNoteTo(note, place.parentId);
+    if (place.parentId !== null) {
+      if (note.folderId !== place.parentId) await moveNoteTo(note, place.parentId);
+    }
+    // To the top level, which no lock covers: a move there is only a move.
     else await moveNote(noteId, null, place.sortKey);
   };
 
@@ -314,19 +356,61 @@ export function FolderTree({
   });
 
   // Inbox first, then the top level in order, each folder with what is open
-  // inside it.
+  // inside it: its folders, then, as an explorer shows files, its notes.
   const system = tree.filter((node) => node.system !== null);
+  const walk = (nodes: FolderNode[]): Row[] =>
+    explorer
+      ? nodes.flatMap((node): Row[] => [
+          { kind: "folder", node },
+          ...(expanded.has(node.folderId)
+            ? [
+                ...walk(node.children),
+                ...notesIn(node.folderId).map((note): Row => ({ kind: "note", note, depth: node.depth + 1 })),
+              ]
+            : []),
+        ])
+      : flattenTree(nodes, expanded).map((node) => ({ kind: "folder" as const, node }));
   const rows: Row[] = [
-    ...flattenTree(system, expanded).map((node) => ({ kind: "folder" as const, node })),
+    ...walk(system),
     ...top.flatMap((item): Row[] =>
-      item.kind === "folder"
-        ? flattenTree([item.node], expanded).map((node) => ({ kind: "folder" as const, node }))
-        : [{ kind: "note", note: item.note }],
+      item.kind === "folder" ? walk([item.node]) : [{ kind: "note", note: item.note, depth: 0 }],
     ),
   ];
+  /** Whether a folder has anything to open: folders, or, here, notes. */
+  const hasRows = (node: FolderNode) => node.children.length > 0 || notesIn(node.folderId).length > 0;
+
+  // The note open (or else the folder) shown, its folders opened, as VS Code
+  // shows the file open: once for each, so that one closed again stays so.
+  const openNoteFolder = useNote(explorer ? selectedNoteId : null)?.folderId ?? null;
+  const shownFolder = selectedNoteId ? openNoteFolder : selectedFolderId;
+  const revealed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!explorer || !shownFolder) return;
+    const key = `${selectedNoteId ?? ""}:${shownFolder}`;
+    if (revealed.current === key) return;
+    const path: string[] = [];
+    for (let node = findNode(tree, shownFolder); node; ) {
+      path.push(node.folderId);
+      node = node.parentId ? findNode(tree, node.parentId) : null;
+    }
+    // Not loaded yet: once it is.
+    if (path.length === 0) return;
+    revealed.current = key;
+    expand(path);
+  }, [explorer, shownFolder, selectedNoteId, tree, expand]);
+
+  /** A new note in a folder, opened to be written in, the folder opened to show it. */
+  const newNoteIn = async (folderId: string) => {
+    const id = await createNoteIn(folderId);
+    if (!id) return;
+    expand([folderId]);
+    onOpenNote(id, folderId);
+  };
 
   /** Moves a row one place up or down among its siblings: at the top level, folders and notes alike. */
   const nudge = async (row: Row, direction: -1 | 1) => {
+    // A folder's notes are in the order its list is set to.
+    if (row.kind === "note" && row.note.folderId !== null) return;
     if (row.kind === "folder" && row.node.parentId !== null) {
       const node = row.node;
       const siblings = siblingsOf(tree, node.folderId);
@@ -393,14 +477,19 @@ export function FolderTree({
         focusKey(rows.at(-1));
         return true;
     }
-    if (row.kind === "note") return key === "ArrowRight" || key === "ArrowLeft";
+    if (row.kind === "note") {
+      // Out to its folder, as from a folder to its parent.
+      if (key === "ArrowLeft" && row.note.folderId !== null) focusRow(row.note.folderId);
+      return key === "ArrowRight" || key === "ArrowLeft";
+    }
     const node = row.node;
-    const hasChildren = node.children.length > 0;
+    const hasChildren = hasRows(node);
     const isOpen = expanded.has(node.folderId);
     switch (key) {
       case "ArrowRight":
         if (hasChildren && !isOpen) toggle(node.folderId);
-        else if (hasChildren) focusRow(node.children[0]?.folderId);
+        // The first of what is inside: the row after it.
+        else if (hasChildren) focusKey(rows[index + 1]);
         return true;
       case "ArrowLeft":
         if (hasChildren && isOpen) toggle(node.folderId);
@@ -418,15 +507,6 @@ export function FolderTree({
     if (folderId) rowElement(`f:${folderId}`)?.focus();
   };
 
-  const toggle = (folderId: string) => {
-    setExpanded((current) => {
-      const next = new Set(current);
-      if (next.has(folderId)) next.delete(folderId);
-      else next.add(folderId);
-      return next;
-    });
-  };
-
   return (
     <>
       <p id={hintId} className="sr-only">
@@ -441,12 +521,14 @@ export function FolderTree({
                 key={note.noteId}
                 owner={owner}
                 note={note}
+                depth={row.depth}
+                inFolder={note.folderId !== null}
                 selected={selectedNoteId === note.noteId}
                 canDrag={canDrag && dragging !== note.noteId}
                 describedBy={hintId}
                 menuContainer={menuContainer}
                 onCloseAutoFocus={onCloseAutoFocus}
-                onOpen={() => onOpenNote(note.noteId)}
+                onOpen={() => onOpenNote(note.noteId, note.folderId)}
                 onKeyDown={(event, renamable) => onRowKeyDown(event, row, renamable)}
                 editing={editingNote === note.noteId}
                 onRename={(value) => renameNote(note.noteId, value)}
@@ -469,7 +551,7 @@ export function FolderTree({
           }
           const { node } = row;
           const selected = selectedFolderId === node.folderId && selectedNoteId === null;
-          const hasChildren = node.children.length > 0;
+          const hasChildren = hasRows(node);
           // Inbox and the folder of templates: kept where they are, never locked or trashed.
           const isSystem = node.system !== null;
           const label = node.name ?? (node.nameSealed ? "ロックされたフォルダ" : null);
@@ -546,7 +628,9 @@ export function FolderTree({
                     owner={owner}
                     folderId={node.folderId}
                     disabled={!canDrag || isSystem}
-                    onClick={() => onSelect(node.folderId)}
+                    // Opened and closed, as an explorer's folder is, or its
+                    // notes shown in the list beside.
+                    onClick={() => (explorer ? toggle(node.folderId) : onSelect(node.folderId))}
                     // A locked folder's name is unreadable until the vault is
                     // open, and there is nothing to edit in a placeholder.
                     onKeyDown={(event) => onRowKeyDown(event, row, node.name !== null)}
@@ -570,6 +654,18 @@ export function FolderTree({
                   </FolderDragButton>
                 )}
 
+                {explorer ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="size-6 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 pointer-coarse:opacity-100"
+                    aria-label={`${label ?? "フォルダ"} に${t.action.newNote}`}
+                    onClick={() => void newNoteIn(node.folderId)}
+                  >
+                    <FilePlus className="size-3.5" aria-hidden />
+                  </Button>
+                ) : null}
+
                 {/* Not modal: on a phone this menu lives inside the folder
                 drawer, and two nested focus traps fight each other so the
                 menu closes the moment it opens. */}
@@ -592,6 +688,12 @@ export function FolderTree({
                     portalContainer={menuContainer}
                     onCloseAutoFocus={onCloseAutoFocus}
                   >
+                    {explorer ? (
+                      <DropdownMenuItem onSelect={() => void newNoteIn(node.folderId)}>
+                        <FilePlus className="size-4" aria-hidden />
+                        {t.action.newNote}
+                      </DropdownMenuItem>
+                    ) : null}
                     {/* Templates are its notes, not its folders'; so are the days'. */}
                     {node.system === "templates" || node.system === "journal" ? null : (
                       <DropdownMenuItem
@@ -600,7 +702,7 @@ export function FolderTree({
                             parentId: node.folderId,
                             name: "新しいフォルダ",
                           });
-                          setExpanded((c) => new Set(c).add(node.folderId));
+                          expand([node.folderId]);
                           onCreated(id);
                         }}
                       >
@@ -771,16 +873,19 @@ function allNodes(nodes: FolderNode[]): FolderNode[] {
 }
 
 /**
- * A note kept in the sidebar, at the top level: opened by a click (Space
- * from the keys), renamed in place by Enter or from its menu, as a folder
- * is, dragged among the folders or into one. Its name is its title: renamed
- * here, the note's own title is. Not while its title cannot be read (a
- * locked note, the vault closed). Locked, or its lock taken off, from its
- * menu, as from the note's own: it is in no folder, so its lock is its own.
+ * A note of the tree: kept in the sidebar, at the top level, or shown in its
+ * folder. Opened by a click (Space from the keys), renamed in place by Enter
+ * or from its menu, as a folder is, dragged into a folder, or, at the top
+ * level, among the folders. Its name is its title: renamed here, the note's
+ * own title is. Not while its title cannot be read (a locked note, the vault
+ * closed). At the top level, locked, or its lock taken off, from its menu, as
+ * from the note's own: it is in no folder, so its lock is its own.
  */
 function TreeNoteRow({
   owner,
   note,
+  depth,
+  inFolder,
   selected,
   canDrag,
   describedBy,
@@ -798,6 +903,10 @@ function TreeNoteRow({
 }: {
   owner: string;
   note: Note;
+  /** How far in it is: 0 at the top level. */
+  depth: number;
+  /** In a folder, in the order of that folder's list: not placed among the rows. */
+  inFolder: boolean;
   selected: boolean;
   canDrag: boolean;
   describedBy: string;
@@ -824,7 +933,7 @@ function TreeNoteRow({
   const name = noteName(title, note.locked ? null : note.preview);
   const Icon = locking ? Loader2Note : note.locked ? FileLock : FileText;
   return (
-    <NoteRowDropZone owner={owner} noteId={note.noteId} disabled={!canDrag}>
+    <NoteRowDropZone owner={owner} noteId={note.noteId} disabled={!canDrag || inFolder}>
       <div
         ref={button}
         className={cn(
@@ -832,6 +941,7 @@ function TreeNoteRow({
           "has-[[data-tree-note]:focus-visible]:ring-ring has-[[data-tree-note]:focus-visible]:ring-2",
           selected ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
         )}
+        style={{ paddingLeft: `${depth * 12}px` }}
       >
         {/* Where a folder's chevron is, so names line up. */}
         <span className="size-5 shrink-0" aria-hidden />
@@ -894,7 +1004,8 @@ function TreeNoteRow({
               <FolderInput className="size-4" aria-hidden />
               {t.action.move}
             </DropdownMenuItem>
-            {locking ? (
+            {/* In a folder, its lock is the note's own menu's to change, as from its list. */}
+            {inFolder ? null : locking ? (
               <DropdownMenuItem disabled>
                 <Loader2 className="size-4 animate-spin" aria-hidden />
                 処理中…

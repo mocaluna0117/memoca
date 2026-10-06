@@ -52,12 +52,12 @@ export function AppShell({ children }: { children: ReactNode }) {
     hideDrawer();
   }, [openPinned, hideDrawer]);
 
-  // A note kept in the sidebar opens over every note's list, as it is in
-  // no folder; null closes the one open.
+  // A note of the tree opens in its folder: one kept in the sidebar, in no
+  // folder, over every note's list. Null closes the one open.
   const openNoteHere = useCallback(
-    (noteId: string | null) => {
+    (noteId: string | null, folderId: string | null = null) => {
       if (noteId === null) navigate({ noteId: null });
-      else navigate({ folderId: null, pinned: false, noteId });
+      else navigate({ folderId, pinned: false, noteId });
       hideDrawer();
     },
     [navigate, hideDrawer],

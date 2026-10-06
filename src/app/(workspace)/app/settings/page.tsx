@@ -6,6 +6,7 @@ import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useClientValue, useMediaQuery } from "@/lib/hooks/use-client-value";
+import { SIDEBAR_MODES, type SidebarMode, useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
 import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
@@ -67,6 +68,7 @@ export default function SettingsPage() {
   const { me } = useSync();
   const { theme, setTheme } = useTheme();
   const updateSettings = useMutation(api.users.updateSettings);
+  const [sidebarMode, setSidebarMode] = useSidebarMode();
   const deleteAccount = useMutation(api.users.deleteAccount);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -95,6 +97,29 @@ export default function SettingsPage() {
               <SelectItem value="system">端末の設定に合わせる</SelectItem>
               <SelectItem value="light">ライト</SelectItem>
               <SelectItem value="dark">ダーク</SelectItem>
+            </SelectContent>
+          </Select>
+        </Section>
+
+        <Separator />
+
+        <Section
+          title="フォルダのメモ"
+          description="「フォルダの中に表示」では、VS Code のエクスプローラーのように、フォルダを開くとその中にメモが並びます。「横の一覧に表示」では、フォルダを選ぶと、サイドバーの横にメモの一覧が出ます。この端末だけの設定です。"
+        >
+          <Select
+            value={sidebarMode}
+            onValueChange={(value) => setSidebarMode(value as SidebarMode)}
+          >
+            <SelectTrigger className="w-48" aria-label="フォルダのメモ">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {SIDEBAR_MODES.map((mode) => (
+                <SelectItem key={mode.value} value={mode.value}>
+                  {mode.label}
+                </SelectItem>
+              ))}
             </SelectContent>
           </Select>
         </Section>

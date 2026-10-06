@@ -86,6 +86,33 @@ export function useTopLevelNotes(): Note[] {
   return useMemo(() => notes.filter((note) => !note.purged && note.deletedAt === null), [notes]);
 }
 
+/**
+ * Every folder's notes, by its id, not trashed, in no particular order: for
+ * the sidebar's tree, which shows them inside their folders. Nothing while
+ * `enabled` is not set, the tree showing none.
+ */
+export function useNotesByFolder(enabled: boolean): ReadonlyMap<string, Note[]> {
+  const notes = useLiveQuery(
+    () =>
+      enabled
+        ? db()
+            .notes.filter((note) => note.folderId !== null && !note.purged && note.deletedAt === null)
+            .toArray()
+        : [],
+    [enabled],
+    EMPTY as Note[],
+  );
+  return useMemo(() => {
+    const byFolder = new Map<string, Note[]>();
+    for (const note of notes) {
+      const bucket = byFolder.get(note.folderId!) ?? [];
+      bucket.push(note);
+      byFolder.set(note.folderId!, bucket);
+    }
+    return byFolder;
+  }, [notes]);
+}
+
 /** The templates, by their titles: the readable notes of the folder of them. */
 export function useTemplates(): Note[] {
   const notes = useLiveQuery(

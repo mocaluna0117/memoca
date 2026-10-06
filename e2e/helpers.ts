@@ -15,6 +15,7 @@ const DEBOUNCE_MS = 1_500;
 export async function signUp(page: Page): Promise<string> {
   const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@memoca.test`;
   await page.goto("/");
+  await keepListMode(page);
   const status = await page.evaluate(
     async ([address, password]) => {
       const res = await fetch("/api/auth/sign-up/email", {
@@ -32,6 +33,7 @@ export async function signUp(page: Page): Promise<string> {
 
 export async function signIn(page: Page, email: string): Promise<void> {
   await page.goto("/");
+  await keepListMode(page);
   await page.evaluate(
     async ([address, password]) => {
       await fetch("/api/auth/sign-in/email", {
@@ -42,6 +44,24 @@ export async function signIn(page: Page, email: string): Promise<void> {
     },
     [email, PASSWORD],
   );
+}
+
+/**
+ * A folder's notes in the list beside the sidebar, which the tests were
+ * written against, unless this device has been set otherwise (the tests of
+ * the explorer's mode set it first).
+ */
+async function keepListMode(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    if (localStorage.getItem("memoca:sidebar-mode") === null) {
+      localStorage.setItem("memoca:sidebar-mode", "list");
+    }
+  });
+}
+
+/** Folders' notes inside them in the sidebar, as VS Code's explorer shows files: the app's own default. */
+export async function setExplorerMode(page: Page): Promise<void> {
+  await page.evaluate(() => localStorage.setItem("memoca:sidebar-mode", "explorer"));
 }
 
 export async function openApp(page: Page): Promise<void> {

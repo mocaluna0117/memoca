@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 import { type NoteOrder, isNoteOrder } from "@/lib/note-order";
 
 /** Where this device keeps each list's order: by folder, or "all" for all notes. */
@@ -8,10 +8,19 @@ const KEY = "memoca:note-order";
 
 const listeners = new Set<() => void>();
 
-/** Each list's order as set, where one is. */
-function orders(): Record<string, NoteOrder> {
+/** What is kept, as kept: the same string while it is unchanged. */
+function stored(): string {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(KEY) ?? "{}");
+    return localStorage.getItem(KEY) ?? "{}";
+  } catch {
+    return "{}";
+  }
+}
+
+/** Each list's order as set, where one is. */
+function orders(raw = stored()): Record<string, NoteOrder> {
+  try {
+    const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return {};
     return Object.fromEntries(
       Object.entries(parsed).filter((entry): entry is [string, NoteOrder] => isNoteOrder(entry[1])),
@@ -60,4 +69,17 @@ export function useNoteOrder(folderId: string | null): [NoteOrder, (order: NoteO
     [scope],
   );
   return [folderId === null && order === "manual" ? "updated" : order, set];
+}
+
+/**
+ * Every folder's order, by its id, as {@link useNoteOrder} gives each one
+ * (last changed first, where none is set): for the sidebar's tree, which
+ * shows the notes of many folders at once.
+ */
+export function useNoteOrders(): (folderId: string) => NoteOrder {
+  const raw = useSyncExternalStore(subscribe, stored, () => "{}");
+  return useMemo(() => {
+    const set = orders(raw);
+    return (folderId: string) => set[folderId] ?? "updated";
+  }, [raw]);
 }

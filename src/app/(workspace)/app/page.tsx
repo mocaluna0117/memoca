@@ -6,9 +6,10 @@ import { NoteList } from "@/components/notes/note-list";
 import { NotePane } from "@/components/notes/note-pane";
 import { PANE_WIDTH_CLASS, PaneResizer, paneWidthStyle } from "@/components/shell/pane-resizer";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useFolder } from "@/lib/hooks/data";
+import { useFolder, useNote } from "@/lib/hooks/data";
 import { useFolderName } from "@/lib/hooks/use-decrypted";
 import { NOTE_LIST, usePaneWidth } from "@/lib/hooks/use-pane-width";
+import { useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
@@ -24,6 +25,14 @@ function Workspace() {
       : t.nav.allNotes;
   usePhoneScroll(selection.noteId);
   const [listWidth] = usePaneWidth(NOTE_LIST);
+  // With each folder's notes in the sidebar, the list beside it is for those
+  // of no one folder: all notes, and the pinned. Not for a note kept in the
+  // sidebar, in no folder, opened from there.
+  const [mode] = useSidebarMode();
+  const open = useNote(selection.noteId);
+  const listShown =
+    mode === "list" ||
+    (selection.folderId === null && (selection.pinned || open?.folderId !== null));
 
   return (
     <div className="flex flex-1 md:min-h-0">
@@ -32,9 +41,10 @@ function Workspace() {
           for the note), open note or not. */}
       <section
         className={cn(
-          "relative min-w-0 flex-col border-r md:flex md:min-h-0 md:flex-none",
+          "relative min-w-0 flex-col border-r md:min-h-0 md:flex-none",
           PANE_WIDTH_CLASS,
           selection.noteId ? "hidden" : "flex flex-1",
+          listShown ? "md:flex" : "md:hidden",
         )}
         id={NOTE_LIST.id}
         style={paneWidthStyle(NOTE_LIST, listWidth)}
@@ -61,7 +71,7 @@ function Workspace() {
           <NotePane noteId={selection.noteId} onBack={closeNote} />
         ) : (
           <div className="text-muted-foreground hidden flex-1 items-center justify-center text-sm md:flex">
-            メモを選ぶと、ここに表示されます
+            {listShown ? "メモを選ぶと、ここに表示されます" : "サイドバーからメモを選ぶと、ここに表示されます"}
           </div>
         )}
       </section>

@@ -28,6 +28,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUnreadNews } from "@/lib/hooks/use-news";
+import { useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
 import { JOURNAL_FOLDER_ID, createFolder, createNote } from "@/lib/sync/mutations";
 import { dayOf, journalDay, openToday } from "@/lib/journal";
 import { useWorkspace } from "@/lib/hooks/workspace";
@@ -42,9 +43,9 @@ type Props = {
   onSelectPinned: () => void;
   /** Selects a freshly created folder without dismissing the panel. */
   onCreatedFolder?: (folderId: string) => void;
-  /** The note open, and how one kept in the sidebar is opened (null: closed). */
+  /** The note open, and how one of the tree is opened, in its folder (null: closed). */
   selectedNoteId?: string | null;
-  onOpenNote?: (noteId: string | null) => void;
+  onOpenNote?: (noteId: string | null, folderId?: string | null) => void;
   onNavigate?: () => void;
   /** Shows a close control in the header; set only inside the mobile drawer. */
   onClose?: () => void;
@@ -68,6 +69,7 @@ export function Sidebar({
   const pathname = usePathname();
   const openQuickNote = useOpenQuickNote();
   const { navigate } = useWorkspace();
+  const [mode] = useSidebarMode();
   const todayOpen = selectedNoteId !== null && journalDay(selectedNoteId) === dayOf(new Date());
 
   const unreadNews = useUnreadNews();
@@ -219,6 +221,7 @@ export function Sidebar({
           edge, however narrow the sidebar is set. */}
       <ScrollArea className="min-h-0 flex-1 px-2 pt-1 [&_[data-slot=scroll-area-viewport]>div]:!block">
         <FolderTree
+          explorer={mode === "explorer"}
           selectedFolderId={selectedFolderId}
           onSelect={(id) => {
             onSelectFolder(id);
