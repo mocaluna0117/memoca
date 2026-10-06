@@ -52,10 +52,16 @@ export function setNoteOrder(folderId: string | null, order: NoteOrder) {
 }
 
 /**
+ * A list's order until one is set: a folder's as placed by hand (a note made
+ * goes first), all notes' last changed first. All notes, of every folder,
+ * have no one order to be placed in.
+ */
+const orderUnset = (folderId: string | null): NoteOrder => (folderId === null ? "updated" : "manual");
+
+/**
  * How a list of notes is ordered on this device, and a way to set it: a
- * folder's list (by its id), or all notes (`null`), each its own. As it
- * always was (last changed first) until set. By hand only for a folder:
- * all notes, of every folder, have no one order to be placed in.
+ * folder's list (by its id), or all notes (`null`), each its own, as
+ * {@link orderUnset} until set. By hand only for a folder.
  *
  * Kept on this device only, as a view of the list; the order notes are
  * placed in by hand is the notes' own, and every device shares it.
@@ -64,8 +70,8 @@ export function useNoteOrder(folderId: string | null): [NoteOrder, (order: NoteO
   const scope = folderId ?? "all";
   const order = useSyncExternalStore(
     subscribe,
-    () => orders()[scope] ?? "updated",
-    () => "updated" as const,
+    () => orders()[scope] ?? orderUnset(folderId),
+    () => orderUnset(folderId),
   );
   const set = useCallback((next: NoteOrder) => setNoteOrder(folderId, next), [folderId]);
   return [folderId === null && order === "manual" ? "updated" : order, set];
@@ -73,13 +79,13 @@ export function useNoteOrder(folderId: string | null): [NoteOrder, (order: NoteO
 
 /**
  * Every folder's order, by its id, as {@link useNoteOrder} gives each one
- * (last changed first, where none is set): for the sidebar's tree, which
+ * (placed by hand, where none is set): for the sidebar's tree, which
  * shows the notes of many folders at once.
  */
 export function useNoteOrders(): (folderId: string) => NoteOrder {
   const raw = useSyncExternalStore(subscribe, stored, () => "{}");
   return useMemo(() => {
     const set = orders(raw);
-    return (folderId: string) => set[folderId] ?? "updated";
+    return (folderId: string) => set[folderId] ?? orderUnset(folderId);
   }, [raw]);
 }

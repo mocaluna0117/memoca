@@ -58,8 +58,13 @@ test.describe("the order of a folder's notes", () => {
     test.skip(testInfo.project.name !== "desktop", "chosen and dragged with a mouse");
   });
 
-  test("is chosen: last changed, last made, or by name", async ({ page }) => {
+  test("is by hand until chosen: last changed, last made, or by name", async ({ page }) => {
     await threeNotes(page);
+    // As placed by hand: as made, the newest first, いちご not moved up by
+    // being written in.
+    await expect(page.getByRole("button", { name: "並び順（手動）" }).first()).toBeVisible();
+    await expect.poll(() => listed(page)).toEqual(["うめ", "あんず", "いちご"]);
+    await orderBy(page, "更新順");
     await expect.poll(() => listed(page)).toEqual(["いちご", "うめ", "あんず"]);
     await orderBy(page, "作成順");
     await expect.poll(() => listed(page)).toEqual(["うめ", "あんず", "いちご"]);
