@@ -8,6 +8,7 @@ import { vault } from "@/lib/crypto/vault";
 import { migrateOldQuickBody } from "@/lib/quick/body";
 import type { Note } from "@/lib/types";
 import { enqueue } from "./outbox";
+import { onPeers, tellPeers } from "./peers";
 import { ORIGIN, extractText, firstLine } from "./ydoc";
 
 /** Local edits are batched for this long before becoming one update row. */
@@ -195,6 +196,13 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
     });
   });
 
+  // Stored: this device's other windows with it open take it in at once.
+  tellPeers(
+    note.locked
+      ? { kind: "reload", noteId: handle.noteId }
+      : { kind: "update", noteId: handle.noteId, update: merged },
+  );
+
   // The searchable text and the list preview both come from the document, and
   // are kept in plaintext only when the note itself is not locked.
   const text = extractText(handle.doc);
@@ -268,7 +276,24 @@ function migrateIfWhole(doc: Y.Doc, note: Note | undefined, body: BodyState | un
 /** Documents being built from storage, shared by everyone who asks meanwhile. */
 const opening = new Map<string, Promise<Handle>>();
 
+let hearingPeers = false;
+
+/**
+ * Takes in what this device's other windows changed in a note open here
+ * too, stored by them already (see peers.ts): as a change from elsewhere,
+ * not to be stored and sent again.
+ */
+function hearPeers(): void {
+  if (hearingPeers) return;
+  hearingPeers = true;
+  onPeers((message) => {
+    if (message.kind === "update") applyRemote(message.noteId, message.update);
+    else if (message.kind === "reload") void reloadDoc(message.noteId, { fromPeer: true });
+  });
+}
+
 async function openHandle(noteId: string): Promise<Handle> {
+  hearPeers();
   const doc = new Y.Doc();
   const database = db();
   const [note, body] = await Promise.all([database.notes.get(noteId), database.bodies.get(noteId)]);
@@ -364,7 +389,12 @@ export function applyRemote(noteId: string, update: Uint8Array): void {
  * version is read included: they are written under whatever key the note has
  * by then, and what is read back only adds to the document.
  */
-export async function reloadDoc(noteId: string): Promise<void> {
+export async function reloadDoc(
+  noteId: string,
+  { fromPeer = false }: { fromPeer?: boolean } = {},
+): Promise<void> {
+  // This device's other windows with it open read it again too (see peers.ts).
+  if (!fromPeer) tellPeers({ kind: "reload", noteId });
   const handle = handles.get(noteId);
   if (!handle) return;
   const fresh = new Y.Doc();

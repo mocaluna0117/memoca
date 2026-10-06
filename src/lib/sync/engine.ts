@@ -13,6 +13,7 @@ import { META, deviceId as ensureDeviceId } from "@/lib/db/meta";
 import { type PullBatch, applyBatch } from "./apply";
 import { loadClock, syncClock } from "./clock";
 import { onOutboxChanged } from "./signal";
+import { tellPeers } from "./peers";
 import { applyRemote, migrateOpenDoc, reloadDoc, withDetachedDoc } from "./docs";
 import { extractText, firstLine } from "./ydoc";
 
@@ -60,7 +61,14 @@ export class SyncEngine {
   private lastRefsPass = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private interval = IDLE_INTERVAL_MS;
+  /** Where the pull subscription starts from, and which subscription is the current one. */
+  private since = 0;
+  private watching = 0;
+  /** Batches are taken in one at a time, in the order they came. */
+  private receiving: Promise<void> = Promise.resolve();
   private draining = false;
+  /** Asked for while a push was under way: another follows it at once. */
+  private again = false;
   private checkingGhosts = false;
   private listeners = new Set<Listener>();
   private status: SyncStatus = {
@@ -185,6 +193,13 @@ export class SyncEngine {
   /** Asks for a push sooner than the current cadence would. */
   kick(delay = 200): void {
     if (!this.leader || this.stopped) return;
+    // The push under way may have read the outbox already: what was just
+    // added goes in another straight after it, not at the next round (up to
+    // five seconds later), where the end of that push would put it.
+    if (this.draining) {
+      this.again = true;
+      return;
+    }
     if (this.timer) clearTimeout(this.timer);
     this.timer = setTimeout(() => void this.drain(), delay);
   }
@@ -198,6 +213,8 @@ export class SyncEngine {
     if (this.stopped) return;
     this.unwatch?.();
     const since = await getMeta<number>(META.cursor, 0);
+    this.since = since;
+    const watching = ++this.watching;
     const watch = this.client.watchQuery(api.sync.pull, { since });
 
     const consume = () => {
@@ -205,7 +222,15 @@ export class SyncEngine {
         const result = watch.localQueryResult();
         // `null` means the server does not recognise this client yet, which is
         // normal for the moment between page load and the token attaching.
-        if (result) void this.receive(result);
+        if (!result) return;
+        this.receiving = this.receiving
+          .then(() =>
+            // One that has been let go of meanwhile, from where this device
+            // has since moved on, is not taken in again.
+            watching === this.watching ? this.receive(result) : undefined,
+          )
+          // One that fails leaves the next to be taken in all the same.
+          .catch(() => this.set({ state: "error" }));
       } catch {
         this.set({ state: "error" });
         // Re-subscribe rather than leaving a dead subscription behind.
@@ -227,8 +252,12 @@ export class SyncEngine {
     for (const update of incoming) {
       if (!update.iv) {
         applyRemote(update.noteId, update.data);
+        // This device's other windows with it open take it in too (see peers.ts).
+        tellPeers({ kind: "update", noteId: update.noteId, update: update.data });
         continue;
       }
+      // Locked: read again from storage there, with their own vault.
+      tellPeers({ kind: "reload", noteId: update.noteId });
       const note = await db().notes.get(update.noteId);
       if (!note?.wrappedKey || !vault.isUnlocked) continue;
       try {
@@ -261,8 +290,12 @@ export class SyncEngine {
     this.set({ state: "idle", lastSyncAt: Date.now(), catchingUp: !batch.complete });
     void this.refreshReadings();
 
-    if (!batch.complete) await this.resubscribe();
-    else {
+    // From where it has got to: the subscription would otherwise send all
+    // that came since it started again with every change, more and more
+    // of it (up to a page) the longer another device is typed on, each time
+    // read by the server and taken in again here.
+    if (!batch.complete || batch.cursor > this.since) await this.resubscribe();
+    if (batch.complete) {
       // Inbox may just have arrived, for a note made before it did.
       void import("./mutations")
         .then(({ fileAwaitingInbox }) => fileAwaitingInbox())
@@ -521,9 +554,11 @@ export class SyncEngine {
       this.set({ state: navigator.onLine === false ? "offline" : "error" });
     } finally {
       this.draining = false;
+      const again = this.again;
+      this.again = false;
       if (!this.stopped) {
         if (this.timer) clearTimeout(this.timer);
-        this.timer = setTimeout(() => void this.drain(), this.interval);
+        this.timer = setTimeout(() => void this.drain(), again ? 0 : this.interval);
       }
     }
   }
