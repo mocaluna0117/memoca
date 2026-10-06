@@ -24,10 +24,16 @@ type YomiResponse =
  * out when something is searched for in kana (see useSearch), not in the
  * background, and the dictionary, loaded into a worker for it, is let go of
  * from memory once it has not been asked anything for a while.
+ *
+ * Kept on the device only if the person chose so (META.yomiKeep). As it
+ * starts, it is downloaded when they turn it on to search and kept nowhere:
+ * in the worker's memory alone, gone a minute after its last use. The
+ * readings worked out with it are kept (they are small), so notes already
+ * read are found by their reading with no dictionary at all.
  */
 
 /** How long the dictionary stays loaded after the last reading asked of it. */
-const IDLE_MS = 30_000;
+const IDLE_MS = 60_000;
 let idle: ReturnType<typeof setTimeout> | null = null;
 
 /** The worker ended, the dictionary out of memory: loaded again when next needed. */
@@ -109,17 +115,74 @@ function ensureWorker(): Worker | null {
   return created;
 }
 
-function send(request: { type: "warm" } | { type: "readings"; texts: string[] }) {
+/** Whether the dictionary is kept on this device; downloaded for each use otherwise. */
+export async function isYomiKept(): Promise<boolean> {
+  return getMeta<boolean>(META.yomiKeep, false);
+}
+
+async function send(request: { type: "warm" } | { type: "readings"; texts: string[] }) {
+  const keep = await isYomiKept();
   const active = ensureWorker();
-  if (!active) return Promise.reject(new Error("worker unavailable"));
+  if (!active) throw new Error("worker unavailable");
   const id = nextId++;
   if (idle) clearTimeout(idle);
   idle = null;
   if (state === "idle" || state === "unavailable") setState("loading");
   return new Promise<string[]>((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    active.postMessage({ ...request, id });
+    active.postMessage({ ...request, id, keep });
   });
+}
+
+/** Whether the dictionary is in memory now (or on its way), to be used with no download. */
+export function isYomiLoaded(): boolean {
+  return worker !== null && (state === "ready" || state === "loading");
+}
+
+/** Lets the dictionary go from memory now, rather than a minute after its last use. */
+export function releaseYomi(): void {
+  releaseWorker();
+}
+
+/** Where the service worker keeps the dictionary (src/app/sw.ts). */
+const DICTIONARY_CACHE = "memoca-yomi";
+
+/** Deletes the dictionary kept on this device, if any. */
+async function deleteKeptDictionary(): Promise<void> {
+  try {
+    await caches.delete(DICTIONARY_CACHE);
+  } catch {
+    // No Cache Storage here (not a secure context): nothing was kept in it.
+  }
+}
+
+/**
+ * Keeps the dictionary on this device, or not. Not kept, what is kept of it
+ * goes now, and the one in memory, loaded to be kept, with it.
+ */
+export async function setYomiKept(keep: boolean): Promise<void> {
+  await setMeta(META.yomiKeep, keep);
+  releaseWorker();
+  if (!keep) await deleteKeptDictionary();
+}
+
+/**
+ * Deletes a dictionary kept on this device that is not to be kept: one kept
+ * before the choice was there (when it always was), or one whose deletion did
+ * not finish. Once when the app starts.
+ */
+export async function tidyYomi(): Promise<void> {
+  if (!(await isYomiKept())) await deleteKeptDictionary();
+}
+
+/**
+ * The readings of notes written since, worked out for a search in kana: with
+ * the dictionary kept on the device, or in memory now; never a download no one
+ * asked for (the person turns it on for that, see the search page).
+ */
+export async function readingsForSearch(): Promise<void> {
+  if (!(await isYomiEnabled())) return;
+  if ((await isYomiKept()) || isYomiLoaded()) await backfillReadings();
 }
 
 /** Starts fetching the dictionary without asking for any reading yet. */
@@ -173,9 +236,6 @@ export async function enableYomi(
   return true;
 }
 
-/** Where the service worker keeps the dictionary (src/app/sw.ts). */
-const DICTIONARY_CACHE = "memoca-yomi";
-
 /**
  * Turns reading search off: the dictionary, out of memory and off the device
  * (the service worker's copy, 11 MB), and the readings worked out with it.
@@ -184,11 +244,7 @@ const DICTIONARY_CACHE = "memoca-yomi";
 export async function disableYomi(): Promise<void> {
   await setMeta(META.yomi, false);
   releaseWorker();
-  try {
-    await caches.delete(DICTIONARY_CACHE);
-  } catch {
-    // No Cache Storage here (not a secure context): nothing was kept in it.
-  }
+  await deleteKeptDictionary();
   // The readings are derived data; drop them so nothing stale is searched.
   const database = db();
   const rows = await database.bodies.toArray();

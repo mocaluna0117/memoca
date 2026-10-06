@@ -5,7 +5,7 @@ import { useDeferredValue, useEffect, useMemo } from "react";
 import { db } from "@/lib/db";
 import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { buildIndex, search, type SearchHit } from "@/lib/search/engine";
-import { backfillReadings, isKanaQuery } from "@/lib/search/yomi";
+import { isKanaQuery, readingsForSearch } from "@/lib/search/yomi";
 import { searchScope } from "@/lib/search/rows";
 import { openTitles, useOpenedTitles } from "@/lib/vault/titles";
 
@@ -40,12 +40,13 @@ export function useSearch(query: string): {
   }, [rows, unlocked]);
 
   // Searched for in kana: the readings of notes written since the last such
-  // search worked out now, with reading search on, and found as they are
-  // (the rows follow the database). Only then: the dictionary is loaded for
-  // searching, not kept busy in the background.
+  // search worked out now, with reading search on and the dictionary at hand
+  // (kept, or in memory), and found as they are (the rows follow the
+  // database). Only then: the dictionary is loaded for searching, not kept
+  // busy in the background.
   const kana = isKanaQuery(deferred);
   useEffect(() => {
-    if (kana) void backfillReadings();
+    if (kana) void readingsForSearch();
   }, [kana]);
 
   const scope = useMemo(

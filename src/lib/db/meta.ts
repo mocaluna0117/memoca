@@ -23,6 +23,12 @@ export const META = {
   profile: "profile",
   /** Whether the person has opted into reading search and its 11 MB dictionary. */
   yomi: "yomiEnabled",
+  /**
+   * Whether the reading dictionary is kept on this device (true), or only
+   * downloaded while it is used and kept nowhere, gone from memory a minute
+   * after (false, as it starts).
+   */
+  yomiKeep: "yomiKeepDictionary",
   /** The vault record (wrapped keys only), so the vault opens offline. */
   vaultRecord: "vaultRecord",
   /** Passkeys registered or used on this device, offered first on unlock. */

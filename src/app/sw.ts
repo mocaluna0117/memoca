@@ -146,6 +146,12 @@ const serwist: Serwist = new Serwist({
         url.origin === self.location.origin && url.pathname.startsWith("/kuromoji/"),
       handler: {
         handle: async ({ request, url, event }) => {
+          // Not to be kept on this device (used only while searching): past
+          // the cache, as the worker asked (its scripts by ?keep=no, the
+          // dictionary's files by a header).
+          if (request.headers.get("X-Memoca-Keep") === "no" || url.searchParams.get("keep") === "no") {
+            return fetch(request);
+          }
           const cache = await caches.open("memoca-yomi");
           const cached = await cache.match(request);
           if (cached) return cached;

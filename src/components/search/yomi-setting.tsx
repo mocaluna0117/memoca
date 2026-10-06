@@ -4,6 +4,13 @@ import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { useYomi } from "@/lib/hooks/use-yomi";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 /**
  * Reading search is opt-in because turning it on downloads an 11 MB Japanese
@@ -11,7 +18,7 @@ import { useYomi } from "@/lib/hooks/use-yomi";
  * a notes app should do quietly, so the size is stated before the tap.
  */
 export function YomiSetting() {
-  const { enabled, state, progress, busy, enable, disable } = useYomi();
+  const { enabled, state, progress, busy, enable, disable, kept, setKept } = useYomi();
 
   if (enabled === undefined) return null;
 
@@ -40,7 +47,7 @@ export function YomiSetting() {
           </div>
         ) : (
           <p className="text-muted-foreground text-xs leading-relaxed">
-            一度ダウンロードすれば端末に保存され、次からは電波がなくても使えます。
+            辞書は読みを調べ終わると削除し、端末に残しません（残すこともできます）。
             読みの計算は端末の中だけで行われ、メモの内容は送信されません。
           </p>
         )}
@@ -60,12 +67,31 @@ export function YomiSetting() {
           <span className="text-destructive text-xs">（辞書を読み込めませんでした）</span>
         ) : null}
       </p>
+      <div className="space-y-1 pt-1">
+        <p className="text-sm">辞書（11MB）</p>
+        <Select
+          value={kept ? "keep" : "use"}
+          onValueChange={(value) => void setKept(value === "keep")}
+        >
+          <SelectTrigger className="w-72" aria-label="読みの辞書">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="use">使うときだけダウンロード（端末に残さない）</SelectItem>
+            <SelectItem value="keep">端末に残す（オフラインでも使える）</SelectItem>
+          </SelectContent>
+        </Select>
+        <p className="text-muted-foreground text-xs leading-relaxed">
+          {kept
+            ? "辞書を端末に保存し、新しく書いたメモの読みは、かなで検索したときに調べます。"
+            : "辞書は端末に保存しません。新しく書いたメモの読みは、検索画面で辞書をオンにしたときにダウンロードして調べ、1 分使わないと削除します。調べ終わった読みは残るので、辞書がなくても読みで見つかります。"}
+        </p>
+      </div>
       <Button variant="outline" size="sm" onClick={() => void disable()} disabled={busy}>
         無効にして辞書を削除
       </Button>
       <p className="text-muted-foreground text-xs leading-relaxed">
-        辞書は、かなで検索したときだけ読み込み、使い終わるとメモリから外します。
-        無効にすると、端末に保存した辞書（11MB）と計算済みの読みを削除します。
+        無効にすると、端末の辞書と調べ終わった読みを削除します。
       </p>
     </div>
   );

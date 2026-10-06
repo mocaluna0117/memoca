@@ -7,6 +7,7 @@ import { MobileHeader } from "@/components/shell/app-shell";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { useSearch } from "@/lib/hooks/use-search";
 import { useYomi } from "@/lib/hooks/use-yomi";
 import { lockedSearchNote } from "@/lib/search/rows";
@@ -46,6 +47,12 @@ export default function SearchPage() {
   // that found nothing, which is what typing a kanji word's reading looks like.
   const suggestYomi =
     yomi.enabled === false && hits.length === 0 && isKanaQuery(query);
+  // The dictionary downloaded for each use (not kept on this device): turned
+  // on here, for notes whose reading is not worked out yet, and off again,
+  // or by itself a minute after its last use.
+  const dictionaryOn = yomi.busy || yomi.state === "ready" || yomi.state === "loading";
+  const dictionarySwitch =
+    yomi.enabled === true && yomi.kept === false && (dictionaryOn || yomi.unread > 0);
 
   return (
     <div className="flex flex-1 flex-col">
@@ -87,6 +94,30 @@ export default function SearchPage() {
           </p>
         ) : null}
 
+        {dictionarySwitch ? (
+          <div className="bg-card mt-3 flex items-center gap-3 rounded-lg border px-3 py-2">
+            <Languages className="text-muted-foreground size-4 shrink-0" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm">読みの辞書（11MB）</p>
+              <p className="text-muted-foreground text-xs leading-relaxed">
+                {yomi.busy
+                  ? yomi.progress && yomi.progress.total > 0
+                    ? `読みを調べています ${yomi.progress.done} / ${yomi.progress.total}`
+                    : "ダウンロード中…"
+                  : dictionaryOn
+                    ? "使用中です。1 分使わないと削除します。"
+                    : `読みをまだ調べていないメモが ${yomi.unread} 件あります。オンにすると、辞書をダウンロードして調べます。`}
+              </p>
+            </div>
+            <Switch
+              checked={dictionaryOn}
+              disabled={yomi.busy}
+              aria-label="読みの辞書を使う"
+              onCheckedChange={(on) => (on ? void yomi.use() : yomi.release())}
+            />
+          </div>
+        ) : null}
+
         {suggestYomi ? (
           <div className="bg-card mt-3 flex items-start gap-3 rounded-lg border p-3">
             <Languages className="text-muted-foreground mt-0.5 size-5 shrink-0" aria-hidden />
@@ -94,7 +125,7 @@ export default function SearchPage() {
               <p className="text-sm font-medium">読み方でも探せます</p>
               <p className="text-muted-foreground text-xs leading-relaxed">
                 有効にすると「やっきょく」で「薬局」のような漢字のメモが見つかります。
-                日本語の辞書 11MB を一度だけダウンロードします。
+                日本語の辞書（11MB）をダウンロードして、メモの読みを調べます。
               </p>
               <Button size="sm" onClick={() => void yomi.enable()} disabled={yomi.busy}>
                 {yomi.busy ? (

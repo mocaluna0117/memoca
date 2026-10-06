@@ -21,6 +21,7 @@ import { flushAll } from "@/lib/sync/docs";
 import { useLiveQuery } from "dexie-react-hooks";
 import { watchVaultActivity } from "@/lib/vault/activity";
 import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
+import { tidyYomi } from "@/lib/search/yomi";
 
 import { useSync } from "@/components/providers/sync-provider";
 
@@ -39,6 +40,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   // The vault closes after a period of no use, counted from the last
   // activity, and says so when it does.
   useEffect(() => watchVaultActivity(), []);
+  // A reading dictionary kept on this device that is not to be kept goes.
+  useEffect(() => void tidyYomi(), []);
   useEffect(
     () =>
       vault.onClosed((reason) =>
