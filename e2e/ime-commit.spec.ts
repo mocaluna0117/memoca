@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { createNote, editor, openApp, signUp } from "./helpers";
+import { typeAList } from "./list-helpers";
 
 /** The Mac desktop app's user agent (desktop/src-tauri/src/window.rs), in its engine. */
 test.use({
@@ -55,3 +56,42 @@ for (const indented of [true, false]) {
     await expect(content.locator("img.ProseMirror-separator[mark-placeholder]")).toHaveCount(0);
   });
 }
+
+test("a word being written, when the next line is clicked, stays in its line, and the next line too", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the Mac desktop app's window");
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "クリック");
+  await editor(page).click();
+  await page.keyboard.type("- 上の行");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("下の行");
+  const items = page.locator('[data-content-type="bulletListItem"] .bn-inline-content');
+  // At its right, past its text: the caret at its end (End is not that on a Mac).
+  const box = (await items.first().boundingBox())!;
+  await items.first().click({ position: { x: box.width - 2, y: box.height / 2 } });
+
+  // A word being written in the first line, when the second is clicked,
+  // which ends the composition there.
+  const content = page.locator(".ProseMirror");
+  await content.evaluate((root) =>
+    root.dispatchEvent(new CompositionEvent("compositionstart", { data: "" })),
+  );
+  await page.keyboard.insertText("あ");
+  await items.last().click();
+  await content.evaluate((root) =>
+    root.dispatchEvent(new CompositionEvent("compositionend", { data: "あ" })),
+  );
+  await page.waitForTimeout(200);
+  await expect(items).toHaveText(["上の行あ", "下の行"]);
+});
+
+test("a list typed on the Mac desktop app's keyboard", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the Mac desktop app's window");
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "リスト");
+  await typeAList(page);
+});

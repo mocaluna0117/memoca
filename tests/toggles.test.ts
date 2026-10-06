@@ -329,6 +329,12 @@ describe("cutting a closed toggle", () => {
     expect(cut([BOX], "箱", "箱", 1)).toEqual(["paragraph:"]);
   });
 
+  test("all there was under an item: nothing left under it, not an empty line", () => {
+    expect(
+      cut([{ type: "bulletListItem", content: "上", children: [BOX] }], "箱", "箱", 1),
+    ).toEqual(["bulletListItem:上"]);
+  });
+
   test("from a line before it: what is left of that line stays", () => {
     const state = stateOf([
       { type: "paragraph", content: "前の行" },
@@ -437,6 +443,25 @@ describe("dropping a block by a toggle", () => {
       "toggleListItem:箱",
       "  paragraph:一",
       "  paragraph:二",
+      "  paragraph:中",
+    ]);
+  });
+
+  test("all there was under an item: nothing left under it, not an empty line", () => {
+    const state = stateOf([
+      {
+        type: "bulletListItem",
+        content: "親",
+        children: [{ type: "bulletListItem", content: "子" }],
+      },
+      { type: "toggleListItem", content: "箱", children: [{ type: "paragraph", content: "中" }] },
+    ]);
+    const { state: drag, slice } = dragging(state, "子");
+    const moved = drag.apply(dropByToggle(drag, inside(drag.doc, "箱"), slice)!);
+    expect(outline(moved.doc)).toEqual([
+      "bulletListItem:親",
+      "toggleListItem:箱",
+      "  bulletListItem:子",
       "  paragraph:中",
     ]);
   });

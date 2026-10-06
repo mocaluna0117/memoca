@@ -1,10 +1,18 @@
 diff --git a/dist/inputrules.js b/dist/inputrules.js
-index 6845d468baf8525800b086694432333c4e9c1277..e42a4a2c1b1cb0c5ebfcde2afb2d83220ef3d556 100644
+index 6845d468baf8525800b086694432333c4e9c1277..b5fc389393e18761fb52f710dc6e1bf84fbb3805 100644
 --- a/dist/inputrules.js
 +++ b/dist/inputrules.js
-@@ -124,7 +124,11 @@ function run(view, from, to, text, rules, plugin) {
+@@ -122,9 +122,18 @@ function run(view, from, to, text, rules, plugin) {
+         if (rule.undoable)
+             tr.setMeta(plugin, {
                  transform: tr,
-                 from: mappedFrom,
+-                from: mappedFrom,
++                // Memoca: the line break BlockNote's Enter hands the rules
++                // (to run them on Enter as on a space) is not one to keep:
++                // undone, the rule takes it too, from where it went in.
++                // Kept, it stayed as a "\n" in the line's text: - and Enter,
++                // then Backspace, left "-\n".
++                from: text === "\n" ? from : mappedFrom,
                  to: mappedTo,
 -                text,
 +                // Memoca: the typed text was dispatched on its own above, so

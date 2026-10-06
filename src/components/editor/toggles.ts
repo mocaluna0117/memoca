@@ -192,7 +192,8 @@ export function copyRange(
 /**
  * Cuts a range {@link copyRange} gave. Starting at a toggle's line, the
  * toggle goes as a whole (an empty line in its place if it was all there
- * was); from a line before it, what is left of that line stays.
+ * was in the note; all there was under a line, nothing); from a line
+ * before it, what is left of that line stays.
  */
 export function cutRange(state: EditorState, range: { from: number; to: number }): Transaction {
   const block = toggleAround(state, range.from);
@@ -200,8 +201,14 @@ export function cutRange(state: EditorState, range: { from: number; to: number }
   if (!block || range.from !== block.pos + 2 || range.to !== end) {
     return state.tr.deleteRange(range.from, range.to).scrollIntoView();
   }
-  const group = state.doc.resolve(block.pos).parent;
+  const $block = state.doc.resolve(block.pos);
+  const group = $block.parent;
   if (group.childCount > 1) return state.tr.delete(block.pos, end).scrollIntoView();
+  // All there was under a line: its group too, the caret to that line's end.
+  if ($block.depth > 1) {
+    const tr = state.tr.delete(block.pos - 1, end + 1);
+    return tr.setSelection(Selection.near(tr.doc.resolve(block.pos - 1), -1)).scrollIntoView();
+  }
   const tr = state.tr.replaceWith(block.pos, end, blockOf(state, "paragraph"));
   return tr.setSelection(TextSelection.create(tr.doc, block.pos + 2)).scrollIntoView();
 }
@@ -406,7 +413,10 @@ export function dropByToggle(
 ): Transaction | null {
   const dragged = draggedFrom(state.doc, slice);
   if (!dragged || (dragged.from <= drop.block.pos && drop.block.pos < dragged.to)) return null;
-  const tr = state.tr.delete(dragged.from, dragged.to);
+  // With its group, if it was all there: a group is never empty, and one
+  // left so (an item's only line under it, dragged away) would be given an
+  // empty line.
+  const tr = state.tr.deleteRange(dragged.from, dragged.to);
   const pos = tr.mapping.map(drop.block.pos);
   const container = tr.doc.nodeAt(pos);
   if (!container || !isToggle(container.firstChild)) return null;
@@ -515,6 +525,43 @@ export function backspaceInToggle(
   if (text.size === 0) return tr.setSelection(above.map(tr.doc, tr.mapping)).scrollIntoView();
   // Where they join: before the text brought up.
   tr.insert(above.from, text);
+  return tr.setSelection(TextSelection.create(tr.doc, above.from)).scrollIntoView();
+}
+
+/**
+ * Backspace at the start of a line of text (a list item BlockNote has made
+ * one, say) after a block whose last line is out of sight in a closed
+ * toggle: the line joined to the end of the last line shown above it, or,
+ * empty, taken away, the caret there. BlockNote joins it to the line out of
+ * sight. A line with lines under it, or one that cannot join (see
+ * {@link backspaceInToggle}): the caret goes there, the line left as it
+ * is. Null for anything else, left to BlockNote.
+ */
+export function backspaceAfterHidden(
+  state: EditorState,
+  isOpen: (block: Found) => boolean,
+): Transaction | null {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const { $from } = selection;
+  if ($from.parent.type.name !== "paragraph" || $from.parentOffset !== 0) return null;
+  const depth = $from.depth - 1;
+  const index = $from.index(depth - 1);
+  if (index === 0) return null;
+  const line = { node: $from.node(depth), pos: $from.before(depth) };
+  const before = line.pos - $from.node(depth - 1).child(index - 1).nodeSize;
+  const above = endShown(state.doc, before, isOpen);
+  // Nothing out of sight: where BlockNote joins it, as well.
+  if (above.eq(endShown(state.doc, before, () => true))) return null;
+  const text = line.node.firstChild!.content;
+  const $above = above.$from;
+  const joins =
+    above instanceof TextSelection &&
+    line.node.childCount === 1 &&
+    $above.parent.type.validContent($above.parent.content.append(text));
+  if (!joins) return state.tr.setSelection(above).scrollIntoView();
+  const tr = state.tr.delete(line.pos, line.pos + line.node.nodeSize);
+  if (text.size > 0) tr.insert(above.from, text);
   return tr.setSelection(TextSelection.create(tr.doc, above.from)).scrollIntoView();
 }
 
@@ -668,7 +715,8 @@ export const toggles = createExtension(({ editor }) => ({
     Backspace: () => {
       const view = editor.prosemirrorView;
       if (!view) return false;
-      const tr = backspaceInToggle(view.state, (block) => isOpenOnScreen(view, block));
+      const isOpen = (block: Found) => isOpenOnScreen(view, block);
+      const tr = backspaceInToggle(view.state, isOpen) ?? backspaceAfterHidden(view.state, isOpen);
       if (!tr) return false;
       view.dispatch(tr);
       return true;

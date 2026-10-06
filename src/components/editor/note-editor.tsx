@@ -55,6 +55,7 @@ import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
+import { listKeys } from "@/components/editor/list-keys";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { LayoutTemplate } from "lucide-react";
 import { db } from "@/lib/db";
@@ -280,6 +281,7 @@ function EditorSurface({
         links: LINKS,
         extensions: [
           japaneseLists,
+          listKeys(),
           toggles(),
           stuckToggles,
           dragHandle,

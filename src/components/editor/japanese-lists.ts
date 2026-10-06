@@ -141,7 +141,10 @@ let ownPaste = false;
  * with the input method on) makes it a bullet list item, as - and a space
  * do in BlockNote. At once, with no space after it, which the input method
  * would take to change the ・ into something else. Backspace straight after
- * takes it back to the ・ typed. A heading stays a heading, as with -.
+ * takes it back to the ・ typed. Only a line of text: a heading stays a
+ * heading, as with -, and a ・ typed at the start of a list item, a quote
+ * or a toggle stays there, as the item it is (with - it would become a
+ * bullet, its tick or what is inside it lost).
  *
  * And lines written with ・ at their start, made a bullet list together,
  * lose it: see {@link listFromMarks}.
@@ -153,7 +156,7 @@ export const japaneseLists = createExtension({
       find: /^\s?[・･]$/,
       replace({ editor }) {
         const { block } = editor.getTextCursorPosition();
-        if (block.type === "heading") return undefined;
+        if (block.type !== "paragraph") return undefined;
         return { type: "bulletListItem", props: {} };
       },
     },
