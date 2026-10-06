@@ -1,8 +1,24 @@
 diff --git a/dist/y-prosemirror.cjs b/dist/y-prosemirror.cjs
-index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..8d34eb04a47246f5086d0ce9bfdca075ca6d0ea7 100644
+index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..543d0c89160b7b85d2e611f70053da234fa8ebe5 100644
 --- a/dist/y-prosemirror.cjs
 +++ b/dist/y-prosemirror.cjs
-@@ -2166,6 +2166,16 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+@@ -1182,8 +1182,14 @@ const attributesToMarks = (attrs, schema) => {
+    */
+   const marks = [];
+   for (const markName in attrs) {
++    // Memoca: a mark this version does not know (one a later version added,
++    // written by a device that has it) is left out, and the text kept. It
++    // threw, and the text it was on was deleted from the document, and so
++    // from every device.
++    const name = yattr2markname(markName);
++    if (!schema.marks[name]) continue
+     // remove hashes if necessary
+-    marks.push(schema.mark(yattr2markname(markName), attrs[markName]));
++    marks.push(schema.mark(name, attrs[markName]));
+   }
+   return marks
+ };
+@@ -2166,6 +2172,16 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
    view: view => {
      const ystate = ySyncPluginKey.getState(view.state);
      const undoManager = yUndoPluginKey.getState(view.state).undoManager;
@@ -19,7 +35,7 @@ index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..8d34eb04a47246f5086d0ce9bfdca075
      undoManager.on('stack-item-added', ({ stackItem }) => {
        const binding = ystate.binding;
        if (binding) {
-@@ -2181,6 +2191,7 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+@@ -2181,6 +2197,7 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
      return {
        destroy: () => {
          undoManager.destroy();
@@ -27,6 +43,26 @@ index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..8d34eb04a47246f5086d0ce9bfdca075
        }
      }
    }
+diff --git a/src/plugins/sync-plugin.js b/src/plugins/sync-plugin.js
+index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..9c3edc413bfb7a9e1821b79b945bec9a93f123e5 100644
+--- a/src/plugins/sync-plugin.js
++++ b/src/plugins/sync-plugin.js
+@@ -1108,8 +1108,14 @@ export const attributesToMarks = (attrs, schema) => {
+    */
+   const marks = []
+   for (const markName in attrs) {
++    // Memoca: a mark this version does not know (one a later version added,
++    // written by a device that has it) is left out, and the text kept. It
++    // threw, and the text it was on was deleted from the document, and so
++    // from every device.
++    const name = yattr2markname(markName)
++    if (!schema.marks[name]) continue
+     // remove hashes if necessary
+-    marks.push(schema.mark(yattr2markname(markName), attrs[markName]))
++    marks.push(schema.mark(name, attrs[markName]))
+   }
+   return marks
+ }
 diff --git a/src/plugins/undo-plugin.js b/src/plugins/undo-plugin.js
 index 7c9448ba4215a9904390468d8d22d5d7b6656435..ad35c61d5e3d5a27965b90af9faa7cee041a99ba 100644
 --- a/src/plugins/undo-plugin.js
