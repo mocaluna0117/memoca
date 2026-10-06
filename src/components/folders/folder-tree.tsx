@@ -71,6 +71,7 @@ import {
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { RenameDialog } from "@/components/folders/rename-dialog";
 import { InlineRename } from "@/components/shell/inline-rename";
+import { TruncatedName } from "@/components/shell/truncated-name";
 import { dragData, shownUnderPointer, useWorkspaceDrag } from "@/components/shell/workspace-dnd";
 
 /** Read out with each folder row, so the keys are discoverable. */
@@ -668,7 +669,7 @@ export function FolderTree({
                       busy={busy.has(node.folderId)}
                       open={hasChildren && expanded.has(node.folderId)}
                     />
-                    <span className="truncate">{label ?? "無題のフォルダ"}</span>
+                    <TruncatedName text={label ?? "無題のフォルダ"} />
                     {lockKind !== "none" ? (
                       <span className="sr-only">
                         {lockKind === "own" ? "（ロック中）" : "（親フォルダでロック中）"}
@@ -992,7 +993,7 @@ function TreeNoteRow({
             className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left outline-none"
           >
             <Icon className="size-4 shrink-0 opacity-70" aria-hidden />
-            <span className={cn("truncate", name.standIn && STAND_IN_CLASS)}>{name.text}</span>
+            <TruncatedName text={name.text} className={cn(name.standIn && STAND_IN_CLASS)} />
             <span className="sr-only">（メモ{note.locked ? "、ロック中" : ""}）</span>
           </NoteDragButton>
         )}

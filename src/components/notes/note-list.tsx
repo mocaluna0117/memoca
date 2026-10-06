@@ -62,6 +62,7 @@ import {
   useVaultUnlocked,
 } from "@/lib/hooks/use-decrypted";
 import { useNoteOrder } from "@/lib/hooks/use-note-order";
+import { TruncatedName } from "@/components/shell/truncated-name";
 import { useClientValue, useMediaQuery } from "@/lib/hooks/use-client-value";
 import { isApple } from "@/lib/platform";
 import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
@@ -402,14 +403,10 @@ function NoteRow({
         >
           <span className="flex min-w-0 items-center gap-1.5">
             {icons}
-            <span
-              className={cn(
-                "min-w-0 truncate text-sm",
-                name.standIn ? STAND_IN_CLASS : "font-medium",
-              )}
-            >
-              {name.text}
-            </span>
+            <TruncatedName
+              text={name.text}
+              className={cn("min-w-0 text-sm", name.standIn ? STAND_IN_CLASS : "font-medium")}
+            />
           </span>
           {details}
         </button>

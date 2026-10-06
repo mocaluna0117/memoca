@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-07-name-tooltip",
+    date: "2026-10-07",
+    title: "切れた名前を全部見られるように",
+    details: [
+      "サイドバーやメモの一覧で、長くて「…」で切れているフォルダやメモの名前に、マウスを 1 秒ほど乗せると、名前の全体が表示されます。",
+    ],
+  },
+  {
     id: "2026-10-07-one-folder-open",
     date: "2026-10-07",
     title: "開くフォルダは一度に 1 つ",
