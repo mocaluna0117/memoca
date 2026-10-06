@@ -5,7 +5,19 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { File, Film, Image as ImageIcon, Lock, RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { api } from "@convex/_generated/api";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { formatBytes } from "@/lib/bytes";
 import { db } from "@/lib/db";
@@ -180,6 +192,7 @@ export function StorageBreakdown({ account, live, admin }: { account: string; li
                             : t.storage.unusedSoon(shown.unused.count)}
                         </span>
                       ) : null}
+                      {part === "unused" && online ? <DeleteUnusedNow onDone={refresh} /> : null}
                     </span>
                   </li>
                 ) : null,
@@ -280,5 +293,60 @@ function LargeFileRow({ file }: { file: LargeFile }) {
         <div className="flex w-full items-center gap-3 px-3 py-2 text-xs">{body}</div>
       )}
     </li>
+  );
+}
+
+/**
+ * Deletes the files no note uses now, instead of waiting out the 30 days,
+ * after saying an undo in a note cannot bring them back.
+ */
+function DeleteUnusedNow({ onDone }: { onDone: () => void }) {
+  const client = useConvex();
+  const [busy, setBusy] = useState(false);
+
+  const run = async () => {
+    setBusy(true);
+    let deleted = 0;
+    let freed = 0;
+    try {
+      for (;;) {
+        const result = await client.mutation(api.attachments.deleteUnusedNow, {});
+        if (result.status === "notReported") {
+          toast(t.storage.deleteUnusedWait);
+          return;
+        }
+        deleted += result.deleted;
+        freed += result.freed;
+        if (!result.more || result.deleted === 0) break;
+      }
+      toast.success(
+        deleted > 0 ? t.storage.deleteUnusedDone(deleted, formatBytes(freed)) : t.storage.deleteUnusedNone,
+      );
+    } catch {
+      toast.error(t.storage.failed);
+    } finally {
+      setBusy(false);
+      onDone();
+    }
+  };
+
+  return (
+    <AlertDialog>
+      <AlertDialogTrigger asChild>
+        <Button size="sm" variant="outline" className="mt-1 h-7 text-xs" disabled={busy}>
+          {t.storage.deleteUnused}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t.storage.deleteUnusedTitle}</AlertDialogTitle>
+          <AlertDialogDescription>{t.storage.deleteUnusedBody}</AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t.action.cancel}</AlertDialogCancel>
+          <AlertDialogAction onClick={() => void run()}>{t.storage.deleteUnused}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }

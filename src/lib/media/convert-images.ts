@@ -27,7 +27,7 @@ import { rewriteRefInDoc, withRelockLock } from "./relock-copies";
  * went up as PNG or JPEG, often many times the size WebP comes to. These
  * write such an image again as images are written now, put the copy in its
  * place in every note that shows it, and tell the server the original was
- * replaced, so it goes a day after it stops being used rather than thirty.
+ * replaced, so it goes a week after it stops being used rather than thirty.
  * GIFs are left: a canvas keeps only their first frame.
  */
 

@@ -344,6 +344,81 @@ describe("the daily sweep", () => {
   });
 });
 
+describe("deleting unused files now", () => {
+  async function unusedFile(t: T, bytes = 100) {
+    const userId = await seedUser(t, AUTH_A, 1_000);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "n1");
+    await storeFile(t, userId, "n1", "img", bytes);
+    await edit(t, "n1", 2);
+    await report(as, "n1", 2, []);
+    return { userId, as };
+  }
+  /** As if it had been unused for an hour. */
+  const age = (t: T, attachmentId: string) =>
+    t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("attachments")
+        .filter((q) => q.eq(q.field("attachmentId"), attachmentId))
+        .unique();
+      await ctx.db.patch(row!._id, { unreferencedAt: Date.now() - 60 * 60 * 1000 });
+    });
+
+  test("deletes them at once, and gives their bytes back", async () => {
+    const t = setup();
+    const { userId, as } = await unusedFile(t, 100);
+    await age(t, "img");
+    expect(await as.mutation(api.attachments.deleteUnusedNow, {})).toMatchObject({
+      status: "ok",
+      deleted: 1,
+      freed: 100,
+    });
+    expect(await file(t, "img")).toMatchObject({ storageId: null, deletedAt: expect.any(Number) });
+    expect((await t.run((ctx) => ctx.db.get(userId)))?.usedBytes).toBe(900);
+  });
+
+  test("not one unused only a moment ago, which a paste may use again", async () => {
+    const t = setup();
+    const { as } = await unusedFile(t);
+    expect((await as.mutation(api.attachments.deleteUnusedNow, {})).deleted).toBe(0);
+    expect((await file(t, "img"))?.deletedAt).toBeNull();
+  });
+
+  test("nothing while a note has an edit not yet reported, which may use them", async () => {
+    const t = setup();
+    const { as } = await unusedFile(t);
+    await age(t, "img");
+    await pushNote(as, "other");
+    await edit(t, "other", 5);
+    expect(await as.mutation(api.attachments.deleteUnusedNow, {})).toMatchObject({
+      status: "notReported",
+      deleted: 0,
+    });
+    expect((await file(t, "img"))?.deletedAt).toBeNull();
+  });
+
+  test("not one another note uses, which is unmarked instead", async () => {
+    const t = setup();
+    const { as } = await unusedFile(t);
+    await age(t, "img");
+    await pushNote(as, "n2");
+    await edit(t, "n2", 3);
+    await report(as, "n2", 3, ["img"]);
+    expect((await as.mutation(api.attachments.deleteUnusedNow, {})).deleted).toBe(0);
+    expect(await file(t, "img")).toMatchObject({ deletedAt: null, unreferencedAt: null });
+  });
+
+  test("only the caller's", async () => {
+    const t = setup();
+    await unusedFile(t);
+    await age(t, "img");
+    await seedUser(t, AUTH_B);
+    const asB = t.withIdentity({ subject: AUTH_B });
+    expect((await asB.mutation(api.attachments.deleteUnusedNow, {})).deleted).toBe(0);
+    expect((await file(t, "img"))?.deletedAt).toBeNull();
+  });
+});
+
 describe("a file a smaller copy of itself replaced", () => {
   const HOUR = DAY / 24;
 

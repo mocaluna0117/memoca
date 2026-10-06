@@ -117,6 +117,13 @@ export const ja = {
     unused: "使われなくなったファイル",
     unusedDetail: (count: number, date: string) => `${count} 件。${date}以降、順に自動で削除されます`,
     unusedSoon: (count: number) => `${count} 件。まもなく自動で削除されます`,
+    deleteUnused: "今すぐ削除",
+    deleteUnusedTitle: "使われなくなったファイルを今すぐ削除しますか？",
+    deleteUnusedBody:
+      "どのメモにも使われていないファイルを削除して、その分の容量を空けます。削除したファイルは、メモで「元に戻す」をしても戻りません。使われなくなってから 10 分たっていないものは残します。",
+    deleteUnusedDone: (count: number, size: string) => `${count} 件（${size}）を削除しました`,
+    deleteUnusedNone: "今すぐ削除できるファイルはありませんでした",
+    deleteUnusedWait: "メモの同期が終わっていないため、まだ削除できません。少し待ってからもう一度お試しください。",
     uploading: "送信中",
     uncounted: "内訳に含まれない分",
     free: "空き",

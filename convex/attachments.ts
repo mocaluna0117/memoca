@@ -380,6 +380,66 @@ export const sweepUnreferenced = internalMutation({
   },
 });
 
+/** Files let go of per call to {@link deleteUnusedNow}; the client asks again while there are more. */
+const DELETE_NOW_BATCH = 100;
+/**
+ * How long a file has been unused before it may be deleted at once: not one
+ * just cut from a note, which a paste a moment later may use again.
+ */
+const DELETE_NOW_AFTER_MS = 10 * 60 * 1000;
+
+/**
+ * Deletes the caller's unused files now, instead of after the 30 days the
+ * daily sweep waits: as the sweep does, only once every note has reported
+ * the files it uses, and only files no note uses. What an undo in a note
+ * would have brought back is then gone for good, which the client says
+ * before asking.
+ */
+export const deleteUnusedNow = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await requireUser(ctx);
+    if (!(await allNotesReported(ctx, user._id))) {
+      return { status: "notReported" as const, deleted: 0, freed: 0, more: false };
+    }
+    const now = Date.now();
+    const rows = await ctx.db
+      .query("attachments")
+      .withIndex("by_user_seq", (q) => q.eq("userId", user._id))
+      .take(5000);
+    const unused = rows.filter(
+      (row) =>
+        row.status === "committed" &&
+        row.deletedAt === null &&
+        row.unreferencedAt !== null &&
+        row.unreferencedAt < now - DELETE_NOW_AFTER_MS,
+    );
+    const seq = await openSeq(ctx, user._id);
+    let deleted = 0;
+    let freed = 0;
+    for (const row of unused.slice(0, DELETE_NOW_BATCH)) {
+      if (await isInUse(ctx, user._id, row.attachmentId)) {
+        await ctx.db.patch("attachments", row._id, { unreferencedAt: null });
+        continue;
+      }
+      if (row.storageId) await ctx.storage.delete(row.storageId);
+      await ctx.db.patch("attachments", row._id, fileTombstone(now, seq.next()));
+      freed += row.bytes;
+      deleted += 1;
+    }
+    if (freed > 0) {
+      await ctx.db.patch("users", user._id, { usedBytes: Math.max(0, user.usedBytes - freed) });
+    }
+    await seq.commit();
+    return {
+      status: "ok" as const,
+      deleted,
+      freed,
+      more: unused.length > DELETE_NOW_BATCH,
+    };
+  },
+});
+
 /**
  * Recomputes each user's storage total from the rows that actually exist, and
  * deletes stored files nothing points at. A slow, boring backstop against the
