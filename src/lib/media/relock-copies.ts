@@ -19,6 +19,7 @@ import {
   queuedBytes,
   sealedMeta,
   stageUpload,
+  updatePending,
 } from "./attachments";
 import { UPLOADABLE_IMAGE_TYPES, categoryOf } from "./compress";
 import { idFromRef, refFor } from "./ref";
@@ -581,8 +582,7 @@ export async function copiesForLock(
 
 /** Lets copies a lock held back go up, now that the note is locked. */
 export async function releaseHeldCopies(attachmentIds: string[]): Promise<void> {
-  const database = db();
-  for (const id of attachmentIds) await database.pendingUploads.update(id, { heldForLock: false });
+  for (const id of attachmentIds) await updatePending(id, { heldForLock: false });
 }
 
 /** How long after a held copy was made this device must have synced before it is taken back. */

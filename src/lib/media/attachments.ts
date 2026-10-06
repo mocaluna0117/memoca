@@ -7,7 +7,7 @@ import { toArrayBuffer } from "@/lib/bytes";
 import { ctx } from "@/lib/crypto/context";
 import { open, seal } from "@/lib/crypto/primitives";
 import { VaultLockedError, vault } from "@/lib/crypto/vault";
-import { db } from "@/lib/db";
+import { type PendingUpload, db } from "@/lib/db";
 import type { Attachment } from "@/lib/types";
 import { enqueue } from "@/lib/sync/outbox";
 import { type PreparedImage, UnsupportedImageError, categoryOf, prepareImage } from "./compress";
@@ -23,6 +23,53 @@ const objectUrls = new Map<string, string>();
 /** Bumped when the vault closes, so a decryption still running is dropped. */
 let generation = 0;
 let watching = false;
+
+/**
+ * A file read from the device, copied into memory: what a row is written
+ * with, and what a URL is made from while its row may still be written.
+ *
+ * WebKit (the Mac desktop app, Safari) keeps a file in IndexedDB on disk, and
+ * the blob a row is read as points at that file. Once the app has started
+ * anew, writing a row again with such a blob loses the file: the row then
+ * holds a file that is gone (NotFoundError), and so does every blob and URL
+ * read from it before. Images pasted on the desktop app showed "?" after a
+ * reload, their cached copy lost by the write that noted their use. A row is
+ * therefore never written with a blob read from one, only with a copy.
+ */
+async function inMemory(blob: Blob): Promise<Blob> {
+  return new Blob([await blob.arrayBuffer()], { type: blob.type });
+}
+
+/** Whether a file read from the device is still there: WebKit may have lost it (see {@link inMemory}). */
+async function readable(blob: Blob): Promise<boolean> {
+  try {
+    await blob.slice(0, 1).arrayBuffer();
+    return true;
+  } catch (error) {
+    return !(
+      error instanceof DOMException &&
+      (error.name === "NotFoundError" || error.name === "NotReadableError")
+    );
+  }
+}
+
+/** A file read from the device, as a copy in memory where it can be read (see {@link inMemory}). */
+const copied = (blob: Blob) => inMemory(blob).catch(() => blob);
+
+/**
+ * Changes a waiting upload's fields, its file written again as a copy (see
+ * {@link inMemory}): written with the blob it was read as, it could be lost
+ * before it is sent, with no copy anywhere else.
+ */
+export async function updatePending(
+  attachmentId: string,
+  changes: Partial<Omit<PendingUpload, "attachmentId" | "blob">>,
+): Promise<void> {
+  const database = db();
+  const row = await database.pendingUploads.get(attachmentId);
+  if (!row) return;
+  await database.pendingUploads.put({ ...row, ...changes, blob: await copied(row.blob) });
+}
 
 /** A URL for a file of this tab's, of a type safe to open (see {@link shownType}). */
 function urlFor(blob: Blob, type = blob.type): string {
@@ -360,7 +407,7 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
       if (reservation.status === "rejected" && reservation.reason === "lockMismatch") {
         // The server knows the note is locked before this device does. Keep
         // the file, and send it encrypted on the next pass.
-        await database.pendingUploads.update(item.attachmentId, { locked: true });
+        await updatePending(item.attachmentId, { locked: true });
         continue;
       }
       if (reservation.status === "rejected" && reservation.reason === "unknownNote" && note && !note.purged) {
@@ -370,7 +417,7 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
       }
       if (reservation.status === "ok" && reservation.uploadUrl && !item.reserved) {
         // Counted by the server from now on.
-        await database.pendingUploads.update(item.attachmentId, { reserved: true });
+        await updatePending(item.attachmentId, { reserved: true });
       }
       if (reservation.status === "rejected" || !reservation.uploadUrl) {
         // A note's copy of another note's file: the note is to show the
@@ -410,11 +457,12 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
       });
 
       // Only plain files are cached: a locked note's file must not sit on the
-      // device in plaintext.
+      // device in plaintext. A copy, not the blob the waiting row was read as
+      // (see inMemory).
       if (!locked) {
         await database.blobs.put({
           attachmentId: item.attachmentId,
-          blob: item.blob,
+          blob: await copied(item.blob),
           bytes: item.blob.size,
           lastUsed: Date.now(),
         });
@@ -484,11 +532,15 @@ async function lookUp(client: ConvexReactClient, attachmentId: string): Promise<
   if (local && row0?.locked) {
     // A plaintext copy of a locked file, left by an earlier version.
     await database.blobs.delete(attachmentId);
-  } else if (local) {
-    await database.blobs.update(attachmentId, { lastUsed: Date.now() });
+  } else if (local && (await readable(local.blob))) {
+    // Not written again to note its use, which would lose it (see inMemory):
+    // the cache goes oldest kept first.
     const url = urlFor(local.blob);
     objectUrls.set(attachmentId, url);
     return url;
+  } else if (local) {
+    // Lost on the device (see inMemory): from the server, which has it.
+    await database.blobs.delete(attachmentId);
   }
 
   const waiting = await database.pendingUploads.get(attachmentId);
@@ -496,7 +548,8 @@ async function lookUp(client: ConvexReactClient, attachmentId: string): Promise<
     // Waiting to go up is the only time a locked file is here in plaintext;
     // it is shown only while the vault is open, as it would be once sent.
     if (!vault.isUnlocked && (await isProtectedUpload(waiting))) return null;
-    const url = urlFor(waiting.blob);
+    // A copy: the row is written again as it goes up (see inMemory).
+    const url = urlFor(await copied(waiting.blob));
     objectUrls.set(attachmentId, url);
     return url;
   }
@@ -561,13 +614,17 @@ export async function loadAttachmentBlob(
   const waiting = await database.pendingUploads.get(attachmentId);
   if (waiting) {
     if (!vault.isUnlocked && (await isProtectedUpload(waiting))) throw new VaultLockedError();
-    return waiting.blob;
+    // A copy: the row is written again as it goes up (see inMemory).
+    return copied(waiting.blob);
   }
 
   const row = await database.attachments.get(attachmentId);
   if (!row?.locked) {
     const local = await database.blobs.get(attachmentId);
-    if (local) return local.blob;
+    // A copy, to be kept elsewhere (a crop, a copy for another note) as one.
+    if (local && (await readable(local.blob))) return copied(local.blob);
+    // Lost on the device (see inMemory): from the server, which has it.
+    if (local) await database.blobs.delete(attachmentId);
   }
 
   if (!objectUrls.has(attachmentId) && !navigator.onLine) {

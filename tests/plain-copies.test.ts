@@ -252,7 +252,8 @@ describe("giving a note that is not locked its own copy of an encrypted file", (
     vi.spyOn(db().pendingUploads, "put").mockImplementation((async (row: {
       heldForLock?: boolean;
     }) => {
-      heldWhileReading = row.heldForLock;
+      // As it was first put: let go of later, the row is put again (updatePending).
+      heldWhileReading ??= row.heldForLock;
       return put(row as never);
     }) as never);
     expect((await plainCopies(server.client, "b")).copied).toBe(1);

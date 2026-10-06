@@ -96,6 +96,11 @@ export type CachedBlob = {
   attachmentId: string;
   blob: Blob;
   bytes: number;
+  /**
+   * When it was kept. Not written again when it is used: writing a row with
+   * a file again can lose the file in WebKit (see inMemory in
+   * lib/media/attachments.ts), so the cache lets the oldest kept go first.
+   */
   lastUsed: number;
 };
 

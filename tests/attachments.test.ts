@@ -15,6 +15,7 @@ import {
   queuedBytes,
   resolveAttachment,
   stageUpload,
+  updatePending,
 } from "@/lib/media/attachments";
 import type { Note } from "@/lib/types";
 import { fakeConvex } from "./helpers/fake-convex";
@@ -519,5 +520,86 @@ describe("queuedBytes", () => {
       });
     }
     expect(await queuedBytes()).toBe(42);
+  });
+});
+
+describe("a file WebKit has lost on the device", () => {
+  // As the Mac desktop app's WebKit has it: the row is there, its file is not.
+  const lost = {
+    size: 7,
+    type: "image/webp",
+    slice: () => ({ arrayBuffer: () => Promise.reject(new DOMException("gone", "NotFoundError")) }),
+  } as unknown as Blob;
+  const server = () =>
+    fakeConvex({
+      "attachments:urls": (args) =>
+        Object.fromEntries(
+          (args.attachmentIds as string[]).map((id) => [id, `https://storage.test/${id}`]),
+        ),
+    });
+  const committed = (attachmentId: string) =>
+    db().attachments.put({
+      attachmentId,
+      noteId: "n-plain",
+      status: "committed",
+      bytes: 7,
+      mime: "image/webp",
+      name: "a.webp",
+      locked: false,
+      width: 1,
+      height: 1,
+      deletedAt: null,
+      seq: 1,
+    });
+
+  test("is shown from the server, and its copy on the device goes", async () => {
+    await committed("lost-1");
+    vi.spyOn(db().blobs, "get").mockResolvedValue({
+      attachmentId: "lost-1",
+      blob: lost,
+      bytes: 7,
+      lastUsed: 0,
+    });
+    const gone = vi.spyOn(db().blobs, "delete");
+    expect(await resolveAttachment(server().client, "lost-1")).toBe("https://storage.test/lost-1");
+    expect(gone).toHaveBeenCalledWith("lost-1");
+  });
+
+  test("a copy on the device is shown without its row being written again, which would lose it", async () => {
+    await committed("kept-2");
+    await db().blobs.put({
+      attachmentId: "kept-2",
+      blob: image(7, "cached"),
+      bytes: 7,
+      lastUsed: 0,
+    });
+    const update = vi.spyOn(db().blobs, "update");
+    const put = vi.spyOn(db().blobs, "put");
+    expect(await resolveAttachment(server().client, "kept-2")).toMatch(/^blob:/);
+    expect(update).not.toHaveBeenCalled();
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  test("a waiting upload is written again with a copy of its file, not the blob it was read as", async () => {
+    const blob = new Blob(["画像"], { type: "image/webp" });
+    vi.spyOn(db().pendingUploads, "get").mockResolvedValue({
+      attachmentId: "wait-3",
+      noteId: "n1",
+      blob,
+      mime: "image/webp",
+      name: "a.webp",
+      width: 1,
+      height: 1,
+      category: "image",
+      locked: false,
+      createdAt: 0,
+    });
+    const put = vi.spyOn(db().pendingUploads, "put").mockResolvedValue("wait-3");
+    await updatePending("wait-3", { reserved: true });
+    const written = put.mock.lastCall![0];
+    expect(written.reserved).toBe(true);
+    expect(written.blob).toBeInstanceOf(Blob);
+    expect(written.blob).not.toBe(blob);
+    expect(await written.blob.text()).toBe("画像");
   });
 });
