@@ -14,8 +14,8 @@ const envNumber = (name: string, fallback: number): number => {
 export const DEFAULTS = {
   signupOpen: true,
   maxUsers: envNumber("MAX_USERS", 50),
-  /** 100 MB per person. */
-  defaultQuotaBytes: 100 * 1024 * 1024,
+  /** 200 MB per person. */
+  defaultQuotaBytes: 200 * 1024 * 1024,
   /** Images are compressed in the browser before they get here. */
   maxImageBytes: 5 * 1024 * 1024,
   maxVideoBytes: 30 * 1024 * 1024,

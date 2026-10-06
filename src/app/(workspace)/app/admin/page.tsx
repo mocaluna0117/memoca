@@ -14,6 +14,11 @@ import { Switch } from "@/components/ui/switch";
 import { formatBytes } from "@/lib/bytes";
 
 const MB = 1024 * 1024;
+/**
+ * Convex's free plan stores 1 GB of files for the whole team: production,
+ * the dev deployment and the E2E one together.
+ */
+const FREE_FILE_STORAGE = 1024 * MB;
 
 export default function AdminPage() {
   const overview = useQuery(api.admin.overview);
@@ -29,7 +34,8 @@ export default function AdminPage() {
     return <p className="p-6 text-sm">権限がありません。</p>;
   }
 
-  const { config, users, invites } = overview;
+  const { config, users, invites, usedBytes } = overview;
+  const promised = config.maxUsers * config.defaultQuotaBytes;
 
   return (
     <div className="flex flex-1 flex-col">
@@ -94,6 +100,25 @@ export default function AdminPage() {
           <p className="text-muted-foreground text-sm">
             現在 {config.userCount} / {config.maxUsers} 人
           </p>
+          <div className="space-y-1 text-sm">
+            <p>
+              全員の使用量：{formatBytes(usedBytes)}（Convex の無料枠は{" "}
+              {formatBytes(FREE_FILE_STORAGE)}）
+            </p>
+            <p
+              className={
+                promised > FREE_FILE_STORAGE ? "text-destructive" : "text-muted-foreground"
+              }
+            >
+              容量 × 登録上限：{formatBytes(promised)}
+              {promised > FREE_FILE_STORAGE
+                ? "。全員が容量いっぱいまで使うと無料枠を超え、保存できなくなることがあります。"
+                : "。全員が容量いっぱいまで使っても無料枠に収まります。"}
+            </p>
+            <p className="text-muted-foreground text-xs">
+              1 人あたりの容量を変えると、これまでの既定値のままの人の容量も新しい値になります。
+            </p>
+          </div>
         </section>
 
         <Separator />

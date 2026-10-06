@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import { DEFAULTS } from "./lib/constants";
 import { requireAdmin } from "./lib/user";
@@ -30,6 +31,8 @@ export const overview = query({
         maxImageBytes: config?.maxImageBytes ?? DEFAULTS.maxImageBytes,
         maxVideoBytes: config?.maxVideoBytes ?? DEFAULTS.maxVideoBytes,
       },
+      /** What everyone has stored, all told. */
+      usedBytes: users.reduce((sum, u) => sum + u.usedBytes + u.reservedBytes, 0),
       users: users.map((u) => ({
         email: u.email,
         name: u.name ?? null,
@@ -76,7 +79,37 @@ export const setConfig = mutation({
     };
     if (existing) await ctx.db.patch(existing._id, next);
     else await ctx.db.insert("appConfig", next);
+    // Everyone still on the old default moves to the new one; a quota set
+    // for one person by hand stays as it is.
+    const before = existing?.defaultQuotaBytes ?? DEFAULTS.defaultQuotaBytes;
+    if (next.defaultQuotaBytes !== before) {
+      await ctx.scheduler.runAfter(0, internal.admin.applyDefaultQuota, {
+        from: before,
+        to: next.defaultQuotaBytes,
+        cursor: null,
+      });
+    }
     return next;
+  },
+});
+
+/** People moved to a new default quota per transaction; it runs again while there are more. */
+const QUOTA_BATCH = 200;
+
+export const applyDefaultQuota = internalMutation({
+  args: { from: v.number(), to: v.number(), cursor: v.union(v.string(), v.null()) },
+  handler: async (ctx, { from, to, cursor }) => {
+    const page = await ctx.db.query("users").paginate({ numItems: QUOTA_BATCH, cursor });
+    for (const user of page.page) {
+      if (user.quotaBytes === from) await ctx.db.patch(user._id, { quotaBytes: to });
+    }
+    if (!page.isDone) {
+      await ctx.scheduler.runAfter(0, internal.admin.applyDefaultQuota, {
+        from,
+        to,
+        cursor: page.continueCursor,
+      });
+    }
   },
 });
 
