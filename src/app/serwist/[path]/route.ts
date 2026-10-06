@@ -8,7 +8,7 @@ export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
   createSerwistRoute({
     swSrc: "src/app/sw.ts",
     useNativeEsbuild: true,
-    // The reading dictionary is ~17 MB across a dozen files. Precaching even
+    // The reading dictionary is ~11 MB across a dozen files. Precaching even
     // the smaller ones would make installing the app a multi-megabyte download
     // for everyone, including people who never search in kana, and it slowed
     // the service worker's install enough to delay taking control. The runtime

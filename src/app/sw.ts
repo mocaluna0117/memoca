@@ -136,19 +136,31 @@ const serwist: Serwist = new Serwist({
       },
     },
     {
-      // The reading dictionary is 17 MB across a dozen files, deliberately not
-      // precached: that would make installing the app a 17 MB download for
+      // The reading dictionary is 11 MB across a dozen files, deliberately not
+      // precached: that would make installing the app an 11 MB download for
       // everyone, including people who never search in kana. It is cached on
-      // first fetch instead, after which reading search works offline.
+      // first fetch instead, after which reading search works offline. Under a
+      // path with its version (/kuromoji/<version>/): one of a new version
+      // cached, what is cached of any other goes, never to be asked for again.
       matcher: ({ url }) =>
         url.origin === self.location.origin && url.pathname.startsWith("/kuromoji/"),
       handler: {
-        handle: async ({ request, event }) => {
+        handle: async ({ request, url, event }) => {
           const cache = await caches.open("memoca-yomi");
           const cached = await cache.match(request);
           if (cached) return cached;
           const response = await fetch(request);
-          if (response.ok) event.waitUntil(cache.put(request, response.clone()));
+          if (response.ok) {
+            const version = url.pathname.split("/").slice(0, 3).join("/") + "/";
+            event.waitUntil(
+              (async () => {
+                await cache.put(request, response.clone());
+                for (const old of await cache.keys()) {
+                  if (!new URL(old.url).pathname.startsWith(version)) await cache.delete(old);
+                }
+              })(),
+            );
+          }
           return response;
         },
       },

@@ -6,7 +6,7 @@ import { Progress } from "@/components/ui/progress";
 import { useYomi } from "@/lib/hooks/use-yomi";
 
 /**
- * Reading search is opt-in because turning it on downloads a 17 MB Japanese
+ * Reading search is opt-in because turning it on downloads an 11 MB Japanese
  * dictionary. Spending someone's mobile data without asking is not something
  * a notes app should do quietly, so the size is stated before the tap.
  */
@@ -20,7 +20,7 @@ export function YomiSetting() {
       <div className="space-y-2">
         <Button onClick={() => void enable()} disabled={busy} className="gap-2">
           {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
-          有効にする（辞書 17MB をダウンロード）
+          有効にする（辞書 11MB をダウンロード）
         </Button>
         {busy ? (
           <div className="space-y-1">

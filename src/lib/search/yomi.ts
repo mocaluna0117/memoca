@@ -16,7 +16,7 @@ type YomiResponse =
  * Reading lookup for Japanese text, so a note written in kanji can be found by
  * typing how it sounds.
  *
- * The dictionary behind this is a 17 MB download, so nothing starts until
+ * The dictionary behind this is an 11 MB download, so nothing starts until
  * something actually needs a reading. Once fetched it is cached by the service
  * worker and stays available offline.
  */
@@ -129,7 +129,7 @@ export async function isYomiEnabled(): Promise<boolean> {
  * Turns reading search on, downloading the dictionary and filling in the
  * readings of everything already stored.
  *
- * Opt-in on purpose: the dictionary is a 17 MB download, and silently spending
+ * Opt-in on purpose: the dictionary is an 11 MB download, and silently spending
  * someone's mobile data on a feature they may not want is not acceptable.
  */
 export async function enableYomi(

@@ -94,7 +94,7 @@ export default function SearchPage() {
               <p className="text-sm font-medium">読み方でも探せます</p>
               <p className="text-muted-foreground text-xs leading-relaxed">
                 有効にすると「やっきょく」で「薬局」のような漢字のメモが見つかります。
-                日本語の辞書 17MB を一度だけダウンロードします。
+                日本語の辞書 11MB を一度だけダウンロードします。
               </p>
               <Button size="sm" onClick={() => void yomi.enable()} disabled={yomi.busy}>
                 {yomi.busy ? (

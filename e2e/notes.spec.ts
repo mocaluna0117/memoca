@@ -372,7 +372,7 @@ test.describe("folders", () => {
 
 test.describe("reading search", () => {
   test("a kanji note is found by typing its reading", async ({ page }) => {
-    // Turning this on downloads a 17 MB dictionary, so allow for that.
+    // Turning this on downloads an 11 MB dictionary, so allow for that.
     test.slow();
     await signUp(page);
     await openApp(page);
@@ -384,11 +384,28 @@ test.describe("reading search", () => {
     await expect(field).toBeVisible();
     await field.fill("やっきょく");
 
+    // A dictionary of an earlier version, cached on this device before.
+    await page.evaluate(async () => {
+      const cache = await caches.open("memoca-yomi");
+      await cache.put("/kuromoji/base.dat.gz", new Response("an earlier dictionary"));
+    });
+
     // Reading search is off by default, so the offer appears instead of a hit.
     const enable = page.getByRole("button", { name: "有効にする" });
     await expect(enable).toBeVisible();
     await enable.click();
     await expect(enable).toBeHidden({ timeout: 180_000 });
+    // This version's cached in its place, the earlier one let go of.
+    await expect
+      .poll(() =>
+        page.evaluate(async () =>
+          (await (await caches.open("memoca-yomi")).keys()).map((request) => new URL(request.url).pathname),
+        ),
+      )
+      .toEqual(expect.arrayContaining(["/kuromoji/2/base.dat.brotli"]));
+    expect(
+      await page.evaluate(async () => (await caches.open("memoca-yomi")).match("/kuromoji/base.dat.gz")),
+    ).toBeFalsy();
 
     await field.fill("");
     await field.fill("やっきょく");

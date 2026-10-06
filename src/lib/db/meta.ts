@@ -21,7 +21,7 @@ export const META = {
   lastHlc: "lastHlc",
   /** Last known account snapshot, so the app renders before Convex answers. */
   profile: "profile",
-  /** Whether the person has opted into reading search and its 17 MB dictionary. */
+  /** Whether the person has opted into reading search and its 11 MB dictionary. */
   yomi: "yomiEnabled",
   /** The vault record (wrapped keys only), so the vault opens offline. */
   vaultRecord: "vaultRecord",

@@ -16,7 +16,10 @@
  */
 
 /* global kuromoji */
-importScripts("/kuromoji/kuromoji.js");
+// The dictionary's version (scripts/copy-kuromoji-dict.mjs builds it): kuromoji,
+// adapted to load it, and the Brotli decoder it is undone with.
+var DICTIONARY = "/kuromoji/2";
+importScripts(DICTIONARY + "/brotli.js", DICTIONARY + "/kuromoji.js");
 
 let tokenizer = null;
 let building = null;
@@ -30,7 +33,7 @@ function build() {
       // "https://host" into "https:/host" and quietly 404s. Relative keeps it
       // on our own origin anyway, so the service worker can cache it and
       // reading search keeps working with no network.
-      kuromoji.builder({ dicPath: "/kuromoji" }).build((error, built) => {
+      kuromoji.builder({ dicPath: DICTIONARY }).build((error, built) => {
         if (error) {
           building = null;
           reject(error);
