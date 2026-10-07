@@ -5,6 +5,8 @@ import "@blocknote/shadcn/style.css";
 
 import { type BlockNoteEditor, combineByGroup } from "@blocknote/core";
 import { filterSuggestionItems } from "@blocknote/core/extensions";
+import { FindBar } from "@/components/editor/find-bar";
+import { findInNote } from "@/components/editor/find-in-note";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
   DesktopFormattingToolbarController,
@@ -305,6 +307,7 @@ function EditorSurface({
           linesAbove(),
           imeCommit(),
           noteLinkInput(),
+          findInNote(),
         ],
         dropCursor: { hooks: { computeDropPosition } },
         // An image Memoca copied alone, pasted back as the block it was.
@@ -380,6 +383,8 @@ function EditorSurface({
 
   return (
     <ImageCrop editor={plain} noteId={noteId} editable={!readOnly}>
+      {/* ⌘F: finding in the note, over its top as it scrolls. */}
+      <FindBar editor={plain} />
       <BlockNoteView
         editor={editor}
         editable={!readOnly}

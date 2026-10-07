@@ -349,3 +349,13 @@
 .memoca-editor .bn-block-content:has(> div > .bn-toggle-add-block-button)::after {
   content: none !important;
 }
+
+/* Finding in the note (⌘F): every match, and the one on more strongly. */
+.memoca-editor .memoca-find-match {
+  background-color: color-mix(in oklab, #facc15 45%, transparent);
+  border-radius: 2px;
+}
+.memoca-editor .memoca-find-current {
+  background-color: #f97316;
+  color: #fff;
+}

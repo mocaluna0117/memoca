@@ -285,7 +285,7 @@ function NoteRow({
           <Circle className="size-4 shrink-0 opacity-40" aria-hidden />
         )
       ) : null}
-      {note.pinned ? <Pin className="size-3 shrink-0 opacity-60" aria-hidden /> : null}
+      {note.pinned ? <Pin className="size-3.5 shrink-0 fill-current text-amber-500" aria-hidden /> : null}
       {note.locked ? <Lock className="size-3 shrink-0 opacity-60" aria-hidden /> : null}
     </>
   );

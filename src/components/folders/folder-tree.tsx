@@ -1279,8 +1279,11 @@ function TreeNoteRow({
           >
             <Icon className={cn("size-4 shrink-0", chosen ? "text-primary" : "opacity-70")} aria-hidden />
             <TruncatedName text={name.text} className={cn(name.standIn && STAND_IN_CLASS)} />
+            {note.pinned ? (
+              <Pin className="size-3.5 shrink-0 fill-current text-amber-500" aria-hidden />
+            ) : null}
             <span className="sr-only">
-              （メモ{note.locked ? "、ロック中" : ""}{chosen ? "、選択中" : ""}）
+              （メモ{note.pinned ? "、ピン留め中" : ""}{note.locked ? "、ロック中" : ""}{chosen ? "、選択中" : ""}）
             </span>
           </NoteDragButton>
         )}

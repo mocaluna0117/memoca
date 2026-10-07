@@ -50,7 +50,13 @@ import { enterFromTitle } from "@/components/editor/title-enter";
 import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 import { downloadBlockFile } from "@/components/editor/file-download-button";
-import { TEMPLATES_FOLDER_ID, saveAsTemplate } from "@/lib/templates";
+import {
+  TEMPLATES_FOLDER_ID,
+  TemplateUnavailableError,
+  applyTemplate,
+  saveAsTemplate,
+} from "@/lib/templates";
+import { TemplatePicker } from "@/components/notes/template-picker";
 import { useWorkspace } from "@/lib/hooks/workspace";
 
 /** Long enough to coalesce typing, short enough not to feel unsaved. */
@@ -144,6 +150,7 @@ export function NotePane({
   const [busy, setBusy] = useState(false);
   const [moving, setMoving] = useState(false);
   const [history, setHistory] = useState(false);
+  const [applying, setApplying] = useState(false);
 
   if (draft.noteId !== noteId) {
     setDraft({ noteId, value: note ? title : "", dirty: false });
@@ -312,6 +319,19 @@ export function NotePane({
           className="h-9 flex-1 border-0 bg-transparent px-2 text-base font-medium shadow-none focus-visible:ring-0 dark:bg-transparent"
         />
 
+        {/* Pinned: said beside the title, and taken off from there. */}
+        {note.pinned ? (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="size-8 shrink-0"
+            aria-label="ピン留め中（押すと外します）"
+            title="ピン留め中（押すと外します）"
+            onClick={() => void setNotePinned(noteId, false)}
+          >
+            <Pin className="size-4 fill-current text-amber-500" aria-hidden />
+          </Button>
+        ) : null}
         {note.locked ? <VaultBadge compact /> : null}
         <SyncBadge className="mr-1" />
 
@@ -337,6 +357,13 @@ export function NotePane({
             <DropdownMenuItem onSelect={() => menu.openDialog(() => setMoving(true))}>
               <FolderInput className="size-4" aria-hidden />
               {t.action.move}
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              disabled={hidden || pendingLock}
+              onSelect={() => menu.openDialog(() => setApplying(true))}
+            >
+              <LayoutTemplate className="size-4" aria-hidden />
+              {t.templates.apply}
             </DropdownMenuItem>
             <DropdownMenuItem
               disabled={hidden || note.locked || note.folderId === TEMPLATES_FOLDER_ID}
@@ -471,6 +498,23 @@ export function NotePane({
         onPick={(folderId) => moveNoteTo(note, folderId, menuTrigger.current)}
       />
       <VersionHistory noteId={noteId} open={history} onOpenChange={setHistory} />
+      <TemplatePicker
+        open={applying}
+        onOpenChange={setApplying}
+        onPick={async (templateId) => {
+          try {
+            // Its title too, for a note with none yet.
+            await applyTemplate(noteId, templateId, { withTitle: draft.value.trim() === "" });
+          } catch (error) {
+            toast.error(
+              error instanceof TemplateUnavailableError
+                ? t.templates.unavailable
+                : "テンプレートを適用できませんでした。",
+            );
+          }
+        }}
+        onEdit={() => navigate({ folderId: TEMPLATES_FOLDER_ID, noteId: null })}
+      />
     </div>
   );
 }

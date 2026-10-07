@@ -2,7 +2,7 @@
 
 import { type Block, BlockNoteEditor, type PartialBlock } from "@blocknote/core";
 import { blocksToYXmlFragment, yXmlFragmentToBlocks } from "@blocknote/core/yjs";
-import type * as Y from "yjs";
+import * as Y from "yjs";
 import { SCHEMA } from "@/components/editor/schema";
 import { db } from "@/lib/db";
 import { acquireDoc, releaseDoc, withStoredDoc } from "@/lib/sync/docs";
@@ -129,6 +129,66 @@ export async function fillFromTemplate(noteId: string, templateId: string): Prom
 export async function fillBodyFromTemplate(noteId: string, templateId: string): Promise<void> {
   const body = await bodyCopy(templateId);
   if (body.length > 0) await writeBody(noteId, (fragment) => fragment.insert(0, body));
+}
+
+/** The blocks of a note's body (the blockContainers of its blockGroup), copied. */
+async function blocksCopy(noteId: string): Promise<Y.XmlElement[]> {
+  return withStoredDoc(noteId, (doc) => {
+    const group = bodyFragment(doc).get(0);
+    if (!(group instanceof Y.XmlElement)) return [];
+    return group.toArray().flatMap((block) => (block instanceof Y.XmlElement ? [block.clone()] : []));
+  });
+}
+
+/** Whether a block is an empty line and nothing more: the one a note starts with. */
+function isEmptyLine(block: Y.XmlElement): boolean {
+  if (block.length !== 1) return false;
+  const content = block.get(0);
+  return (
+    content instanceof Y.XmlElement &&
+    content.nodeName === "paragraph" &&
+    content.toArray().every((part) => part instanceof Y.XmlText && part.length === 0)
+  );
+}
+
+/** Gives every block in `element` (itself too) an id of its own: two blocks of a note never share one. */
+function renewIds(element: Y.XmlElement) {
+  if (element.nodeName === "blockContainer") element.setAttribute("id", crypto.randomUUID());
+  for (const child of element.toArray()) if (child instanceof Y.XmlElement) renewIds(child);
+}
+
+/**
+ * Applies a template to a note already made: its blocks after the note's own
+ * (in place of the empty line a note starts with, if that is all it has), and
+ * its title too when `withTitle` (the note has none). A template applied twice
+ * is there twice, each block with an id of its own. Throws
+ * TemplateUnavailableError when none of it is on this device yet.
+ */
+export async function applyTemplate(
+  noteId: string,
+  templateId: string,
+  { withTitle }: { withTitle: boolean },
+): Promise<void> {
+  const template = await db().notes.get(templateId);
+  if (!template) throw new TemplateUnavailableError();
+  const blocks = await blocksCopy(templateId);
+  if (blocks.length === 0 && template.preview) throw new TemplateUnavailableError();
+  if (withTitle && template.title) await renameNote(noteId, template.title);
+  if (blocks.length === 0) return;
+  await writeBody(noteId, (fragment) => {
+    let group = fragment.get(0);
+    if (!(group instanceof Y.XmlElement)) {
+      // Never opened: no blocks at all yet.
+      group = new Y.XmlElement("blockGroup");
+      fragment.insert(0, [group]);
+    }
+    const into = group as Y.XmlElement;
+    const only = into.length === 1 ? into.get(0) : null;
+    if (only instanceof Y.XmlElement && isEmptyLine(only)) into.delete(0, 1);
+    const at = into.length;
+    into.insert(at, blocks);
+    for (const block of into.slice(at)) if (block instanceof Y.XmlElement) renewIds(block);
+  });
 }
 
 /**
