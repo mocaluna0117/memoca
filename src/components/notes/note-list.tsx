@@ -90,6 +90,7 @@ import { t } from "@/lib/i18n/ja";
 import { TemplatePicker } from "@/components/notes/template-picker";
 import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, fillFromTemplate } from "@/lib/templates";
 import { useWorkspace } from "@/lib/hooks/workspace";
+import { useEscapeFromPage } from "@/lib/hooks/use-escape-from-page";
 import { cn } from "@/lib/utils";
 
 function relativeDate(at: number): string {
@@ -944,6 +945,13 @@ export function NoteList({
     onArrow,
     onNudge: manual || note.pinned ? nudge : undefined,
     shownAt: order === "created" ? (createdAt(note.noteId) ?? note.updatedAt) : note.updatedAt,
+  });
+
+  // The same, with nothing focused (useEscapeFromPage).
+  useEscapeFromPage(choosing && editing === null, () => {
+    if (draggingNow.current) return;
+    focusNext.current = "header";
+    stopChoosing();
   });
 
   return (

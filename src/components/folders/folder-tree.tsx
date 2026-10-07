@@ -88,6 +88,7 @@ import { RenameDialog } from "@/components/folders/rename-dialog";
 import { InlineRename } from "@/components/shell/inline-rename";
 import { TruncatedName } from "@/components/shell/truncated-name";
 import { dragData, shownUnderPointer, useWorkspaceDrag } from "@/components/shell/workspace-dnd";
+import { useEscapeFromPage } from "@/lib/hooks/use-escape-from-page";
 
 /** Read out with each folder row, so the keys are discoverable. */
 const FOLDER_KEYS_HINT =
@@ -556,6 +557,9 @@ export function FolderTree({
   /** The chosen ones still there (not trashed since, say). */
   const chosen = new Set([...choice.ids].filter((id) => allNotes.some((note) => note.noteId === id)));
   const stopChoosing = () => setChoice({ ids: new Set(), anchor: null, base: new Set() });
+  // Escape stops it from a row (onRowKeyDown), and with nothing focused,
+  // as after a click on the toolbar's buttons in Safari.
+  useEscapeFromPage(chosen.size > 0 && dragging === null, stopChoosing);
   /**
    * The notes chosen, in the tree's order (those in closed folders after),
    * if `noteId` is one of them; otherwise it alone.

@@ -164,6 +164,20 @@ test.describe("moving notes, on a computer", () => {
     await expect(chooser(page)).toHaveCount(0);
   });
 
+  test("set to choose: Escape with nothing focused stops it, as after a click in Safari", async ({
+    page,
+  }) => {
+    await inInbox(page, ["一", "二"]);
+    await page.getByRole("button", { name: "メモを選択" }).click();
+    await chooser(page).getByRole("button", { name: "すべて選択" }).click();
+    await expect(chooser(page)).toContainText("2 件を選択");
+    // Safari focuses no button it clicks: focus is then nowhere.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("Escape");
+    await expect(chooser(page)).toHaveCount(0);
+    await expect(row(page, "一")).not.toHaveAttribute("aria-pressed");
+  });
+
   test("a folder is still dragged into another, and back to the top level", async ({ page }) => {
     await signUp(page);
     await openApp(page);

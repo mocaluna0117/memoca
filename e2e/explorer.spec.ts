@@ -123,6 +123,23 @@ test.describe("folders' notes in the sidebar", () => {
     await expect(treeNote(page, "二")).toBeHidden();
   });
 
+  test("notes chosen in the tree: Escape with nothing focused stops choosing, as after a click in Safari", async ({
+    page,
+  }) => {
+    test.skip(test.info().project.name !== "desktop", "a click with ⌘/Ctrl");
+    await newFolder(page, "仕事");
+    await newNoteIn(page, "仕事", "一");
+    await newNoteIn(page, "仕事", "二");
+    await treeNote(page, "一").click({ modifiers: ["ControlOrMeta"] });
+    await treeNote(page, "二").click({ modifiers: ["ControlOrMeta"] });
+    const bar = page.getByRole("toolbar", { name: "選択したメモ" });
+    await expect(bar).toContainText("2 件を選択");
+    // Safari focuses no button it clicks: focus is then nowhere.
+    await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+    await page.keyboard.press("Escape");
+    await expect(bar).toHaveCount(0);
+  });
+
   test("a folder's menu sets its notes' order, and makes a note from a template", async ({ page }) => {
     test.skip(test.info().project.name !== "desktop", "the sidebar beside the note");
     await newFolder(page, "仕事");

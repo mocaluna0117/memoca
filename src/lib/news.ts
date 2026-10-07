@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-07-escape-stops-choosing",
+    date: "2026-10-07",
+    title: "Esc でメモの選択をやめられるように",
+    details: [
+      "Mac のデスクトップ版や Safari で、「すべて選択」などのボタンを押したあとに Esc を押しても、メモの選択をやめられないことがありました。ほかの場所にカーソルが無いときの Esc でも、選択をやめるようにしました。",
+    ],
+  },
+  {
     id: "2026-10-07-drag-stuck-fixed",
     date: "2026-10-07",
     title: "メモをクリックしただけでドラッグになるのを直しました",
