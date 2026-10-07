@@ -38,9 +38,8 @@ test.describe("the quick note's tabs, in a window of its own", () => {
     await expect(field(quick)).toHaveValue("買い物\n牛乳");
 
     // Put away and opened again: every tab back.
-    const closed = quick.waitForEvent("close");
-    await field(quick).press("Escape");
-    await closed;
+    // The window may be gone before the key is done with.
+    await Promise.all([quick.waitForEvent("close"), field(quick).press("Escape").catch(() => undefined)]);
     const again = context.waitForEvent("page");
     await page.evaluate((features) => window.open("/quick?window=1", "memoca-quick", features), WINDOW);
     const reopened = await again;
@@ -54,27 +53,32 @@ test.describe("the quick note's tabs, in a window of its own", () => {
     ).toBe(true);
   });
 
-  test("a tab saved is closed, the next shown saying so; the last stays, emptied", async ({ page }) => {
+  test("a tab saved stays as it is; saved again after more is written, the same note is", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick?window=1");
     await field(page).fill("一つ目");
     await newTab(page, "二つ目");
     await field(page).press("ControlOrMeta+Enter");
-    await expect(tabs(page)).toHaveText(["一つ目"]);
-    await expect(field(page)).toHaveValue("一つ目");
     await expect(page.getByRole("status")).toContainText("保存しました");
+    await expect(tabs(page)).toHaveText(["一つ目", "二つ目"]);
+    await expect(field(page)).toHaveValue("二つ目");
+    await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
 
+    await field(page).fill("二つ目\n書き足し");
     await field(page).press("ControlOrMeta+Enter");
-    await expect(tabs(page)).toHaveText(["新しいメモ"]);
-    await expect(field(page)).toHaveValue("");
     await expect(page.getByRole("status")).toContainText("保存しました");
+    // Closed now, with all of it saved: nothing asked.
+    await page.getByRole("button", { name: "二つ目 のタブを閉じる" }).click();
+    await expect(page.getByRole("alertdialog")).toHaveCount(0);
+    await expect(tabs(page)).toHaveText(["一つ目"]);
 
-    // Both in Inbox.
+    // One note, holding what was saved last.
     await page.goto("/app");
-    await expect(page.locator("[data-note-row]").filter({ hasText: "一つ目" }).first()).toBeVisible({
-      timeout: 20_000,
-    });
-    await expect(page.locator("[data-note-row]").filter({ hasText: "二つ目" }).first()).toBeVisible();
+    const rows = page.locator("[data-note-row]").filter({ hasText: "二つ目" });
+    await expect(rows.first()).toBeVisible({ timeout: 20_000 });
+    await expect(rows).toHaveCount(1);
+    await rows.first().click();
+    await expect(page.locator('[contenteditable="true"]').first()).toContainText("書き足し");
   });
 
   test("closed with something in it, asked first: kept, let go of, or saved", async ({ page }) => {
@@ -85,7 +89,7 @@ test.describe("the quick note's tabs, in a window of its own", () => {
     const dialog = page.getByRole("alertdialog");
 
     await page.getByRole("button", { name: "二つ目 のタブを閉じる" }).click();
-    await expect(dialog).toContainText("「二つ目」は、まだ保存していません");
+    await expect(dialog).toContainText("「二つ目」には、保存していない内容があります");
     // Esc closes the question, not the window.
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
@@ -114,7 +118,7 @@ test.describe("the quick note's tabs, on a phone", () => {
     test.skip(testInfo.project.name !== "mobile", "the page of a phone");
   });
 
-  test("tabs as on a computer; saved, the note opens, the tab gone", async ({ page }) => {
+  test("tabs as on a computer; saved, the note opens, the tabs kept", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick");
     await field(page).fill("一つ目");
@@ -123,9 +127,10 @@ test.describe("the quick note's tabs, on a phone", () => {
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page).toHaveURL(/\/app\?n=/);
 
+    // Back: the tabs as they were, the one saved as it was.
     await page.goto("/quick");
-    await expect(tabs(page)).toHaveText(["一つ目"]);
-    await expect(field(page)).toHaveValue("一つ目");
+    await expect(tabs(page)).toHaveText(["一つ目", "二つ目"]);
+    await expect(field(page)).toHaveValue("二つ目");
   });
 
   test("what is shared goes into a tab of its own, the draft left as it is", async ({ page }) => {

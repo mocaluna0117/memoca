@@ -115,7 +115,7 @@ test.describe("the quick note", () => {
     await expect(row.getByText("秘密の買い物", { exact: true })).toHaveClass(/font-medium/);
   });
 
-  test("what is being written is kept as a draft until it is saved", async ({ page }) => {
+  test("what is being written is kept as a draft, and stays after it is saved", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick");
     await page.getByLabel("即席メモ").fill("書きかけの考え");
@@ -127,9 +127,11 @@ test.describe("the quick note", () => {
 
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page).toHaveURL(/\/app\?n=/);
-    await expect.poll(() => hasDraft(page)).toBe(false);
+    // Saved, the tab is as it was, kept as its draft, with nothing new to save.
+    expect(await hasDraft(page)).toBe(true);
     await page.goto("/quick");
-    await expect(page.getByLabel("即席メモ")).toHaveValue("");
+    await expect(page.getByLabel("即席メモ")).toHaveValue("書きかけの考え");
+    await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
   test("however much is written, and wherever a keyboard leaves the page, the save button stays in sight", async ({

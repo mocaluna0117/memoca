@@ -95,7 +95,7 @@ export const ja = {
     openTab: "新しいタブ",
     closeTab: (name: string) => `${name} のタブを閉じる`,
     closeTitle: "保存してから閉じますか？",
-    closeBody: (name: string) => `「${name}」は、まだ保存していません。保存すると Inbox に入ります。`,
+    closeBody: (name: string) => `「${name}」には、保存していない内容があります。`,
     closeSave: "保存して閉じる",
     closeDiscard: "保存せずに閉じる",
     hint: (modKey: string, windowed: boolean) => `${modKey} + Enter で保存${windowed ? " ・ Esc で閉じる" : ""}`,

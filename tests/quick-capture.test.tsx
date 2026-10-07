@@ -126,7 +126,12 @@ beforeEach(async () => {
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
   h.me = { userKey: ME, inboxFolderId: "inbox-1" };
   let made = 0;
-  h.createNote.mockReset().mockImplementation(async () => `note-${(made += 1)}`);
+  // Made on this device, as createNote makes one: there to be saved into again.
+  h.createNote.mockReset().mockImplementation(async () => {
+    const noteId = `note-${(made += 1)}`;
+    await db().notes.put({ noteId, deletedAt: null, purged: false } as never);
+    return noteId;
+  });
   h.closed.mockReset();
   h.opened.mockReset();
   h.replace.mockReset();
@@ -165,11 +170,11 @@ describe("the quick note, saving", () => {
     expect(h.release).toHaveBeenCalledWith("note-1");
   });
 
-  test("in a window it stays, emptied, and says so, with the note to open", async () => {
+  test("in a window it stays, as it is, and says so, with the note to open", async () => {
     await render();
     await type("窓で保存");
     await key({ key: "Enter", ctrlKey: true });
-    expect(field().value).toBe("");
+    expect(field().value).toBe("窓で保存");
     expect(status()).toContain("保存しました");
     await click("メモを開く");
     expect(h.opened).toHaveBeenCalledWith("note-1");
@@ -208,13 +213,32 @@ describe("the quick note, saving", () => {
     expect(h.createNote).not.toHaveBeenCalled();
   });
 
-  test("a save straight after typing leaves no draft behind", async () => {
+  test("saved, it is kept as it is, as what it was saved as; saved again, into the same note", async () => {
     await render();
     await type("すぐ保存");
     await key({ key: "Enter", ctrlKey: true });
     expect(h.createNote).toHaveBeenCalledOnce();
     await pause();
-    expect(await draftOf(ME)).toBeNull();
+    expect(await draftOf(ME)).toMatchObject({ text: "すぐ保存", saved: { noteId: "note-1", text: "すぐ保存" } });
+    // Nothing new to save: the button says so.
+    expect(button("保存").disabled).toBe(true);
+
+    await type("すぐ保存\n書き足し");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(h.createNote).toHaveBeenCalledOnce();
+    expect(bodyOf("note-1")).toEqual(["すぐ保存", "書き足し"]);
+    expect(field().value).toBe("すぐ保存\n書き足し");
+  });
+
+  test("saved again after its note was trashed, into a new one", async () => {
+    await render();
+    await type("一度目");
+    await key({ key: "Enter", ctrlKey: true });
+    await db().notes.update("note-1", { deletedAt: 1 });
+    await type("二度目");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(h.createNote).toHaveBeenCalledTimes(2);
+    expect(bodyOf("note-2")).toEqual(["二度目"]);
   });
 
   test("a save that fails says so, and keeps the text and its draft", async () => {
@@ -314,7 +338,7 @@ describe("the quick note's window, closing", () => {
     await act(async () => made("note-1"));
     await settle();
     expect(h.closed).toHaveBeenCalledOnce();
-    expect(await draftOf(ME)).toBeNull();
+    expect(await draftOf(ME)).toMatchObject({ saved: { noteId: "note-1" } });
     expect(status()).toBe("");
   });
 
@@ -538,21 +562,24 @@ describe("the quick note's tabs", () => {
     expect(await tabTexts(ME)).toEqual(["一つ目\n本文", "二つ目"]);
   });
 
-  test("a tab saved is closed, the next shown saying so; the last one stays, emptied", async () => {
+  test("a tab saved stays as it is; closed then, nothing is asked", async () => {
     await render();
     await type("一つ目");
     await press(labelled("新しいタブ"));
     await type("二つ目");
     await click("保存");
     expect(h.createNote).toHaveBeenCalledTimes(1);
-    expect(tabs()).toEqual(["一つ目"]);
-    expect(field().value).toBe("一つ目");
+    expect(tabs()).toEqual(["一つ目", "二つ目"]);
+    expect(field().value).toBe("二つ目");
     expect(status()).toContain("保存しました");
 
-    await click("保存");
-    expect(tabs()).toEqual(["新しいメモ"]);
-    expect(field().value).toBe("");
-    expect(status()).toContain("保存しました");
+    // Its own still saved when shown again.
+    await press(tab("一つ目"));
+    await press(tab("二つ目"));
+    expect(button("保存").disabled).toBe(true);
+    await press(labelled("二つ目 のタブを閉じる"));
+    expect(dialog()).toBeNull();
+    expect(tabs()).toEqual(["一つ目"]);
   });
 
   test("closing a tab with something in it asks first: kept, let go of, or saved", async () => {
@@ -562,7 +589,7 @@ describe("the quick note's tabs", () => {
     await type("二つ目");
 
     await press(labelled("二つ目 のタブを閉じる"));
-    expect(dialog()?.textContent).toContain("「二つ目」は、まだ保存していません");
+    expect(dialog()?.textContent).toContain("「二つ目」には、保存していない内容があります");
     await press(inDialog("キャンセル"));
     expect(dialog()).toBeNull();
     expect(tabs()).toEqual(["一つ目", "二つ目"]);
@@ -580,6 +607,7 @@ describe("the quick note's tabs", () => {
     await press(inDialog("保存して閉じる"));
     expect(h.createNote).toHaveBeenCalledTimes(1);
     expect(tabs()).toEqual(["一つ目"]);
+    expect(bodyOf("note-1")).toEqual(["三つ目"]);
   });
 
   test("an empty tab closes at once; the only tab has no ×", async () => {

@@ -24,7 +24,7 @@ test.describe("the quick note in a window of its own", () => {
     ).toBe(true);
   });
 
-  test("Ctrl + Enter saves it, and the window stays, emptied, saying so", async ({
+  test("Ctrl + Enter saves it, and the window stays, as it is, saying so", async ({
     page,
     context,
   }) => {
@@ -37,10 +37,11 @@ test.describe("the quick note in a window of its own", () => {
     await expect.poll(() => hasDraft(page)).toBe(true);
     await field.press("Control+Enter");
     await expect(page.getByRole("status").filter({ hasText: "保存しました" })).toBeVisible();
-    await expect(field).toHaveValue("");
+    await expect(field).toHaveValue("窓から保存\n本文");
     await expect(page).toHaveURL(/\/quick\?window=1$/);
-    // ...and, saved, not any more.
-    await expect.poll(() => hasDraft(page)).toBe(false);
+    // ...and still, saved: the tab stays as it is, nothing new to save.
+    await expect.poll(() => hasDraft(page)).toBe(true);
+    await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
 
     // No window of the app's opened this one: the note opens in a new one,
     // and this one stays the quick note.

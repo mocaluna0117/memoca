@@ -16,6 +16,16 @@ export type QuickDraft = {
   images?: DraftImage[];
   updatedAt: number;
   userKey: string;
+  /** What it was last saved as, if it has been: saved again, that note is written over. */
+  saved?: SavedAs;
+};
+
+/** The note a tab was saved as, and what it held then. */
+export type SavedAs = {
+  noteId: string;
+  text: string;
+  /** Its images, by their keys. */
+  images: string[];
 };
 
 /** An image added to the quick note, as it will be stored. */
@@ -27,7 +37,28 @@ export type DraftImage = {
   mime: string;
   width: number;
   height: number;
+  /** Where it went up, once the tab was saved: saved again, it is not sent twice. */
+  ref?: string;
 };
+
+/**
+ * Whether a tab holds something not saved: written since it was last saved
+ * (or never saved). An empty one holds nothing.
+ */
+export function unsaved(tab: {
+  text: string;
+  images: readonly { key: string }[];
+  saved?: SavedAs | null;
+}): boolean {
+  if (tab.text.trim() === "" && tab.images.length === 0) return false;
+  const { saved } = tab;
+  if (!saved) return true;
+  return (
+    saved.text !== tab.text ||
+    saved.images.length !== tab.images.length ||
+    tab.images.some((image, index) => saved.images[index] !== image.key)
+  );
+}
 
 /** How long typing has to pause before the draft is written. */
 export const DRAFT_DELAY_MS = 300;
@@ -55,21 +86,42 @@ export function clearDraft(userKey: string, tabId: string): Promise<void> {
   });
 }
 
-/** Writes a tab's draft, or forgets it once there is nothing in it. */
-function writeDraft(
+/**
+ * Writes a tab's draft, what it was saved as kept with it; or forgets it
+ * once there is nothing in it.
+ */
+async function writeDraft(
   text: string,
   images: DraftImage[],
   userKey: string,
   tabId: string,
 ): Promise<void> {
-  return text.trim() === "" && images.length === 0
-    ? clearDraft(userKey, tabId)
-    : setMeta(draftKey(tabId), {
-        text,
-        images,
-        updatedAt: Date.now(),
-        userKey,
-      } satisfies QuickDraft);
+  if (text.trim() === "" && images.length === 0) return clearDraft(userKey, tabId);
+  const kept = await loadDraft(userKey, tabId);
+  await setMeta(draftKey(tabId), {
+    text,
+    images,
+    updatedAt: Date.now(),
+    userKey,
+    ...(kept?.saved ? { saved: kept.saved } : {}),
+  } satisfies QuickDraft);
+}
+
+/** A tab saved as a note: what it held then, kept as its draft, and the note it went into. */
+export function markSaved(
+  userKey: string,
+  tabId: string,
+  noteId: string,
+  text: string,
+  images: DraftImage[],
+): Promise<void> {
+  return setMeta(draftKey(tabId), {
+    text,
+    images,
+    updatedAt: Date.now(),
+    userKey,
+    saved: { noteId, text, images: images.map((image) => image.key) },
+  } satisfies QuickDraft);
 }
 
 /**

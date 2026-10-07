@@ -27,15 +27,18 @@ import { type QuickPart, appendBlocks } from "@/lib/quick/body";
 import {
   type DraftImage,
   MAX_TABS,
-  clearDraft,
+  type SavedAs,
   closeTab,
   keepDraft,
   loadDraft,
   loadTabs,
+  markSaved,
   openTab,
   showTab,
+  unsaved,
   useQuickTabs,
 } from "@/lib/quick/draft";
+import { db } from "@/lib/db";
 import { CloseTabDialog, type QuickTab, QuickTabs, holds, tabName } from "@/components/notes/quick-tabs";
 import { useQuickMode } from "@/lib/quick/mode";
 import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
@@ -55,8 +58,8 @@ type Status =
 
 /** What a tab's quick note does for the tabs around it. */
 type CaptureHandle = {
-  /** Saves it, as its button does. */
-  save: () => Promise<void>;
+  /** Saves it, as its button does: the note all of it is saved in then, if it is. */
+  save: () => Promise<string | null>;
   /** Lets go of what is written, its draft not written again as it goes. */
   discard: () => void;
 };
@@ -102,9 +105,9 @@ const composing = (event: { isComposing: boolean; keyCode: number }) =>
  * next one, and Esc puts it away. Either way what is being written is kept
  * as a draft on this device, for this account, until it is saved.
  *
- * In tabs, as a text editor's: each a draft of its own. A tab saved is
- * closed (the last one stays, emptied); one closed with something in it is
- * asked about first.
+ * In tabs, as a text editor's: each a draft of its own. A tab saved stays as
+ * it is, and saved again writes over the note it was saved as; one closed
+ * with something not saved in it is asked about first.
  */
 export function QuickCapture() {
   const { me } = useSync();
@@ -181,8 +184,6 @@ function Tabbed({
   const capture = useRef<CaptureHandle>(null);
   // The tab shown's text as typed, before its draft is written.
   const [typed, setTyped] = useState<QuickTab | null>(null);
-  // Said by the next tab shown, once one is saved and closed.
-  const [notice, setNotice] = useState<Status>(null);
   // The tab asked about before it is closed.
   const [closing, setClosing] = useState<string | null>(null);
 
@@ -190,9 +191,17 @@ function Tabbed({
   const tabs: QuickTab[] = (live?.tabs.ids ?? []).map((id) => {
     if (typed?.id === id) return typed;
     const draft = live?.drafts.get(id);
-    return { id, text: draft?.text ?? "", images: draft?.images?.length ?? 0 };
+    const images = draft?.images ?? [];
+    return {
+      id,
+      text: draft?.text ?? "",
+      images: images.length,
+      unsaved: unsaved({ text: draft?.text ?? "", images, saved: draft?.saved }),
+    };
   });
 
+  // Said by the tab shown next, once one is saved and closed.
+  const [notice, setNotice] = useState<Status>(null);
   /** Another tab shown, or one opened or closed: what was shared and said is for the tab it was. */
   const moving = () => {
     setShare(null);
@@ -223,16 +232,6 @@ function Tabbed({
     }
     setClosing(id);
   };
-  /** A tab saved: closed, if it is not the last, the next one shown saying so. */
-  const saved = async (noteId: string, tabId: string) => {
-    // As they are now: the tabs read as this render's may be a moment behind.
-    if ((await loadTabs(userKey)).ids.length < 2) return false;
-    moving();
-    setNotice({ kind: "saved", noteId });
-    await closeTab(userKey, tabId);
-    return true;
-  };
-
   // In the desktop shell, a text editor's keys: a browser keeps them to itself.
   useEffect(() => {
     if (!inShell()) return;
@@ -270,8 +269,7 @@ function Tabbed({
         shared={share?.tab === active ? share.text : ""}
         initialStatus={notice}
         escapeEnabled={closing === null}
-        onText={(text, images) => setTyped({ id: active, text, images })}
-        onSaved={(noteId) => saved(noteId, active)}
+        onText={(text, images, changed) => setTyped({ id: active, text, images, unsaved: changed })}
         strip={
           <QuickTabs
             tabs={tabs}
@@ -287,9 +285,17 @@ function Tabbed({
         name={asked ? tabName(asked) : ""}
         open={asked !== undefined}
         onCancel={() => setClosing(null)}
-        onSave={() => {
+        onSave={async () => {
+          const id = closing;
           setClosing(null);
-          void capture.current?.save();
+          // Closed once it is saved, the next tab saying so; kept, saying
+          // why, if it could not be.
+          const noteId = id ? await capture.current?.save() : null;
+          if (!id || !noteId) return;
+          moving();
+          setNotice({ kind: "saved", noteId });
+          capture.current?.discard();
+          await closeTab(userKey, id);
         }}
         onDiscard={() => {
           const id = closing;
@@ -314,7 +320,6 @@ function Capture({
   initialStatus,
   escapeEnabled,
   onText,
-  onSaved,
   strip,
 }: {
   handle: Ref<CaptureHandle>;
@@ -325,14 +330,12 @@ function Capture({
   /** The account's figures, for an image to be checked against before it is added. */
   allowance: Allowance | null;
   shared: string;
-  /** What the status line says first: that the tab before it was saved. */
+  /** What the status line says first: that the tab before it was saved and closed. */
   initialStatus: Status;
   /** Esc puts the window away: not while a dialog over it is open. */
   escapeEnabled: boolean;
-  /** What it holds, as typed. */
-  onText: (text: string, images: number) => void;
-  /** Saved: whether the tab was closed for it. */
-  onSaved: (noteId: string) => Promise<boolean>;
+  /** What it holds, as typed, and whether any of it is not saved. */
+  onText: (text: string, images: number, unsaved: boolean) => void;
   /** The tabs, under the header. */
   strip: ReactNode;
 }) {
@@ -347,6 +350,23 @@ function Capture({
   const textRef = useRef(shared);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<Status>(initialStatus);
+  // What the tab was last saved as: saved again, that note is written over.
+  const [saved, setSaved] = useState<SavedAs | null>(null);
+  const savedRef = useRef<SavedAs | null>(null);
+  /** Where each image saved into that note went up, by its key: not sent again. */
+  const uploaded = useRef(new Map<string, string>());
+  /** An image as the draft keeps it, with where it went up, if it did. */
+  const keep = (image: QuickImage): DraftImage => {
+    const ref = uploaded.current.get(image.key);
+    return ref ? { ...keptImage(image), ref } : keptImage(image);
+  };
+  /** Tells the tabs what it holds now, and whether all of it is saved. */
+  const report = () =>
+    onText(
+      textRef.current,
+      imagesRef.current.length,
+      unsaved({ text: textRef.current, images: imagesRef.current, saved: savedRef.current }),
+    );
   const field = useRef<HTMLTextAreaElement>(null);
   // iOS pans what is seen down to the caret as its keyboard comes up, and the
   // page, kept to what is seen, takes back just as much, the caret's line
@@ -376,7 +396,7 @@ function Capture({
   const show = (next: string) => {
     textRef.current = next;
     setText(next);
-    onText(next, imagesRef.current.length);
+    report();
   };
 
   // Images added, each with a URL of this tab's to show it by, let go of
@@ -392,7 +412,7 @@ function Capture({
     }
     imagesRef.current = next;
     setImages(next);
-    onText(textRef.current, next.length);
+    report();
   };
   useEffect(
     () => () => {
@@ -412,12 +432,19 @@ function Capture({
     void loadDraft(userKey, tabId)
       .then((left) => {
         if (!current) return;
+        if (left?.saved) {
+          savedRef.current = left.saved;
+          setSaved(left.saved);
+          for (const image of left.images ?? []) {
+            if (image.ref) uploaded.current.set(image.key, image.ref);
+          }
+        }
         const now = textRef.current;
         // Its images, under any added meanwhile.
         const pictures = (left?.images ?? []).map(shown);
         if (pictures.length > 0) {
           showImages([...imagesRef.current, ...pictures]);
-          kept.images(imagesRef.current.map(keptImage));
+          kept.images(imagesRef.current.map(keep));
         }
         if (!left || left.text.trim() === "" || now.includes(left.text)) return;
         show(now.trim() === "" ? left.text : `${now}\n\n${left.text}`);
@@ -455,7 +482,7 @@ function Capture({
   const editImages = (next: QuickImage[]) => {
     showImages(next);
     setStatus(null);
-    draft.current?.images(next.map(keptImage));
+    draft.current?.images(next.map(keep));
   };
 
   /**
@@ -542,13 +569,21 @@ function Capture({
     const body = quickLines(textRef.current);
     const pictures = imagesRef.current;
     if ((body.length === 0 && pictures.length === 0) || saving) return;
+    // Saved already, as it is: nothing to write again.
+    if (!unsaved({ text: textRef.current, images: pictures, saved: savedRef.current })) return;
     setSaving(true);
     setStatus(null);
     const run = (async () => {
       try {
-        // No title: its first line stands in for one where notes are listed.
+        // Into the note it was saved as before, while that is still there, as
+        // a text editor saves a document again; or a new one, with no title:
+        // its first line stands in for one where notes are listed.
+        const before = savedRef.current ? await db().notes.get(savedRef.current.noteId) : undefined;
+        const again = before && before.deletedAt === null && !before.purged ? before.noteId : null;
         const noteId =
-          unfinished.current ?? (await createNote({ folderId: inbox, title: "", kind: "quick" }));
+          unfinished.current ??
+          again ??
+          (await createNote({ folderId: inbox, title: "", kind: "quick" }));
         unfinished.current = noteId;
 
         // All of it goes straight into the note's document, so the full editor
@@ -557,8 +592,11 @@ function Capture({
         // Its images under its lines, each staged to go up as one added to a
         // note is (offline too), into the note made for them.
         const parts: QuickPart[] = body.map((text) => ({ kind: "line", text }));
+        const refs = new Map<string, string>();
         for (const image of pictures) {
-          let ref = staged.current.get(image.key);
+          // One saved into this note before is there already.
+          let ref = noteId === again ? uploaded.current.get(image.key) : undefined;
+          ref ??= staged.current.get(image.key);
           if (!ref) {
             ref = await stageUpload({
               noteId,
@@ -568,6 +606,7 @@ function Capture({
             staged.current.set(image.key, ref);
           }
           parts.push({ kind: "image", url: ref, name: image.name });
+          refs.set(image.key, ref);
         }
         const doc = await acquireDoc(noteId);
         try {
@@ -580,16 +619,24 @@ function Capture({
         unfinished.current = null;
         staged.current.clear();
 
-        draft.current?.cancel();
-        // A draft left behind only comes back next time: not a failed save.
-        await clearDraft(userKey, tabId).catch(() => undefined);
-        showImages([]);
-        // Closed, if there are other tabs: the next one says it was saved.
-        const closed = await onSaved(noteId);
+        // Kept as it is, as what it was saved as: the tab stays.
+        const now: SavedAs = {
+          noteId,
+          text: textRef.current,
+          images: pictures.map((image) => image.key),
+        };
+        savedRef.current = now;
+        setSaved(now);
+        uploaded.current = refs;
+        draft.current?.images(pictures.map(keep));
+        await draft.current?.flush(true);
+        await markSaved(userKey, tabId, noteId, textRef.current, pictures.map(keep)).catch(
+          () => undefined,
+        );
+        report();
         if (!windowed) {
           router.replace(`/app?${new URLSearchParams({ n: noteId })}`);
-        } else if (!closed) {
-          show("");
+        } else {
           setStatus({ kind: "saved", noteId });
           field.current?.focus();
         }
@@ -607,7 +654,11 @@ function Capture({
   };
 
   useImperativeHandle(handle, () => ({
-    save,
+    save: async () => {
+      await save();
+      const all = !unsaved({ text: textRef.current, images: imagesRef.current, saved: savedRef.current });
+      return all ? (savedRef.current?.noteId ?? null) : null;
+    },
     discard: () => draft.current?.cancel(),
   }));
 
@@ -704,7 +755,7 @@ function Capture({
           <Button
             size="sm"
             onClick={save}
-            disabled={saving || (text.trim().length === 0 && images.length === 0)}
+            disabled={saving || !unsaved({ text, images, saved })}
             aria-keyshortcuts={SAVE_KEYS}
           >
             <Check className="size-4" aria-hidden />

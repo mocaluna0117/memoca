@@ -16,8 +16,8 @@ import { t } from "@/lib/i18n/ja";
 import { quickLines } from "@/lib/quick/text";
 import { cn } from "@/lib/utils";
 
-/** A tab as the strip shows it: what is in it, as far as it is known. */
-export type QuickTab = { id: string; text: string; images: number };
+/** A tab as the strip shows it: what is in it, as far as it is known, and whether all of it is saved. */
+export type QuickTab = { id: string; text: string; images: number; unsaved: boolean };
 
 /** A tab's name: its first line, or what it holds, or that it is new. */
 export function tabName(tab: Pick<QuickTab, "text" | "images">): string {
@@ -26,8 +26,8 @@ export function tabName(tab: Pick<QuickTab, "text" | "images">): string {
   return tab.images > 0 ? t.quick.tabImages(tab.images) : t.quick.newTab;
 }
 
-/** Whether a tab holds anything to lose. */
-export const holds = (tab: Pick<QuickTab, "text" | "images">) => tab.text.trim() !== "" || tab.images > 0;
+/** Whether a tab holds anything to lose: written since it was last saved. */
+export const holds = (tab: Pick<QuickTab, "unsaved">) => tab.unsaved;
 
 /**
  * The quick note's tabs, as a text editor's are: each a draft of its own,
