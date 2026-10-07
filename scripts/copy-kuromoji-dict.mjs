@@ -14,10 +14,19 @@
  *   by far the largest file. The words, their costs and the trie that splits
  *   text into them are as they were, so text is split exactly as before.
  * - Brotli rather than gzip: about a third smaller again. Kuromoji's loader is
- *   adapted to ask for these files and to undo them with a Brotli decoder
- *   (JavaScript, no WebAssembly) loaded beside it. Named .brotli, not .br: a
- *   server or a CDN may take a .br file for the compressed form of another
- *   and send it decompressed, which the decoder could not then undo.
+ *   adapted to undo them with the browser's own decoder (DecompressionStream),
+ *   or, in a browser with none for Brotli, with one in JavaScript bundled with
+ *   it. The browser's where it has one: WKWebView (Memoca for Mac) ran the one
+ *   in JavaScript for a second or so, or, now and then, without end; its own
+ *   undoes the whole dictionary in well under one.
+ *
+ * Named .dat.gz, as kuromoji names them, though Brotli is what they hold: for
+ * the type they are served with, application/gzip, which a CDN sends as it is.
+ * As application/octet-stream (named .brotli), Vercel compressed them again
+ * with Brotli, and WKWebView (Memoca for Mac, macOS 26) never finishes a
+ * response so sent that is over a megabyte or two once undone: the page hung,
+ * its worker with it. Nor may they be named .br, which a server may take for
+ * the compressed form of another and send undone.
  *
  * The version in the path changes whenever what is built does, so a device
  * never mixes files of two builds from its cache (src/app/sw.ts drops those of
@@ -28,11 +37,13 @@ import { cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promi
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { brotliCompressSync, constants, gunzipSync } from "node:zlib";
+import { createHash } from "node:crypto";
 
-/** Changed with anything that changes the files built; public/yomi-worker.js names it too. */
-const VERSION = "2";
+/** Changed with anything that changes the files built; src/lib/search/yomi.ts reads it too. */
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
+const { version: VERSION } = JSON.parse(await readFile(join(root, "src/lib/search/yomi-asset.json"), "utf8"));
+const workerSource = join(root, "src/workers/yomi-worker.js");
 const kuromoji = join(root, "node_modules/@sglkc/kuromoji");
 const from = join(kuromoji, "dict");
 const base = join(root, "public/kuromoji");
@@ -56,7 +67,13 @@ if (!(await exists(from))) {
 // and version, and kept in Next's build cache, which Vercel keeps between
 // deployments, to be copied from there.
 const { version: kuromojiVersion } = JSON.parse(await readFile(join(kuromoji, "package.json"), "utf8"));
-const stamp = `${VERSION}-${kuromojiVersion}`;
+// This script's own text too, and the worker's: what it builds changes with them.
+const scriptHash = createHash("sha256")
+  .update(await readFile(fileURLToPath(import.meta.url)))
+  .update(await readFile(workerSource))
+  .digest("hex")
+  .slice(0, 12);
+const stamp = `${VERSION}-${kuromojiVersion}-${scriptHash}`;
 const stampFile = join(to, ".built");
 const cached = join(root, ".next/cache/memoca-kuromoji", stamp);
 if ((await exists(stampFile)) && (await readFile(stampFile, "utf8")) === stamp) {
@@ -138,30 +155,42 @@ const files = {
   ),
 };
 for (const [name, bytes] of Object.entries(files)) {
-  await writeFile(join(to, `${name}.dat.brotli`), brotli(bytes));
+  await writeFile(join(to, `${name}.dat.gz`), brotli(bytes));
 }
 
-// The Brotli decoder, as a plain script for the worker to load beside kuromoji.
-await build({
+// The worker, in one file with what it runs: the Brotli decoder, and
+// kuromoji, its loader undoing the files it asks for with that decoder. One
+// file, loading no other: see src/workers/yomi-worker.js.
+const decoder = await build({
   stdin: {
     contents: `import decompress from "brotli/decompress.js";
-      // A buffer of its own, exactly as long as what it holds: the loader hands on its .buffer.
-      self.memocaBrotliDecode = (bytes) => decompress(bytes).slice();`,
+      /** Whether the browser undoes Brotli itself. */
+      const native = (() => {
+        try {
+          new DecompressionStream("brotli");
+          return true;
+        } catch {
+          return false;
+        }
+      })();
+      // Bytes of a buffer of their own, exactly as long as they are: the
+      // loader hands on their .buffer.
+      self.memocaBrotliDecode = async (bytes) => {
+        if (native) {
+          const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream("brotli"));
+          return new Uint8Array(await new Response(stream).arrayBuffer());
+        }
+        return decompress(bytes).slice();
+      };`,
     resolveDir: root,
   },
   bundle: true,
   format: "iife",
   target: "safari15",
   minify: true,
-  outfile: join(to, "brotli.js"),
+  write: false,
   logLevel: "warning",
 });
-
-// Kuromoji itself, its loader asking for the .brotli files and undoing them with
-// that decoder. The worker in public/ loads it with importScripts, deliberately
-// outside the bundler: Turbopack's `new Worker(new URL(...))` transform did not
-// produce a usable worker here, and a plain classic worker has no build step to
-// go wrong.
 let script = await readFile(join(kuromoji, "build/kuromoji.js"), "utf8");
 const adapt = (from, into, times) => {
   const found = script.split(from).length - 1;
@@ -171,9 +200,20 @@ const adapt = (from, into, times) => {
   }
   script = script.split(from).join(into);
 };
-adapt("fflate.gunzipSync(new Uint8Array(arraybuffer))", "self.memocaBrotliDecode(new Uint8Array(arraybuffer))", 1);
-adapt('.dat.gz"', '.dat.brotli"', 12);
-await writeFile(join(to, "kuromoji.js"), script);
+adapt(
+  `            var gz = fflate.gunzipSync(new Uint8Array(arraybuffer));
+            callback(null, gz.buffer);`,
+  `            self.memocaBrotliDecode(new Uint8Array(arraybuffer)).then(function (gz) {
+                callback(null, gz.buffer);
+            }, function (error) {
+                callback(error, null);
+            });`,
+  1,
+);
+await writeFile(
+  join(to, "yomi-worker.js"),
+  [decoder.outputFiles[0].text, script, await readFile(workerSource, "utf8")].join(";\n"),
+);
 
 await writeFile(stampFile, stamp);
 await rm(cached, { recursive: true, force: true });

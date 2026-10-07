@@ -16,6 +16,14 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-07-yomi-mac-fix",
+    date: "2026-10-07",
+    title: "Mac 版で「読みでも探す」が使えなかったのを修正",
+    details: [
+      "Mac のデスクトップ版で「読みでも探す」をオンにすると、「辞書を読み込めませんでした」と出て使えなかったのを直しました。辞書の読み込みも速くなりました。",
+    ],
+  },
+  {
     id: "2026-10-07-yomi-switch",
     date: "2026-10-07",
     title: "検索の「読みでも探す」スイッチ",

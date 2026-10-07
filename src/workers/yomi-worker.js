@@ -1,11 +1,14 @@
 /**
  * Reading lookup for Japanese text, off the main thread.
  *
- * A plain classic worker on purpose. It is served straight from `public/` and
- * pulls kuromoji in with `importScripts`, so no bundler transform sits between
- * this file and the browser. Turbopack's `new Worker(new URL(...))` handling
- * produced a worker that failed at startup with "Missing worker bootstrap
- * config", and a search feature is not worth a dependency on that working.
+ * A plain classic worker on purpose, outside the app's bundler: Turbopack's
+ * `new Worker(new URL(...))` handling produced a worker that failed at startup
+ * with "Missing worker bootstrap config". scripts/copy-kuromoji-dict.mjs puts
+ * it in one file with kuromoji and the Brotli decoder, beside the dictionary
+ * (public/kuromoji/<version>/yomi-worker.js), so that it loads no script of its
+ * own: WKWebView (Memoca for Mac) holds a worker to the page's
+ * Content-Security-Policy, whose 'strict-dynamic' let no importScripts through,
+ * and the worker failed at its first line.
  *
  * Protocol (see src/lib/search/yomi.ts for the typed client):
  *   in   { type: "warm",     id }
@@ -25,10 +28,9 @@ self.fetch = function (input, init) {
   return plainFetch(input, { ...init, cache: "no-store" });
 };
 
-// The dictionary's version (scripts/copy-kuromoji-dict.mjs builds it): kuromoji,
-// adapted to load it, and the Brotli decoder it is undone with.
-var DICTIONARY = "/kuromoji/2";
-importScripts(DICTIONARY + "/brotli.js", DICTIONARY + "/kuromoji.js");
+// Where the dictionary is: beside this file, a path from the root, not a URL
+// (see build below).
+var DICTIONARY = self.location.pathname.replace(/\/[^/]*$/, "");
 
 let tokenizer = null;
 let building = null;

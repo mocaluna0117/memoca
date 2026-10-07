@@ -1,6 +1,7 @@
 "use client";
 
 import { db } from "@/lib/db";
+import yomiAsset from "@/lib/search/yomi-asset.json";
 
 /**
  * What the worker sends back. It lives in `public/yomi-worker.js` as plain
@@ -79,8 +80,9 @@ function ensureWorker(): Worker | null {
     setState("unavailable");
     return null;
   }
-  // A static path, not a bundled module: see the comment in the worker itself.
-  const created = new Worker("/yomi-worker.js");
+  // A static path, not a bundled module: see the comment in the worker itself
+  // (src/workers/yomi-worker.js), built beside the dictionary.
+  const created = new Worker(`/kuromoji/${yomiAsset.version}/yomi-worker.js`);
   created.onmessage = (event: MessageEvent<YomiResponse>) => {
     const message = event.data;
     const waiting = pending.get(message.id);
@@ -95,9 +97,11 @@ function ensureWorker(): Worker | null {
     if (message.type === "readings") waiting?.resolve(message.readings);
     else waiting?.resolve([]);
   };
-  created.onerror = () => {
+  created.onerror = (event) => {
     setState("unavailable");
-    for (const waiting of pending.values()) waiting.reject(new Error("worker failed"));
+    // What failed, for the message the person sees.
+    const reason = event.message || "worker failed";
+    for (const waiting of pending.values()) waiting.reject(new Error(reason));
     pending.clear();
     // Tried afresh next time (once the network is back, say).
     worker?.terminate();
