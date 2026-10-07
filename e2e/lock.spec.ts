@@ -48,7 +48,7 @@ test.describe("folder locks", () => {
 
     // With the vault open, locking the folder still asks, and counts the note.
     await folderMenu(page, "仕事");
-    await page.getByRole("menuitem", { name: "ロックする…" }).click();
+    await page.getByRole("menuitem", { name: "ロックする" }).click();
     await expect(vaultPrompt(page)).toContainText("中にあるメモ 1 件");
     await vaultPrompt(page).getByRole("button", { name: "ロックする", exact: true }).click();
     await expect(page.getByText("フォルダ「仕事」をロックしました（メモ 1 件）")).toBeVisible({
@@ -68,7 +68,7 @@ test.describe("folder locks", () => {
 
     // Taking the folder's lock off says what it keeps, and keeps it.
     await folderMenu(page, "仕事");
-    await page.getByRole("menuitem", { name: "ロックを外す…" }).click();
+    await page.getByRole("menuitem", { name: "ロックを外す" }).click();
     await expect(vaultPrompt(page)).toContainText("1 件は、ロックしたままにします");
     await vaultPrompt(page).getByRole("button", { name: "ロックを外す", exact: true }).click();
     await expect(page.getByText("フォルダ「仕事」のロックを外しました（メモ 1 件）")).toBeVisible({
@@ -91,7 +91,7 @@ test.describe("folder locks", () => {
     await openApp(page);
     await addFolder(page, "仕事");
     await folderMenu(page, "仕事");
-    await page.getByRole("menuitem", { name: "ロックする…" }).click();
+    await page.getByRole("menuitem", { name: "ロックする" }).click();
     await enterVaultPassword(page, "ロックする");
     await expect(page.getByText("フォルダ「仕事」をロックしました")).toBeVisible({ timeout: 30_000 });
 
@@ -120,7 +120,7 @@ test.describe("folder locks", () => {
     await addFolder(page, "仕事");
     await addFolder(page, "家");
     await folderMenu(page, "仕事");
-    await page.getByRole("menuitem", { name: "ロックする…" }).click();
+    await page.getByRole("menuitem", { name: "ロックする" }).click();
     await enterVaultPassword(page, "ロックする");
     await expect(page.getByText("フォルダ「仕事」をロックしました")).toBeVisible({ timeout: 30_000 });
 

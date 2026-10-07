@@ -903,7 +903,7 @@ export function NoteList({
       <ContextMenuContent onCloseAutoFocus={onCloseAutoFocus}>
         <ContextMenuItem disabled={busy} onSelect={() => openDialog(() => pickFolderFor(taken))}>
           <FileInput className="size-4" aria-hidden />
-          {taken.length > 1 ? `${taken.length} 件のメモを移動…` : "移動…"}
+          {taken.length > 1 ? `${taken.length} 件のメモを移動` : t.action.move}
         </ContextMenuItem>
         <ContextMenuItem onSelect={() => void pinAll(changing, !allPinned, note.noteId)}>
           {allPinned ? (

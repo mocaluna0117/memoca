@@ -40,7 +40,7 @@ test("a note in a locked folder opens on a device that has never seen it, with t
   await waitForSynced(page);
   const panel2 = await folderPanel(page);
   await panel2.getByRole("button", { name: "仕事 の操作" }).click();
-  await page.getByRole("menuitem", { name: "ロックする…" }).click();
+  await page.getByRole("menuitem", { name: "ロックする" }).click();
   const confirm = vaultPrompt(page).getByRole("button", { name: "ロックする", exact: true });
   await expect(confirm).toBeVisible({ timeout: 30_000 });
   await enterVaultPassword(page, "ロックする");

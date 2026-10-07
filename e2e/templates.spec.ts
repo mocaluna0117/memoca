@@ -72,7 +72,7 @@ test.describe("templates", () => {
     await panel.getByRole("button", { name: "テンプレート の操作" }).click();
     const menu = page.getByRole("menu");
     await expect(menu.getByRole("menuitem", { name: "名前を変更" })).toBeVisible();
-    for (const item of ["ロックする…", "別のフォルダへ移動", "ゴミ箱に移動", "サブフォルダを追加"]) {
+    for (const item of ["ロックする", "別のフォルダへ移動", "ゴミ箱に移動", "サブフォルダを追加"]) {
       await expect(menu.getByRole("menuitem", { name: item })).toHaveCount(0);
     }
     await page.keyboard.press("Escape");

@@ -67,7 +67,7 @@ async function openFolder(page: Page, name: string) {
 async function lockFolder(page: Page, name: string) {
   const panel = await folderPanel(page);
   await panel.getByRole("button", { name: `${name} の操作` }).click();
-  await page.getByRole("menuitem", { name: "ロックする…" }).click();
+  await page.getByRole("menuitem", { name: "ロックする" }).click();
   const confirm = vaultPrompt(page).getByRole("button", { name: "ロックする", exact: true });
   await expect(confirm).toBeVisible();
   const asks = vaultPrompt(page).getByLabel("金庫のパスワード", { exact: true });

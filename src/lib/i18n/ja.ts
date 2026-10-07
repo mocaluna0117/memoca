@@ -42,7 +42,7 @@ export const ja = {
     // lock off an item for good, while opening the vault only lets this tab
     // read locked items for a while (金庫を開く).
     lock: "ロックする",
-    unlock: "ロックを外す…",
+    unlock: "ロックを外す",
     cancel: "キャンセル",
     save: "保存",
     close: "閉じる",

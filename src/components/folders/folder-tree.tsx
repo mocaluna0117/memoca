@@ -787,7 +787,7 @@ export function FolderTree({
                 }}
                 onRenameInDialog={(title) => openDialog(() => setRenamingNote({ noteId: note.noteId, title }))}
                 moveLabel={
-                  chosen.has(note.noteId) && chosen.size > 1 ? `${chosen.size} 件のメモを移動…` : t.action.move
+                  chosen.has(note.noteId) && chosen.size > 1 ? `${chosen.size} 件のメモを移動` : t.action.move
                 }
                 onMove={() => openDialog(() => setMovingNotes(notesTaken(note.noteId)))}
                 onToggleLock={(title, returnFocus) =>
@@ -1033,7 +1033,7 @@ export function FolderTree({
                         ) : (
                           <Lock className="size-4" aria-hidden />
                         )}
-                        {node.locked ? "ロックを外す…" : "ロックする…"}
+                        {node.locked ? t.action.unlock : t.action.lock}
                       </DropdownMenuItem>
                     )}
                     {!isSystem ? (
@@ -1340,7 +1340,7 @@ function TreeNoteRow({
                 }}
               >
                 {note.locked ? <LockOpen className="size-4" aria-hidden /> : <Lock className="size-4" aria-hidden />}
-                {note.locked ? "ロックを外す…" : "ロックする…"}
+                {note.locked ? t.action.unlock : t.action.lock}
               </DropdownMenuItem>
             )}
             <DropdownMenuSeparator />

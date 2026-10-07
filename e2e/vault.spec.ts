@@ -19,11 +19,11 @@ async function addFolder(page: Page) {
   await expect(panel.getByRole("button", { name: "新しいフォルダ", exact: true })).toBeVisible();
 }
 
-/** Chooses 「ロックする…」 on a folder. */
+/** Chooses 「ロックする」 on a folder. */
 async function askToLockFolder(page: Page, folder = "新しいフォルダ") {
   const panel = await folderPanel(page);
   await panel.getByRole("button", { name: `${folder} の操作` }).click();
-  await page.getByRole("menuitem", { name: "ロックする…" }).click();
+  await page.getByRole("menuitem", { name: "ロックする" }).click();
 }
 
 /** Every way a person can close a dialog. */
@@ -80,7 +80,7 @@ test.describe("vault prompt", () => {
     // closing that question changes nothing.
     const panel = await folderPanel(page);
     await panel.getByRole("button", { name: /の操作$/ }).nth(1).click();
-    await page.getByRole("menuitem", { name: "ロックを外す…" }).click();
+    await page.getByRole("menuitem", { name: "ロックを外す" }).click();
     const unlockHeading = dialog.getByRole("heading", { name: /のロックを外しますか？$/ });
     await expect(unlockHeading).toBeVisible();
     await expect(dialog).toContainText("暗号化されない状態でサーバーに保存されます");
@@ -92,8 +92,8 @@ test.describe("vault prompt", () => {
     await expect(panel.locator("[data-folder-row]").nth(1)).toBeFocused();
     await expect(page.getByRole("menu")).toHaveCount(0);
     await panel.getByRole("button", { name: /の操作$/ }).nth(1).click();
-    await expect(page.getByRole("menuitem", { name: "ロックを外す…" })).toBeVisible();
-    await page.getByRole("menuitem", { name: "ロックを外す…" }).click();
+    await expect(page.getByRole("menuitem", { name: "ロックを外す" })).toBeVisible();
+    await page.getByRole("menuitem", { name: "ロックを外す" }).click();
     await dialog.getByRole("button", { name: "ロックを外す", exact: true }).click();
     await expect(page.getByText(/のロックを外しました$/)).toBeVisible({ timeout: 30_000 });
   });

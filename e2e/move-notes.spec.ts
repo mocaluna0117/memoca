@@ -122,7 +122,7 @@ test.describe("moving notes, on a computer", () => {
   test("a row's menu, by a right click, moves it, or those chosen with it", async ({ page }) => {
     await inInbox(page, ["一", "二", "三"]);
     await row(page, "一").click({ button: "right" });
-    await page.getByRole("menuitem", { name: "移動…" }).click();
+    await page.getByRole("menuitem", { name: "移動", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "メモを移動" })).toBeVisible();
     await page.getByRole("dialog").getByRole("option", { name: /仕事/ }).click();
     await expect(toast(page, "移動しました")).toBeVisible();
@@ -131,7 +131,7 @@ test.describe("moving notes, on a computer", () => {
     await row(page, "二").click({ modifiers: ["ControlOrMeta"] });
     await row(page, "三").click({ modifiers: ["ControlOrMeta"] });
     await row(page, "三").click({ button: "right" });
-    await page.getByRole("menuitem", { name: "2 件のメモを移動…" }).click();
+    await page.getByRole("menuitem", { name: "2 件のメモを移動" }).click();
     await expect(page.getByRole("dialog", { name: "2 件のメモを移動" })).toBeVisible();
     await page.getByRole("dialog").getByRole("option", { name: /仕事/ }).click();
     await expect(toast(page, "2 件のメモを移動しました")).toBeVisible();
@@ -196,7 +196,7 @@ test.describe("moving notes, on a computer", () => {
     await addFolder(page, "仕事");
     const panel = await folderPanel(page);
     await panel.getByRole("button", { name: "仕事 の操作" }).click();
-    await page.getByRole("menuitem", { name: "ロックする…" }).click();
+    await page.getByRole("menuitem", { name: "ロックする" }).click();
     await enterVaultPassword(page, "ロックする");
     await expect(page.getByText(/フォルダ「仕事」をロックしました/)).toBeVisible({
       timeout: 30_000,
@@ -230,7 +230,7 @@ test.describe("moving notes, on a computer", () => {
     await row(page, "一").click({ modifiers: ["ControlOrMeta"] });
     await row(page, "二").click({ modifiers: ["ControlOrMeta"] });
     await row(page, "二").click({ button: "right" });
-    await expect(page.getByRole("menuitem", { name: "2 件のメモを移動…" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "2 件のメモを移動" })).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("menu")).toHaveCount(0);
     await expect(chooser(page)).toContainText("2 件を選択");
@@ -269,8 +269,8 @@ test.describe("moving notes, on a computer", () => {
     const order = (await names(page)) as string[];
     await row(page, order[1]!).focus();
     await page.keyboard.press("Shift+F10");
-    await expect(page.getByRole("menuitem", { name: "移動…" })).toBeVisible();
-    await page.getByRole("menuitem", { name: "移動…" }).focus();
+    await expect(page.getByRole("menuitem", { name: "移動", exact: true })).toBeVisible();
+    await page.getByRole("menuitem", { name: "移動", exact: true }).focus();
     await page.keyboard.press("Enter");
     await page.keyboard.type("仕事");
     await page.keyboard.press("Enter");
@@ -325,7 +325,7 @@ test.describe("moving notes, on a computer", () => {
   test("moved to the folder they are in: said so, and nothing moved", async ({ page }) => {
     await inInbox(page, ["一"]);
     await row(page, "一").click({ button: "right" });
-    await page.getByRole("menuitem", { name: "移動…" }).click();
+    await page.getByRole("menuitem", { name: "移動", exact: true }).click();
     await page.getByRole("dialog").getByRole("option", { name: /Inbox/ }).click();
     await expect(toast(page, "すでにそのフォルダにあります")).toBeVisible();
     await expect(row(page, "一")).toBeVisible();
@@ -348,14 +348,14 @@ test.describe("moving notes, on a phone", () => {
     test.skip(testInfo.project.name !== "mobile", "a finger");
   });
 
-  test("a long press opens a row's menu, the note not opened, and 移動… moves it", async ({
+  test("a long press opens a row's menu, the note not opened, and 移動 moves it", async ({
     page,
   }) => {
     await inInbox(page, ["一"]);
     await longPress(page, row(page, "一"));
-    await expect(page.getByRole("menuitem", { name: "移動…" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "移動", exact: true })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("n")).toBeNull();
-    await page.getByRole("menuitem", { name: "移動…" }).click();
+    await page.getByRole("menuitem", { name: "移動", exact: true }).click();
     await page.getByRole("dialog").getByRole("option", { name: /仕事/ }).click();
     await expect(toast(page, "移動しました")).toBeVisible();
     await expect(row(page, "一")).toHaveCount(0);
@@ -370,7 +370,7 @@ test.describe("moving notes, on a phone", () => {
     await expect(page.getByRole("button", { name: "並び順（手動）" })).toBeVisible();
     const before = await names(page);
     await longPress(page, row(page, "一"));
-    await expect(page.getByRole("menuitem", { name: "移動…" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "移動", exact: true })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("n")).toBeNull();
     await page.keyboard.press("Escape");
     expect(await names(page)).toEqual(before);

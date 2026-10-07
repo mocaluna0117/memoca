@@ -164,7 +164,7 @@ test.describe("notes kept in the sidebar, in no folder", () => {
 
     let panel = await folderPanel(page);
     await panel.getByRole("button", { name: "秘密のメモ の操作" }).click();
-    await page.getByRole("menuitem", { name: "ロックする…" }).click();
+    await page.getByRole("menuitem", { name: "ロックする" }).click();
     await enterVaultPassword(page, "ロックする");
     await expect(page.getByText("メモをロックしました")).toBeVisible({ timeout: 30_000 });
     await expect
@@ -176,7 +176,7 @@ test.describe("notes kept in the sidebar, in no folder", () => {
     await expect(sidebarNote(panel, "秘密のメモ")).toContainText("ロック中");
 
     await panel.getByRole("button", { name: "秘密のメモ の操作" }).click();
-    await page.getByRole("menuitem", { name: "ロックを外す…" }).click();
+    await page.getByRole("menuitem", { name: "ロックを外す" }).click();
     await vaultPrompt(page).getByRole("button", { name: "ロックを外す", exact: true }).click();
     await expect(page.getByText("メモのロックを外しました")).toBeVisible({ timeout: 30_000 });
     await expect
