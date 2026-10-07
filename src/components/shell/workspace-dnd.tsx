@@ -10,6 +10,8 @@ import {
   DragOverlay,
   type DragStartEvent,
   MouseSensor,
+  type MouseSensorOptions,
+  type SensorProps,
   TouchSensor,
   useSensor,
   useSensors,
@@ -57,6 +59,46 @@ export type DragHandlers = {
   overlay?: (active: Active) => ReactNode;
 };
 
+/**
+ * dnd-kit's mouse sensor, made to let go when the button has been let go of
+ * unheard. It ends a drag, or the press that would start one, only on a
+ * mouseup; one the page never hears leaves it held, and the row then follows
+ * the pointer, the button up, until the next click drops it. Memoca for Mac
+ * did that now and then, most likely on the click that brought its window
+ * to the front from another app or window. A move with no button down, or
+ * the window losing focus, now ends it as Escape does: dropped nowhere.
+ */
+class ReleasingMouseSensor extends MouseSensor {
+  constructor(props: SensorProps<MouseSensorOptions>) {
+    const done = new AbortController();
+    const ended = <T extends unknown[]>(handler: (...args: T) => void) =>
+      (...args: T) => {
+        done.abort();
+        handler(...args);
+      };
+    super({
+      ...props,
+      onAbort: ended(props.onAbort),
+      onCancel: ended(props.onCancel),
+      onEnd: ended(props.onEnd),
+    });
+    if (done.signal.aborted) return;
+    // dnd-kit's own way out, kept to itself.
+    const cancel = () => (this as unknown as { handleCancel(): void }).handleCancel();
+    const target = props.event.target instanceof Node ? props.event.target : null;
+    const document = target?.ownerDocument ?? window.document;
+    const view = document.defaultView ?? window;
+    document.addEventListener(
+      "mousemove",
+      (event) => {
+        if (event.buttons === 0) cancel();
+      },
+      { capture: true, signal: done.signal },
+    );
+    view.addEventListener("blur", cancel, { signal: done.signal });
+  }
+}
+
 const Owners = createContext<Map<string, { current: DragHandlers }> | null>(null);
 
 /** Whose drag this is, by what it carries. */
@@ -81,7 +123,7 @@ export function WorkspaceDnd({ children }: { children: ReactNode }) {
   // the two never both start; a mouse moved a little way, so a click is a
   // click. Folders are dragged by a mouse only (their rows say so).
   const sensors = useSensors(
-    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(ReleasingMouseSensor, { activationConstraint: { distance: 6 } }),
     useSensor(TouchSensor, { activationConstraint: { delay: HOLD_MS + 50, tolerance: 8 } }),
   );
 
