@@ -94,7 +94,8 @@ test.describe("images in the quick note", () => {
     await page.goto("/quick");
     await expect(thumbnails(page)).toHaveCount(1);
     await expect(thumbnails(page).first()).toHaveAttribute("alt", "下書きの画像.png");
-    await expect(page.getByText("前回の下書きを戻しました")).toBeVisible();
+    // In its own tab, named for what it holds.
+    await expect(page.getByRole("tab", { name: "画像 1 枚", exact: true })).toBeVisible();
   });
 
   test("a file not an image, or an image this browser cannot read, is turned away with the reason", async ({
