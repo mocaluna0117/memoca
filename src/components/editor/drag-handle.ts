@@ -24,5 +24,23 @@ export const dragHandle = createExtension({
     for (const type of ["pointerdown", "mousedown"]) {
       root.addEventListener(type, keep, { capture: true, signal });
     }
+
+    // While a block is dragged, BlockNote has it selected, so its formatting
+    // toolbar shows, over the line above: as wide as it is (文字の大きさ
+    // made it so), it covers that line's right edge, and a block dropped
+    // there, to go beside it in a column, landed on the toolbar instead.
+    // Hidden for the drag (globals.css), it lets the drop through.
+    const marked = document.documentElement.dataset;
+    const start = (event: Event) => {
+      if (event.target instanceof Element && event.target.closest(HANDLE)) {
+        marked.blockDragging = "";
+      }
+    };
+    const end = () => delete marked.blockDragging;
+    root.addEventListener("dragstart", start, { capture: true, signal });
+    for (const type of ["dragend", "drop"]) {
+      document.addEventListener(type, end, { capture: true, signal });
+    }
+    signal.addEventListener("abort", end);
   },
 });

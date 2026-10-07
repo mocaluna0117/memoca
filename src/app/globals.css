@@ -151,6 +151,13 @@
   max-width: calc(100vw - 0.5rem);
 }
 
+/* Not there while a block is dragged by its handle, so it takes no drop
+   (src/components/editor/drag-handle.ts): the box Floating UI places it in
+   too, which would take the drop as much. */
+:root[data-block-dragging] :has(> .bn-formatting-toolbar) {
+  visibility: hidden;
+}
+
 /* An empty, open toggle's "add a block" button, lit while a block dragged
    over its line would go into it (src/components/editor/toggles.ts): the
    drop cursor alone, under the line, looks as it does for a drop after it. */
