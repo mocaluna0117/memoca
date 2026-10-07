@@ -9,6 +9,7 @@ import type { Folder, Note, Stamp } from "@/lib/types";
 import { stamp } from "./clock";
 import { enqueue } from "./outbox";
 import { lockCoverage } from "@/lib/vault/model";
+import { duplicateRenames, freeTitle, isNamed, titleKey } from "@/lib/note-titles";
 
 /**
  * Every user action writes to the local database first and queues the server
@@ -364,12 +365,13 @@ export async function createNote(opts: {
   const sortKey =
     folderId === null ? await siblingKeyAfterLast("notes", null) : await siblingKeyBeforeFirst(folderId);
   const kind = opts.kind ?? "note";
-  const title = opts.title ?? "";
 
   const coverage = lockCoverage(await db().folders.toArray());
   if (folderId !== null && coverage.has(folderId)) {
-    return createLockedNote({ noteId, folderId, sortKey, kind, title, ts, device });
+    return createLockedNote({ noteId, folderId, sortKey, kind, title: opts.title ?? "", ts, device });
   }
+  // A name of its own in its folder (lib/note-titles).
+  const title = opts.title?.trim() ? freeTitle(opts.title, await namesIn(folderId)) : (opts.title ?? "");
 
   const note: Note = {
     noteId,
@@ -482,7 +484,71 @@ async function createLockedNote(args: {
   return noteId;
 }
 
-export async function renameNote(noteId: string, title: string): Promise<void> {
+/**
+ * Renames a note: numbered, if another of its folder's has that name
+ * already (lib/note-titles). Not while its title is being typed (`settle`
+ * false): the name is settled once the field is left (settleNoteTitle).
+ */
+export async function renameNote(
+  noteId: string,
+  title: string,
+  { settle = true }: { settle?: boolean } = {},
+): Promise<void> {
+  await writeTitle(noteId, title);
+  if (settle) await settleNoteTitle(noteId);
+}
+
+/** The names of a folder's notes (the top level's, for null) held to being its own, but `except`'s. */
+async function namesIn(folderId: string | null, except?: string): Promise<Set<string>> {
+  const database = db();
+  const notes =
+    folderId === null
+      ? await database.notes.filter((note) => note.folderId === null).toArray()
+      : await database.notes.where("folderId").equals(folderId).toArray();
+  return new Set(
+    notes.filter((note) => note.noteId !== except && isNamed(note)).map((note) => titleKey(note.title!)),
+  );
+}
+
+/**
+ * Gives a note a name of its own in its folder: numbered, if another there
+ * has its name (lib/note-titles). After it is renamed, moved, or taken out
+ * of the trash: it is the one numbered, not the note that had the name.
+ */
+export async function settleNoteTitle(noteId: string): Promise<void> {
+  const note = await db().notes.get(noteId);
+  if (!note || !isNamed(note)) return;
+  const title = freeTitle(note.title!, await namesIn(note.folderId, noteId));
+  if (titleKey(title) !== titleKey(note.title!)) await writeTitle(noteId, title);
+}
+
+/** The note whose title is being typed, if any: left as it is until it is settled. */
+let titleBeingTyped: string | null = null;
+export function typingTitle(noteId: string | null): void {
+  titleBeingTyped = noteId;
+}
+
+/**
+ * Numbers every name a folder's notes share, the one made first keeping it:
+ * those there were before names were held to this, and those two devices
+ * gave at once (lib/note-titles). Every device numbers the same ones the
+ * same way, so what they write agrees.
+ */
+export async function settleAllNoteTitles(): Promise<void> {
+  const byFolder = new Map<string | null, Note[]>();
+  for (const note of await db().notes.toArray()) {
+    const group = byFolder.get(note.folderId) ?? [];
+    group.push(note);
+    byFolder.set(note.folderId, group);
+  }
+  const typing = new Set(titleBeingTyped ? [titleBeingTyped] : []);
+  for (const notes of byFolder.values()) {
+    for (const { noteId, title } of duplicateRenames(notes, typing)) await writeTitle(noteId, title);
+  }
+}
+
+/** Writes a note's title, as it is given. */
+async function writeTitle(noteId: string, title: string): Promise<void> {
   const database = db();
   const note = await database.notes.get(noteId);
   if (!note) return;
@@ -557,6 +623,8 @@ export async function moveNote(
     entityId: noteId,
     payload: { kind: "note", noteId, place: { folderId: target, sortKey: key, ts } },
   });
+  // Into another folder, with a name one there has: numbered.
+  if (note.folderId !== target) await settleNoteTitle(noteId);
 }
 
 /**
@@ -680,6 +748,8 @@ export async function setNoteTrashed(noteId: string, trashed: boolean): Promise<
     entityId: noteId,
     payload: { kind: "note", noteId, trash: { deletedAt, ts } },
   });
+  // Back from the trash, to a folder with one of its name since: numbered.
+  if (!trashed) await settleNoteTitle(noteId);
 
   // Restoring a note whose folder is still in the trash would leave it
   // invisible, so it comes back to Inbox, the home for anything unfiled.

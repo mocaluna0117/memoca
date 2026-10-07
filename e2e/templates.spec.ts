@@ -50,7 +50,8 @@ test.describe("templates", () => {
     await expect(page.getByText("テンプレートとして保存しました")).toBeVisible();
 
     await pick(page, "週報");
-    await expect(page.getByLabel("メモのタイトル")).toHaveValue("週報");
+    // In Inbox, by the note it was kept from: a name of its own there.
+    await expect(page.getByLabel("メモのタイトル")).toHaveValue("週報 (2)");
     await expect(editor(page)).toContainText("今週やったこと");
 
     // Into another note, where the caret is.

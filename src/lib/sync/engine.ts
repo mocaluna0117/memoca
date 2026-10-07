@@ -308,6 +308,12 @@ export class SyncEngine {
         .then(({ fileAwaitingInbox }) => fileAwaitingInbox())
         .catch(() => 0);
       void this.dropGhosts();
+      // Names two devices gave notes of one folder at once, and those from
+      // before names were held to being a folder's own: numbered, the same
+      // way on every device (lib/note-titles).
+      void import("./mutations")
+        .then(({ settleAllNoteTitles }) => settleAllNoteTitles())
+        .catch(() => undefined);
     }
   }
 

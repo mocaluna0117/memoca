@@ -47,7 +47,14 @@ import { NoteBacklinks } from "@/components/notes/note-backlinks";
 import { JournalNav } from "@/components/notes/journal-nav";
 import { useNotePlace } from "@/components/notes/use-note-place";
 import { enterFromTitle } from "@/components/editor/title-enter";
-import { renameNote, setNotePinned, setNoteTrashed } from "@/lib/sync/mutations";
+import {
+  renameNote,
+  setNotePinned,
+  setNoteTrashed,
+  settleNoteTitle,
+  typingTitle,
+} from "@/lib/sync/mutations";
+import { db } from "@/lib/db";
 import { t } from "@/lib/i18n/ja";
 import { downloadBlockFile } from "@/components/editor/file-download-button";
 import {
@@ -69,8 +76,9 @@ const TITLE_DEBOUNCE_MS = 250;
  */
 const titleSaves = new Set<Promise<void>>();
 
+/** Saves a title as it is typed: numbered, if need be, only once the field is left. */
 function saveTitle(noteId: string, value: string): Promise<void> {
-  const saving = renameNote(noteId, value).finally(() => titleSaves.delete(saving));
+  const saving = renameNote(noteId, value, { settle: false }).finally(() => titleSaves.delete(saving));
   titleSaves.add(saving);
   return saving;
 }
@@ -163,6 +171,7 @@ export function NotePane({
   }
 
   const pendingTitle = useRef<{ noteId: string; value: string } | null>(null);
+  const titleTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (!draft.dirty || draft.noteId !== noteId || draft.value === title) {
@@ -176,6 +185,7 @@ export function NotePane({
       pendingTitle.current = null;
       void saveTitle(draft.noteId, draft.value);
     }, TITLE_DEBOUNCE_MS);
+    titleTimer.current = handle;
     return () => clearTimeout(handle);
   }, [draft, title, noteId]);
 
@@ -305,6 +315,27 @@ export function NotePane({
             setDraft({ noteId, value: event.target.value, dirty: true })
           }
           disabled={hidden || pendingLock}
+          onFocus={() => typingTitle(noteId)}
+          // Left: what was typed saved now, and numbered if another note
+          // of its folder has that name (lib/note-titles); the field shows
+          // the name it was given.
+          onBlur={() => {
+            typingTitle(null);
+            if (titleTimer.current) clearTimeout(titleTimer.current);
+            const value = draft.dirty && draft.noteId === noteId ? draft.value : null;
+            pendingTitle.current = null;
+            void (async () => {
+              if (value !== null) await saveTitle(noteId, value);
+              await settleNoteTitle(noteId);
+              if (value === null) return;
+              const named = (await db().notes.get(noteId))?.title ?? value;
+              setDraft((current) =>
+                current.noteId === noteId && current.value === value
+                  ? { noteId, value: named, dirty: false }
+                  : current,
+              );
+            })();
+          }}
           onKeyDown={(event) => {
             // Down into the note, as in a document; not while a word is still
             // being written with the input method (Safari says so by keyCode 229
