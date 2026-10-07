@@ -14,6 +14,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
+    "e2e:local": "scripts/e2e-local.sh",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },
