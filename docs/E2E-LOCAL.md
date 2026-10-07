@@ -18,6 +18,7 @@ pnpm e2e:local e2e/quick.spec.ts --project=desktop
   4. 終わったら、起動したものを止める
 - 終わったあとの `.next` は手元の Convex 向けのビルドです。いつものビルドが要るときは `pnpm build` をやり直します。
 - ブラウザ 2 つと Convex を同じパソコンで動かすので、たまに読み込みが遅くて時間切れになります。失敗したテストだけ流し直してください（`--last-failed`）。
+- Better Auth は、同じ送り元からのログインやアカウント作成を短い時間に数回までに制限します。手元の Convex ではどのテストも 127.0.0.1 から来るので、テストの共通部品（`e2e/helpers.ts` の `signUp`・`signIn`）が、テストごとに別の送り元（`x-forwarded-for`）を名乗ります。
 
 ## はじめに一度だけ
 

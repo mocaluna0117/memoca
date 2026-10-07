@@ -36,6 +36,8 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { signOut } from "@/lib/auth/client";
+import { UnsentDialog } from "@/components/auth/unsent-warning";
+import { type Unsent, anyUnsent, unsentOnDevice } from "@/lib/sync/unsent";
 import { formatBytes } from "@/lib/bytes";
 import { resetLocalData } from "@/lib/db";
 import { t } from "@/lib/i18n/ja";
@@ -71,6 +73,15 @@ export default function SettingsPage() {
   const deleteAccount = useMutation(api.users.deleteAccount);
 
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // What only this device has, asked about before signing out loses it.
+  const [unsent, setUnsent] = useState<Unsent | null>(null);
+  const leave = async () => {
+    await resetLocalData();
+    // With no network the server is not told, but nothing of the account is
+    // left here, and it goes on as the desktop shell's sign-out does.
+    await signOut().catch(() => undefined);
+    router.push("/");
+  };
   const [deleting, setDeleting] = useState(false);
   const standalone = useMediaQuery("(display-mode: standalone)");
   const isIOS = useClientValue(() => /iPad|iPhone|iPod/.test(navigator.userAgent), false);
@@ -220,14 +231,22 @@ export default function SettingsPage() {
               variant="outline"
               className="gap-2"
               onClick={async () => {
-                await resetLocalData();
-                await signOut();
-                router.push("/");
+                const kept = await unsentOnDevice();
+                if (anyUnsent(kept)) setUnsent(kept);
+                else await leave();
               }}
             >
               <LogOut className="size-4" aria-hidden />
               {t.action.signOut}
             </Button>
+            <UnsentDialog
+              unsent={unsent}
+              onCancel={() => setUnsent(null)}
+              onConfirm={() => {
+                setUnsent(null);
+                void leave();
+              }}
+            />
             <Button variant="ghost" className="text-destructive" onClick={() => setConfirmDelete(true)}>
               アカウントを削除
             </Button>

@@ -12,8 +12,20 @@ const DEBOUNCE_MS = 1_500;
  * Requires the Convex deployment to have ALLOW_PASSWORD_AUTH=true, which is
  * never set in production.
  */
+/**
+ * An address of its own for each test's page, as each person has one. Better
+ * Auth allows a few sign-ins a minute from one address, which the Convex
+ * backend on this computer (scripts/e2e-local.sh), unlike the cloud's, holds
+ * every test to as one: they all come from 127.0.0.1.
+ */
+async function ownAddress(page: Page): Promise<void> {
+  const part = () => Math.floor(Math.random() * 254) + 1;
+  await page.setExtraHTTPHeaders({ "x-forwarded-for": `10.${part()}.${part()}.${part()}` });
+}
+
 export async function signUp(page: Page): Promise<string> {
   const email = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@memoca.test`;
+  await ownAddress(page);
   await page.goto("/");
   await keepListMode(page);
   const status = await page.evaluate(
@@ -32,6 +44,7 @@ export async function signUp(page: Page): Promise<string> {
 }
 
 export async function signIn(page: Page, email: string): Promise<void> {
+  await ownAddress(page);
   await page.goto("/");
   await keepListMode(page);
   await page.evaluate(
