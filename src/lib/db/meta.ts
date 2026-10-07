@@ -41,8 +41,14 @@ export const META = {
   unlockJob: "unlockJob",
   /** Copies of other notes' files the server refused, and what they copied. */
   refusedCopies: "refusedCopies",
-  /** What was being written in the quick note, until it is saved. */
+  /**
+   * What was being written in a tab of the quick note, until it is saved:
+   * under `quickDraft:<tab>`. Under this key itself, the one draft of a
+   * version with no tabs, taken into the first tab (lib/quick/draft.ts).
+   */
   quickDraft: "quickDraft",
+  /** The quick note's tabs, in order, and the one shown: under `quickTabs:<account>`. */
+  quickTabs: "quickTabs",
   /** Images written again as WebP whose replacement the server has yet to hear of. */
   replacedToTell: "replacedToTell",
   /** Images that, written again as WebP, came to no less (or are animated): not offered again. */

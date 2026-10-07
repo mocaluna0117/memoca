@@ -6,7 +6,7 @@ import { createVaultInSettings, enterVaultPassword } from "./vault-helpers";
 
 /** Whether this device holds a draft of the quick note. */
 const hasDraft = async (page: Page) =>
-  (await readTable<{ key: string }>(page, "meta")).some((row) => row.key === "quickDraft");
+  (await readTable<{ key: string }>(page, "meta")).some((row) => row.key.startsWith("quickDraft:"));
 
 test.describe("the quick note", () => {
   test("all of it goes in the body, and its first line stands in for a title where notes are listed", async ({

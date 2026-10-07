@@ -151,15 +151,20 @@ describe("the order set for a list, on this device", () => {
     host.remove();
   });
 
-  test("last changed first until set, then as set, each folder its own", async () => {
+  test("a folder's placed by hand until set, then as set, each folder its own", async () => {
     await act(async () => root.render(<Probe folderId="f" />));
-    expect(seen.at(-1)![0]).toBe("updated");
-    act(() => seen.at(-1)![1]("manual"));
     expect(seen.at(-1)![0]).toBe("manual");
+    act(() => seen.at(-1)![1]("title"));
+    expect(seen.at(-1)![0]).toBe("title");
     await act(async () => root.render(<Probe folderId="g" />));
-    expect(seen.at(-1)![0]).toBe("updated");
-    await act(async () => root.render(<Probe folderId="f" />));
     expect(seen.at(-1)![0]).toBe("manual");
+    await act(async () => root.render(<Probe folderId="f" />));
+    expect(seen.at(-1)![0]).toBe("title");
+  });
+
+  test("all notes' last changed first until set", async () => {
+    await act(async () => root.render(<Probe folderId={null} />));
+    expect(seen.at(-1)![0]).toBe("updated");
   });
 
   test("all notes are never placed by hand", async () => {
@@ -173,7 +178,7 @@ describe("the order set for a list, on this device", () => {
   test("something not an order kept there is taken as none", async () => {
     localStorage.setItem("memoca:note-order", JSON.stringify({ f: "sideways" }));
     await act(async () => root.render(<Probe folderId="f" />));
-    expect(seen.at(-1)![0]).toBe("updated");
+    expect(seen.at(-1)![0]).toBe("manual");
   });
 });
 

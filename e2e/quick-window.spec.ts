@@ -7,7 +7,7 @@ const WINDOW = "popup,width=380,height=460";
 
 /** Whether this device holds a draft of the quick note. */
 const hasDraft = async (page: Page) =>
-  (await readTable<{ key: string }>(page, "meta")).some((row) => row.key === "quickDraft");
+  (await readTable<{ key: string }>(page, "meta")).some((row) => row.key.startsWith("quickDraft:"));
 
 test.describe("the quick note in a window of its own", () => {
   test("however much is written, the header and its save button stay in view", async ({ page }) => {

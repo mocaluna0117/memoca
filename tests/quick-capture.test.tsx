@@ -5,11 +5,19 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as Y from "yjs";
 import { db, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
-import { DRAFT_DELAY_MS, loadDraft } from "@/lib/quick/draft";
+import { DRAFT_DELAY_MS, loadDraft, loadTabs } from "@/lib/quick/draft";
 import { SHELL_HIDDEN } from "@/lib/quick/shell";
 import { bodyFragment } from "@/lib/sync/ydoc";
 
 const ME = "user-me";
+
+/** The draft of the tab shown, for an account. */
+const draftOf = async (userKey: string) => loadDraft(userKey, (await loadTabs(userKey)).active);
+/** Each tab's draft text, in order (empty where there is none). */
+const tabTexts = async (userKey: string) => {
+  const tabs = await loadTabs(userKey);
+  return Promise.all(tabs.ids.map(async (id) => (await loadDraft(userKey, id))?.text ?? ""));
+};
 
 const h = vi.hoisted(() => ({
   params: new URLSearchParams("window=1"),
@@ -44,12 +52,17 @@ import { QuickCapture } from "@/components/notes/quick-capture";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-/** Lets effects, Dexie and the promises after them run. */
+/**
+ * Lets effects, Dexie and the promises after them run: the tabs, written and
+ * read back by a live query, take a few rounds.
+ */
 const settle = async () => {
-  await act(async () => {
-    await vi.advanceTimersByTimeAsync(0);
-    for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
-  });
+  for (let round = 0; round < 4; round += 1) {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+      for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    });
+  }
 };
 
 let root: Root;
@@ -201,7 +214,7 @@ describe("the quick note, saving", () => {
     await key({ key: "Enter", ctrlKey: true });
     expect(h.createNote).toHaveBeenCalledOnce();
     await pause();
-    expect(await loadDraft(ME)).toBeNull();
+    expect(await draftOf(ME)).toBeNull();
   });
 
   test("a save that fails says so, and keeps the text and its draft", async () => {
@@ -213,7 +226,7 @@ describe("the quick note, saving", () => {
     expect(field().value).toBe("失敗する");
     expect(field().readOnly).toBe(false);
     await pause();
-    expect((await loadDraft(ME))?.text).toBe("失敗する");
+    expect((await draftOf(ME))?.text).toBe("失敗する");
   });
 
   test("a save whose body could not be written finishes the same note when tried again", async () => {
@@ -263,7 +276,7 @@ describe("the quick note's window, closing", () => {
     // Read as the window goes: the draft must already be there, not left to a timer.
     let atClose: Promise<unknown> | undefined;
     h.closed.mockImplementation(() => {
-      atClose = loadDraft(ME);
+      atClose = draftOf(ME);
     });
     await type("閉じる前");
     await key({ key: "Escape" }, document);
@@ -301,7 +314,7 @@ describe("the quick note's window, closing", () => {
     await act(async () => made("note-1"));
     await settle();
     expect(h.closed).toHaveBeenCalledOnce();
-    expect(await loadDraft(ME)).toBeNull();
+    expect(await draftOf(ME)).toBeNull();
     expect(status()).toBe("");
   });
 
@@ -332,7 +345,7 @@ describe("the quick note's window, opening Memoca", () => {
   test("a shell that can bring out Memoca's own window has the button, which keeps the draft first", async () => {
     let atShow: Promise<unknown> | undefined;
     const showApp = vi.fn(() => {
-      atShow = loadDraft(ME);
+      atShow = draftOf(ME);
     });
     window.memocaShell = { hide() {}, openExternal() {}, showApp, platform: "macos" };
     await render();
@@ -369,7 +382,7 @@ describe("the quick note's window, put away by the desktop shell", () => {
     vi.spyOn(document, "hasFocus").mockReturnValue(false);
     // Asked only once the draft is on the device.
     h.newBuild.mockImplementation(async () => {
-      expect(await loadDraft(ME)).toMatchObject({ text: "書きかけ" });
+      expect(await draftOf(ME)).toMatchObject({ text: "書きかけ" });
       return true;
     });
     await render();
@@ -440,42 +453,34 @@ describe("the quick note's window, put away by the desktop shell", () => {
 });
 
 describe("the quick note's draft, coming back", () => {
-  test("into an empty field, said so; and taken out again", async () => {
+  test("one left by a version with no tabs comes back in the first tab", async () => {
     await setMeta(META.quickDraft, { text: "下書き", updatedAt: 0, userKey: ME });
     await render();
     expect(field().value).toBe("下書き");
-    expect(status()).toContain("前回の下書きを戻しました");
-
-    await click("消す");
-    expect(field().value).toBe("");
-    await pause();
-    expect(await loadDraft(ME)).toBeNull();
+    expect(status()).toBe("");
+    expect(await tabTexts(ME)).toEqual(["下書き"]);
   });
 
-  test("under what was shared, which stays the first line; and taken out again", async () => {
+  test("what is shared goes into a tab of its own, the draft left as it is", async () => {
     await setMeta(META.quickDraft, { text: "下書き", updatedAt: 0, userKey: ME });
     await render("window=1&text=共有");
-    expect(field().value).toBe("共有\n\n下書き");
-    expect(status()).toContain("前回の下書きを下に足しました");
-
-    await click("外す");
     expect(field().value).toBe("共有");
     await pause();
-    expect((await loadDraft(ME))?.text).toBe("共有");
+    expect(await tabTexts(ME)).toEqual(["下書き", "共有"]);
   });
 
-  test("closed straight after a share is joined with a draft, both are kept", async () => {
+  test("closed straight after a share, both are kept", async () => {
     await setMeta(META.quickDraft, { text: "下書き", updatedAt: 0, userKey: ME });
     await render("window=1&text=共有");
     await key({ key: "Escape" }, document);
-    expect((await loadDraft(ME))?.text).toBe("共有\n\n下書き");
+    expect(await tabTexts(ME)).toEqual(["下書き", "共有"]);
   });
 
-  test("a draft the field already holds is not added again", async () => {
+  test("a draft holding what is shared is not given it again", async () => {
     await setMeta(META.quickDraft, { text: "共有", updatedAt: 0, userKey: ME });
     await render("window=1&text=共有");
     expect(field().value).toBe("共有");
-    expect(status()).toBe("");
+    expect((await loadTabs(ME)).ids).toHaveLength(1);
   });
 
   test("what was shared leaves the address, so loading it again does not add it twice", async () => {
@@ -497,8 +502,103 @@ describe("the quick note's draft, coming back", () => {
     // What the last one had typed is kept as its draft, for it alone, and
     // the next one's empty field, written in its turn, does not forget it.
     await pause();
-    expect((await loadDraft(ME))?.text).toBe("私の");
-    expect(await loadDraft("user-next")).toBeNull();
+    expect(await draftOf(ME)).toMatchObject({ text: "私の" });
+    expect(await draftOf("user-next")).toBeNull();
+  });
+});
+
+describe("the quick note's tabs", () => {
+  const tabs = () => Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent);
+  const selected = () => host.querySelector('[role="tab"][aria-selected="true"]')?.textContent;
+  const labelled = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+  async function press(element: HTMLElement) {
+    await act(async () => element.click());
+    await settle();
+  }
+  const tab = (name: string) =>
+    Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((found) => found.textContent === name)!;
+  const dialog = () => document.querySelector('[role="alertdialog"]');
+  const inDialog = (name: string) =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')).find(
+      (found) => found.textContent === name,
+    )!;
+
+  test("each its own draft, named by its first line, kept as tabs are switched", async () => {
+    await render();
+    await type("一つ目\n本文");
+    expect(tabs()).toEqual(["一つ目"]);
+    await press(labelled("新しいタブ"));
+    expect(tabs()).toEqual(["一つ目", "新しいメモ"]);
+    expect(field().value).toBe("");
+    await type("二つ目");
+    await press(tab("一つ目"));
+    expect(field().value).toBe("一つ目\n本文");
+    expect(selected()).toBe("一つ目");
+    await pause();
+    expect(await tabTexts(ME)).toEqual(["一つ目\n本文", "二つ目"]);
+  });
+
+  test("a tab saved is closed, the next shown saying so; the last one stays, emptied", async () => {
+    await render();
+    await type("一つ目");
+    await press(labelled("新しいタブ"));
+    await type("二つ目");
+    await click("保存");
+    expect(h.createNote).toHaveBeenCalledTimes(1);
+    expect(tabs()).toEqual(["一つ目"]);
+    expect(field().value).toBe("一つ目");
+    expect(status()).toContain("保存しました");
+
+    await click("保存");
+    expect(tabs()).toEqual(["新しいメモ"]);
+    expect(field().value).toBe("");
+    expect(status()).toContain("保存しました");
+  });
+
+  test("closing a tab with something in it asks first: kept, let go of, or saved", async () => {
+    await render();
+    await type("一つ目");
+    await press(labelled("新しいタブ"));
+    await type("二つ目");
+
+    await press(labelled("二つ目 のタブを閉じる"));
+    expect(dialog()?.textContent).toContain("「二つ目」は、まだ保存していません");
+    await press(inDialog("キャンセル"));
+    expect(dialog()).toBeNull();
+    expect(tabs()).toEqual(["一つ目", "二つ目"]);
+
+    await press(labelled("二つ目 のタブを閉じる"));
+    await press(inDialog("保存せずに閉じる"));
+    expect(tabs()).toEqual(["一つ目"]);
+    expect(h.createNote).not.toHaveBeenCalled();
+    await pause();
+    expect(await tabTexts(ME)).toEqual(["一つ目"]);
+
+    await press(labelled("新しいタブ"));
+    await type("三つ目");
+    await press(labelled("三つ目 のタブを閉じる"));
+    await press(inDialog("保存して閉じる"));
+    expect(h.createNote).toHaveBeenCalledTimes(1);
+    expect(tabs()).toEqual(["一つ目"]);
+  });
+
+  test("an empty tab closes at once; the only tab has no ×", async () => {
+    await render();
+    expect(host.querySelector('button[aria-label$="のタブを閉じる"]')).toBeNull();
+    await press(labelled("新しいタブ"));
+    await press(labelled("新しいメモ のタブを閉じる"));
+    expect(dialog()).toBeNull();
+    expect(tabs()).toEqual(["新しいメモ"]);
+  });
+
+  test("Esc closes the dialog, not the window", async () => {
+    await render();
+    await type("一つ目");
+    await press(labelled("新しいタブ"));
+    await type("二つ目");
+    await press(labelled("二つ目 のタブを閉じる"));
+    await key({ key: "Escape" }, document.activeElement ?? document);
+    expect(h.closed).not.toHaveBeenCalled();
   });
 });
 

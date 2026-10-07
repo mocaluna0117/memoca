@@ -3,7 +3,16 @@
 import { AppWindow, ArrowLeft, Check, ImagePlus, X } from "lucide-react";
 import { uuidv7 } from "uuidv7";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  type ReactNode,
+  type Ref,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -15,24 +24,42 @@ import { useModKeyLabel } from "@/lib/platform";
 import { type Allowance, prepareUpload, stageUpload } from "@/lib/media/attachments";
 import { uploadRefusal } from "@/lib/media/refusal";
 import { type QuickPart, appendBlocks } from "@/lib/quick/body";
-import { type DraftImage, clearDraft, keepDraft, loadDraft } from "@/lib/quick/draft";
+import {
+  type DraftImage,
+  MAX_TABS,
+  clearDraft,
+  closeTab,
+  keepDraft,
+  loadDraft,
+  loadTabs,
+  openTab,
+  showTab,
+  useQuickTabs,
+} from "@/lib/quick/draft";
+import { CloseTabDialog, type QuickTab, QuickTabs, holds, tabName } from "@/components/notes/quick-tabs";
 import { useQuickMode } from "@/lib/quick/mode";
-import { SHELL_HIDDEN, closeQuickWindow, openNoteInApp } from "@/lib/quick/shell";
+import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { createNote } from "@/lib/sync/mutations";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { cn } from "@/lib/utils";
 
-/** What the status line says: how the last save went, or that a draft came back. */
+/** What the status line says: how the last save went, or why a file was turned away. */
 type Status =
   | { kind: "saved"; noteId: string }
   | { kind: "failed" }
-  | { kind: "restored" }
-  | { kind: "appended"; before: string }
   /** A file turned away, and why. */
   | { kind: "refused"; message: string }
   | null;
+
+/** What a tab's quick note does for the tabs around it. */
+type CaptureHandle = {
+  /** Saves it, as its button does. */
+  save: () => Promise<void>;
+  /** Lets go of what is written, its draft not written again as it goes. */
+  discard: () => void;
+};
 
 /** An image added, with a URL of this tab's to show it by. */
 type QuickImage = DraftImage & { url: string };
@@ -74,6 +101,10 @@ const composing = (event: { isComposing: boolean; keyCode: number }) =>
  * desktop shell, or a window the web app opens), it stays, emptied for the
  * next one, and Esc puts it away. Either way what is being written is kept
  * as a draft on this device, for this account, until it is saved.
+ *
+ * In tabs, as a text editor's: each a draft of its own. A tab saved is
+ * closed (the last one stays, emptied); one closed with something in it is
+ * asked about first.
  */
 export function QuickCapture() {
   const { me } = useSync();
@@ -96,7 +127,7 @@ export function QuickCapture() {
   // last one's, nor anything typed while it was shown, is carried over. What
   // was shared is, being the one at the device's.
   return (
-    <Capture
+    <Tabbed
       key={me?.userKey ?? ""}
       userKey={me?.userKey ?? ""}
       inbox={me?.inboxFolderId ?? null}
@@ -106,7 +137,11 @@ export function QuickCapture() {
   );
 }
 
-function Capture({
+/**
+ * The tabs, and the one shown. What was shared goes into the tab shown if it
+ * is empty, a new tab otherwise, so that no draft has it put into it.
+ */
+function Tabbed({
   userKey,
   inbox,
   allowance,
@@ -114,9 +149,192 @@ function Capture({
 }: {
   userKey: string;
   inbox: string | null;
+  allowance: Allowance | null;
+  shared: string;
+}) {
+  const live = useQuickTabs(userKey);
+  // What was shared, and the tab it goes into, until another tab is shown:
+  // read by that tab's quick note as it starts, never again.
+  const [share, setShare] = useState<{ tab: string; text: string } | null>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let current = true;
+    void (async () => {
+      const tabs = await loadTabs(userKey);
+      if (shared) {
+        const there = await loadDraft(userKey, tabs.active);
+        // Into the tab shown if it is empty (or holds it already).
+        const busy = there && there.text.trim() !== "" && !there.text.includes(shared);
+        const tab = busy ? ((await openTab(userKey)) ?? tabs.active) : tabs.active;
+        if (current) setShare({ tab, text: shared });
+      }
+    })()
+      .catch(() => undefined)
+      .finally(() => current && setReady(true));
+    return () => {
+      current = false;
+    };
+    // Once for the account: a new one is a new Tabbed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const capture = useRef<CaptureHandle>(null);
+  // The tab shown's text as typed, before its draft is written.
+  const [typed, setTyped] = useState<QuickTab | null>(null);
+  // Said by the next tab shown, once one is saved and closed.
+  const [notice, setNotice] = useState<Status>(null);
+  // The tab asked about before it is closed.
+  const [closing, setClosing] = useState<string | null>(null);
+
+  const active = live?.tabs.active ?? null;
+  const tabs: QuickTab[] = (live?.tabs.ids ?? []).map((id) => {
+    if (typed?.id === id) return typed;
+    const draft = live?.drafts.get(id);
+    return { id, text: draft?.text ?? "", images: draft?.images?.length ?? 0 };
+  });
+
+  /** Another tab shown, or one opened or closed: what was shared and said is for the tab it was. */
+  const moving = () => {
+    setShare(null);
+    setNotice(null);
+  };
+  const show = (id: string) => {
+    if (id === active) return;
+    moving();
+    void showTab(userKey, id);
+  };
+  const open = () => {
+    moving();
+    void openTab(userKey);
+  };
+  /** Closes a tab: at once if there is nothing in it, asked about first if there is. */
+  const close = async (id: string) => {
+    const tab = tabs.find((each) => each.id === id);
+    if (!tab || tabs.length < 2) return;
+    if (!holds(tab)) {
+      moving();
+      if (id === active) capture.current?.discard();
+      await closeTab(userKey, id);
+      return;
+    }
+    if (id !== active) {
+      moving();
+      await showTab(userKey, id);
+    }
+    setClosing(id);
+  };
+  /** A tab saved: closed, if it is not the last, the next one shown saying so. */
+  const saved = async (noteId: string, tabId: string) => {
+    // As they are now: the tabs read as this render's may be a moment behind.
+    if ((await loadTabs(userKey)).ids.length < 2) return false;
+    moving();
+    setNotice({ kind: "saved", noteId });
+    await closeTab(userKey, tabId);
+    return true;
+  };
+
+  // In the desktop shell, a text editor's keys: a browser keeps them to itself.
+  useEffect(() => {
+    if (!inShell()) return;
+    const onKey = (event: KeyboardEvent) => {
+      const ids = live?.tabs.ids ?? [];
+      const shown = live?.tabs.active;
+      const mod = event.metaKey || event.ctrlKey;
+      if (mod && !event.shiftKey && event.key.toLowerCase() === "t") {
+        event.preventDefault();
+        if (ids.length < MAX_TABS) open();
+      } else if (mod && !event.shiftKey && event.key.toLowerCase() === "w") {
+        event.preventDefault();
+        if (shown) void close(shown);
+      } else if (event.ctrlKey && event.key === "Tab" && shown && ids.length > 1) {
+        event.preventDefault();
+        const at = ids.indexOf(shown);
+        show(ids[(at + (event.shiftKey ? -1 : 1) + ids.length) % ids.length]!);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  });
+
+  if (!ready || !live || !active) return null;
+  const asked = closing ? tabs.find((tab) => tab.id === closing) : undefined;
+  return (
+    <>
+      <Capture
+        key={active}
+        handle={capture}
+        tabId={active}
+        userKey={userKey}
+        inbox={inbox}
+        allowance={allowance}
+        shared={share?.tab === active ? share.text : ""}
+        initialStatus={notice}
+        escapeEnabled={closing === null}
+        onText={(text, images) => setTyped({ id: active, text, images })}
+        onSaved={(noteId) => saved(noteId, active)}
+        strip={
+          <QuickTabs
+            tabs={tabs}
+            active={active}
+            canOpen={tabs.length < MAX_TABS}
+            onShow={show}
+            onOpen={open}
+            onClose={(id) => void close(id)}
+          />
+        }
+      />
+      <CloseTabDialog
+        name={asked ? tabName(asked) : ""}
+        open={asked !== undefined}
+        onCancel={() => setClosing(null)}
+        onSave={() => {
+          setClosing(null);
+          void capture.current?.save();
+        }}
+        onDiscard={() => {
+          const id = closing;
+          setClosing(null);
+          if (!id) return;
+          moving();
+          capture.current?.discard();
+          void closeTab(userKey, id);
+        }}
+      />
+    </>
+  );
+}
+
+function Capture({
+  handle,
+  tabId,
+  userKey,
+  inbox,
+  allowance,
+  shared,
+  initialStatus,
+  escapeEnabled,
+  onText,
+  onSaved,
+  strip,
+}: {
+  handle: Ref<CaptureHandle>;
+  /** The tab this is: whose draft it keeps. */
+  tabId: string;
+  userKey: string;
+  inbox: string | null;
   /** The account's figures, for an image to be checked against before it is added. */
   allowance: Allowance | null;
   shared: string;
+  /** What the status line says first: that the tab before it was saved. */
+  initialStatus: Status;
+  /** Esc puts the window away: not while a dialog over it is open. */
+  escapeEnabled: boolean;
+  /** What it holds, as typed. */
+  onText: (text: string, images: number) => void;
+  /** Saved: whether the tab was closed for it. */
+  onSaved: (noteId: string) => Promise<boolean>;
+  /** The tabs, under the header. */
+  strip: ReactNode;
 }) {
   const router = useRouter();
   const windowed = useQuickMode() === "window";
@@ -128,7 +346,7 @@ function Capture({
   const [text, setText] = useState(shared);
   const textRef = useRef(shared);
   const [saving, setSaving] = useState(false);
-  const [status, setStatus] = useState<Status>(null);
+  const [status, setStatus] = useState<Status>(initialStatus);
   const field = useRef<HTMLTextAreaElement>(null);
   // iOS pans what is seen down to the caret as its keyboard comes up, and the
   // page, kept to what is seen, takes back just as much, the caret's line
@@ -158,6 +376,7 @@ function Capture({
   const show = (next: string) => {
     textRef.current = next;
     setText(next);
+    onText(next, imagesRef.current.length);
   };
 
   // Images added, each with a URL of this tab's to show it by, let go of
@@ -173,6 +392,7 @@ function Capture({
     }
     imagesRef.current = next;
     setImages(next);
+    onText(textRef.current, next.length);
   };
   useEffect(
     () => () => {
@@ -182,15 +402,14 @@ function Capture({
   );
 
   useEffect(() => {
-    const kept = keepDraft(userKey);
+    const kept = keepDraft(userKey, tabId);
     draft.current = kept;
     // What was shared is part of the draft from the start.
     if (shared) kept.update(shared);
-    // A draft left from before comes back, said so on the status line: in the
-    // empty field, or under what is there already (shared, or typed while it
-    // was being read), so the first line is still the new one's.
+    // The tab's draft: in the empty field, or under what is there already
+    // (typed while it was being read), so the first line is still the new one's.
     let current = true;
-    void loadDraft(userKey)
+    void loadDraft(userKey, tabId)
       .then((left) => {
         if (!current) return;
         const now = textRef.current;
@@ -200,17 +419,8 @@ function Capture({
           showImages([...imagesRef.current, ...pictures]);
           kept.images(imagesRef.current.map(keptImage));
         }
-        if (!left || left.text.trim() === "" || now.includes(left.text)) {
-          if (pictures.length > 0) setStatus({ kind: "restored" });
-          return;
-        }
-        if (now.trim() === "") {
-          show(left.text);
-          setStatus({ kind: "restored" });
-        } else {
-          show(`${now}\n\n${left.text}`);
-          setStatus({ kind: "appended", before: now });
-        }
+        if (!left || left.text.trim() === "" || now.includes(left.text)) return;
+        show(now.trim() === "" ? left.text : `${now}\n\n${left.text}`);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -223,9 +433,9 @@ function Capture({
       kept.dispose();
       draft.current = null;
     };
-    // Once for the account: a new one is a new Capture.
+    // Once for the tab: another is a new Capture.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userKey]);
+  }, [userKey, tabId]);
 
   useEffect(() => {
     field.current?.focus();
@@ -318,13 +528,15 @@ function Capture({
   useEffect(() => {
     if (!windowed) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || composing(event)) return;
+      if (event.key !== "Escape" || composing(event) || event.defaultPrevented) return;
+      // One closing the dialog over it, not the window.
+      if (!escapeEnabled) return;
       event.preventDefault();
       void close();
     };
     document.addEventListener("keydown", onKey);
     return () => document.removeEventListener("keydown", onKey);
-  }, [windowed, close]);
+  }, [windowed, close, escapeEnabled]);
 
   const save = async () => {
     const body = quickLines(textRef.current);
@@ -370,14 +582,16 @@ function Capture({
 
         draft.current?.cancel();
         // A draft left behind only comes back next time: not a failed save.
-        await clearDraft(userKey).catch(() => undefined);
+        await clearDraft(userKey, tabId).catch(() => undefined);
         showImages([]);
-        if (windowed) {
+        // Closed, if there are other tabs: the next one says it was saved.
+        const closed = await onSaved(noteId);
+        if (!windowed) {
+          router.replace(`/app?${new URLSearchParams({ n: noteId })}`);
+        } else if (!closed) {
           show("");
           setStatus({ kind: "saved", noteId });
           field.current?.focus();
-        } else {
-          router.replace(`/app?${new URLSearchParams({ n: noteId })}`);
         }
       } catch {
         // Kept as it is, draft and all, to be saved again: into the note
@@ -392,12 +606,10 @@ function Capture({
     if (inFlight.current === run) inFlight.current = null;
   };
 
-  const undo = (next: string) => {
-    show(next);
-    setStatus(null);
-    draft.current?.update(next);
-    field.current?.focus();
-  };
+  useImperativeHandle(handle, () => ({
+    save,
+    discard: () => draft.current?.cancel(),
+  }));
 
   const link = "text-foreground underline underline-offset-2";
   const said =
@@ -412,20 +624,6 @@ function Capture({
       status.message
     ) : status?.kind === "failed" ? (
       t.quick.failed
-    ) : status?.kind === "restored" ? (
-      <>
-        {t.quick.restored} ・{" "}
-        <button type="button" className={link} onClick={() => undo("")}>
-          {t.quick.discard}
-        </button>
-      </>
-    ) : status?.kind === "appended" ? (
-      <>
-        {t.quick.appended} ・{" "}
-        <button type="button" className={link} onClick={() => undo(status.before)}>
-          {t.quick.takeOut}
-        </button>
-      </>
     ) : null;
   // Always in the page, even empty: a screen reader announces what comes into
   // a region it already knows, not one that has just appeared.
@@ -524,6 +722,7 @@ function Capture({
             </Button>
           ) : null}
         </header>
+        {strip}
         {/* On a phone, here under the header: the foot of the page is under the keyboard. */}
         {windowed ? null : statusLine}
       </div>

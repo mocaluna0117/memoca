@@ -4,6 +4,10 @@ import { db, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { DRAFT_DELAY_MS, clearDraft, keepDraft, loadDraft } from "@/lib/quick/draft";
 
+/** The tab these drafts are of, and where its draft is kept. */
+const TAB = "tab-1";
+const KEY = `${META.quickDraft}:${TAB}`;
+
 const ME = "user-me";
 
 /** Lets Dexie's writes land, fake timers or not. */
@@ -12,7 +16,7 @@ const settle = async () => {
   for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
 };
 
-const textOf = async (userKey = ME) => (await loadDraft(userKey))?.text ?? null;
+const textOf = async (userKey = ME) => (await loadDraft(userKey, TAB))?.text ?? null;
 
 function setVisibility(state: "visible" | "hidden") {
   Object.defineProperty(document, "visibilityState", { value: state, configurable: true });
@@ -24,7 +28,7 @@ let keeper: ReturnType<typeof keepDraft>;
 beforeEach(async () => {
   await resetLocalData();
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
-  keeper = keepDraft(ME);
+  keeper = keepDraft(ME, TAB);
   keeper.release();
 });
 
@@ -34,7 +38,7 @@ afterEach(async () => {
   setVisibility("visible");
   await settle();
   vi.useRealTimers();
-  await clearDraft(ME);
+  await clearDraft(ME, TAB);
 });
 
 describe("the quick note's draft", () => {
@@ -52,8 +56,8 @@ describe("the quick note's draft", () => {
   });
 
   test("is not written before the one already there has been read", async () => {
-    await setMeta(META.quickDraft, { text: "前の", updatedAt: 0, userKey: ME });
-    const reading = keepDraft(ME);
+    await setMeta(KEY, { text: "前の", updatedAt: 0, userKey: ME });
+    const reading = keepDraft(ME, TAB);
     try {
       reading.update("新しい");
       await vi.advanceTimersByTimeAsync(DRAFT_DELAY_MS * 2);
@@ -90,7 +94,7 @@ describe("the quick note's draft", () => {
   test("going out of sight writes what this window holds, over what another wrote meanwhile", async () => {
     keeper.update("この窓");
     await keeper.flush();
-    await setMeta(META.quickDraft, { text: "別の窓", updatedAt: 0, userKey: ME });
+    await setMeta(KEY, { text: "別の窓", updatedAt: 0, userKey: ME });
 
     // Unchanged here since it was written: a pause does not write it again...
     await keeper.flush();
@@ -106,7 +110,7 @@ describe("the quick note's draft", () => {
     await keeper.flush();
     keeper.update("  \n ");
     await keeper.flush();
-    expect(await loadDraft(ME)).toBeNull();
+    expect(await loadDraft(ME, TAB)).toBeNull();
   });
 
   test("once saved as a note, what was waiting is not written after all", async () => {
@@ -115,7 +119,7 @@ describe("the quick note's draft", () => {
     await vi.advanceTimersByTimeAsync(DRAFT_DELAY_MS * 2);
     setVisibility("hidden");
     await settle();
-    expect(await loadDraft(ME)).toBeNull();
+    expect(await loadDraft(ME, TAB)).toBeNull();
   });
 
   test("a flush is done only once the draft is written: a window may close straight after", async () => {
@@ -144,17 +148,17 @@ describe("the quick note's draft", () => {
     await settle();
     expect(await textOf()).toBe("閉じる前");
     // A fresh one, for afterEach to put away.
-    keeper = keepDraft(ME);
+    keeper = keepDraft(ME, TAB);
   });
 
   test("is forgotten only by the account that wrote it", async () => {
-    await setMeta(META.quickDraft, { text: "前の人の下書き", updatedAt: 0, userKey: "user-other" });
+    await setMeta(KEY, { text: "前の人の下書き", updatedAt: 0, userKey: "user-other" });
     // An empty field here, and a save, say nothing about another account's draft.
     keeper.update("");
     await keeper.flush(true);
-    await clearDraft(ME);
+    await clearDraft(ME, TAB);
     expect(await textOf("user-other")).toBe("前の人の下書き");
-    await clearDraft("user-other");
+    await clearDraft("user-other", TAB);
     expect(await textOf("user-other")).toBeNull();
   });
 
@@ -164,7 +168,7 @@ describe("the quick note's draft", () => {
     expect(await textOf("user-other")).toBeNull();
     expect(await textOf()).toBe("私の下書き");
     // One kept before drafts knew their account is no one's.
-    await setMeta(META.quickDraft, { text: "古い下書き", updatedAt: 0 });
+    await setMeta(KEY, { text: "古い下書き", updatedAt: 0 });
     expect(await textOf()).toBeNull();
   });
 });
