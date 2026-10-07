@@ -171,7 +171,7 @@ export const ja = {
   },
   templates: {
     fromTemplate: "テンプレートから作成",
-    apply: "テンプレートを適用…",
+    apply: "テンプレートを適用",
     pickTitle: "テンプレートから作成",
     pickHint: "選んだテンプレートの中身が入った、新しいメモを作ります。",
     filter: "テンプレートの名前で絞り込む",

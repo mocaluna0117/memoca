@@ -12,7 +12,7 @@ const outline = (page: Page) =>
 /** Applies a template to the open note from its menu. */
 async function apply(page: Page, name: string) {
   await page.getByRole("button", { name: "メモの操作" }).click();
-  await page.getByRole("menuitem", { name: "テンプレートを適用…" }).click();
+  await page.getByRole("menuitem", { name: "テンプレートを適用" }).click();
   const dialog = page.getByRole("dialog", { name: "テンプレートから作成" });
   await dialog.getByRole("option", { name }).click();
   await expect(dialog).toBeHidden();
