@@ -16,17 +16,14 @@
  * - Brotli rather than gzip: about a third smaller again. Kuromoji's loader is
  *   adapted to undo them with the browser's own decoder (DecompressionStream),
  *   or, in a browser with none for Brotli, with one in JavaScript bundled with
- *   it. The browser's where it has one: WKWebView (Memoca for Mac) ran the one
- *   in JavaScript for a second or so, or, now and then, without end; its own
- *   undoes the whole dictionary in well under one.
+ *   it. The browser's where it has one: in WKWebView (Memoca for Mac) the one
+ *   in JavaScript took a few seconds, the browser's own well under one.
  *
  * Named .dat.gz, as kuromoji names them, though Brotli is what they hold: for
  * the type they are served with, application/gzip, which a CDN sends as it is.
- * As application/octet-stream (named .brotli), Vercel compressed them again
- * with Brotli, and WKWebView (Memoca for Mac, macOS 26) never finishes a
- * response so sent that is over a megabyte or two once undone: the page hung,
- * its worker with it. Nor may they be named .br, which a server may take for
- * the compressed form of another and send undone.
+ * As application/octet-stream (named .brotli), Vercel compressed them again,
+ * for nothing. Nor may they be named .br, which a server may take for the
+ * compressed form of another and send undone.
  *
  * The version in the path changes whenever what is built does, so a device
  * never mixes files of two builds from its cache (src/app/sw.ts drops those of
