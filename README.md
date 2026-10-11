@@ -2,8 +2,11 @@
 
 Notion 風のブロックエディタを備えた、ローカルファーストのメモ PWA。
 
-Web ブラウザと、ホーム画面に追加した iOS / Android の PWA で同じメモを扱えます。
+Web ブラウザ、ホーム画面に追加した iOS / Android の PWA、Mac・Windows のデスクトップ版で同じメモを扱えます。
 オフラインでも読み書きでき、オンラインに戻ると自動で同期します。
+
+> 作品説明資料と動作紹介動画は [docs/portfolio/](docs/portfolio/) にあります（[PORTFOLIO.md](docs/portfolio/PORTFOLIO.md) ／ [memoca-demo.mp4](docs/portfolio/memoca-demo.mp4)）。
+> 公開中: **https://memoca-app.vercel.app**（Google アカウントで誰でも登録して試せます）
 
 ## 主な機能
 
@@ -28,7 +31,7 @@ Web ブラウザと、ホーム画面に追加した iOS / Android の PWA で�
 - **PWA**: Serwist
 - **暗号**: WebCrypto（AES-256-GCM / HKDF）, Argon2id（hash-wasm）, WebAuthn PRF
 
-詳しい設計と実装計画は [docs/PLAN.md](docs/PLAN.md)、公開の手順は [docs/DEPLOY.md](docs/DEPLOY.md) にあります。容量対策とデスクトップ版の即席メモの計画は [docs/STORAGE-AND-DESKTOP.md](docs/STORAGE-AND-DESKTOP.md) です。デスクトップ版（Mac）の入れ方と使い方は [docs/DESKTOP.md](docs/DESKTOP.md) にあります。
+詳しい設計と実装計画は [docs/PLAN.md](docs/PLAN.md)、公開の手順は [docs/DEPLOY.md](docs/DEPLOY.md) にあります。容量対策とデスクトップ版の即席メモの計画は [docs/STORAGE-AND-DESKTOP.md](docs/STORAGE-AND-DESKTOP.md) です。デスクトップ版（Mac・Windows）の入れ方と使い方は [docs/DESKTOP.md](docs/DESKTOP.md) にあります。
 
 ## 実装の状況
 
@@ -49,7 +52,8 @@ Web ブラウザと、ホーム画面に追加した iOS / Android の PWA で�
 - ホーム画面への追加と、追加後のオフライン利用
 - 登録上限、招待コード、1 人あたりの容量
 
-細かい部分はまだ未完成で、今後も改修を続ける予定です。デスクトップ版も用意する予定です。
+細かい部分はまだ未完成で、今後も改修を続ける予定です。
+デスクトップ版（Mac・Windows）は [Releases](https://github.com/mocaluna0117/memoca/releases/latest) で配布しています（入れ方は [docs/DESKTOP.md](docs/DESKTOP.md)）。
 
 まだ入っていないもの。
 
