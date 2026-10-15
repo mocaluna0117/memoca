@@ -1,5 +1,6 @@
 import { createExtension } from "@blocknote/core";
 import type { Node } from "prosemirror-model";
+import { traceIme } from "@/lib/debug/ime-trace";
 
 /** A line as far as this needs it. */
 type Line = { id: string; content?: unknown; children: unknown[] };
@@ -34,6 +35,16 @@ export function strayLine(
   return { keep: started, drop: now.id };
 }
 
+/** How long a line's text is, for the input record (never the text itself). */
+function textLength(content: unknown): number | null {
+  if (!Array.isArray(content)) return null;
+  return content.reduce(
+    (sum: number, part: { text?: unknown }) =>
+      sum + (typeof part.text === "string" ? part.text.length : 1),
+    0,
+  );
+}
+
 /** The ids of every block in a document. */
 function idsOf(doc: Node): Set<string> {
   const ids = new Set<string>();
@@ -57,6 +68,7 @@ export const imeCommit = createExtension(({ editor }) => ({
       () => {
         started = editor.getTextCursorPosition().block.id;
         there = idsOf(editor.prosemirrorState.doc);
+        traceIme({ type: "ime:start", lines: there.size });
       },
       { signal },
     );
@@ -70,11 +82,26 @@ export const imeCommit = createExtension(({ editor }) => ({
         // Once ProseMirror has taken in the commit and finished composing.
         setTimeout(() => {
           const view = editor.prosemirrorView;
-          if (!view || view.composing) return;
+          if (!view || view.composing) {
+            traceIme({ type: "ime:repair", result: view ? "skipped-composing" : "no-view" });
+            return;
+          }
           const now = editor.getTextCursorPosition().block as Line;
-          const fix = strayLine(from, now, editor.getPrevBlock(now.id) as Line | undefined, (id) =>
-            wasThere.has(id),
-          );
+          const before = editor.getPrevBlock(now.id) as Line | undefined;
+          const fix = strayLine(from, now, before, (id) => wasThere.has(id));
+          // What was decided, in counts only: whether the caret moved to
+          // another line, a new one, right after the one it started in.
+          traceIme({
+            type: "ime:repair",
+            result: fix ? "fixed" : "none",
+            started: from !== null,
+            moved: now.id !== from,
+            nowNew: !wasThere.has(now.id),
+            afterStarted: before?.id === from,
+            children: now.children.length,
+            nowLen: textLength(now.content),
+            keepLen: fix ? textLength(editor.getBlock(fix.keep)?.content) : null,
+          });
           if (!fix) return;
           editor.transact(() => {
             editor.updateBlock(fix.keep, { content: now.content } as never);

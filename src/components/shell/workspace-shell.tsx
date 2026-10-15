@@ -20,6 +20,7 @@ import { vault } from "@/lib/crypto/vault";
 import { flushAll } from "@/lib/sync/docs";
 import { useLiveQuery } from "dexie-react-hooks";
 import { watchVaultActivity } from "@/lib/vault/activity";
+import { startImeTrace } from "@/lib/debug/ime-trace";
 import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
 import { tidyYomi } from "@/lib/search/yomi";
 
@@ -40,6 +41,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   // The vault closes after a period of no use, counted from the last
   // activity, and says so when it does.
   useEffect(() => watchVaultActivity(), []);
+  // Temporary, in the Mac desktop app: ⌘⌥⇧I copies what the editor's input saw.
+  useEffect(() => startImeTrace(() => toast.success("入力の記録をコピーしました")), []);
   // A reading dictionary kept on this device that is not to be kept goes.
   useEffect(() => void tidyYomi(), []);
   useEffect(
