@@ -70,6 +70,21 @@ function linesPut(transaction: Transaction): number {
   return count;
 }
 
+/**
+ * A key as the record keeps it: one with a name (Enter, Backspace, Tab,
+ * Process, Shift…) by its name; one that writes a character, only that it
+ * was one, as its key, code or key code would tell what was written. Its key
+ * code is kept when it is 229, the input method's.
+ */
+function keyOf(event: KeyboardEvent): Entry {
+  const named = /^[A-Z][A-Za-z0-9]+$/.test(event.key);
+  return {
+    key: named ? event.key : "char",
+    code: named ? event.code : null,
+    keyCode: named || event.keyCode === 229 ? event.keyCode : null,
+  };
+}
+
 /** Where a transaction leaves the caret, in counts only. */
 function caretAfter(transaction: Transaction): Entry {
   const { selection } = transaction;
@@ -100,15 +115,28 @@ export function startImeTrace(onCopied: () => void): () => void {
   };
   sink = push;
 
+  /** A node as a short name: its tag, and the first of its classes or its node type. */
+  const short = (node: globalThis.Node | null): string => {
+    if (!node) return "-";
+    if (node.nodeType === globalThis.Node.TEXT_NODE) return "#text";
+    const element = node as Element;
+    const kind =
+      element.getAttribute?.("data-node-type") ?? element.getAttribute?.("data-content-type");
+    const cls = element.classList?.[0];
+    return `${element.nodeName.toLowerCase()}${kind ? `[${kind}]` : cls ? `.${cls}` : ""}`;
+  };
+
   const record = (event: Event) => {
-    const entry: Entry = { t: Math.round(performance.now() - start), type: event.type };
+    const entry: Entry = {
+      t: Math.round(performance.now() - start),
+      type: event.type,
+      // Where it went: keys meant for the note can go to the title, or to
+      // nothing that takes them.
+      target: short(event.target as globalThis.Node | null),
+      inEditor: Boolean(document.activeElement?.closest(".ProseMirror")),
+    };
     if (event instanceof KeyboardEvent) {
-      Object.assign(entry, {
-        key: event.key,
-        code: event.code,
-        keyCode: event.keyCode,
-        composing: event.isComposing,
-      });
+      Object.assign(entry, keyOf(event), { composing: event.isComposing });
     } else if (event instanceof InputEvent) {
       Object.assign(entry, {
         inputType: event.inputType,
@@ -133,17 +161,6 @@ export function startImeTrace(onCopied: () => void): () => void {
       entry.lenAfter = after.len;
       entry.atAfter = after.at;
     }, 0);
-  };
-
-  /** A node as a short name: its tag, and the first of its classes or its node type. */
-  const short = (node: globalThis.Node | null): string => {
-    if (!node) return "-";
-    if (node.nodeType === globalThis.Node.TEXT_NODE) return "#text";
-    const element = node as Element;
-    const kind =
-      element.getAttribute?.("data-node-type") ?? element.getAttribute?.("data-content-type");
-    const cls = element.classList?.[0];
-    return `${element.nodeName.toLowerCase()}${kind ? `[${kind}]` : cls ? `.${cls}` : ""}`;
   };
 
   // What changed in the editor's DOM, by kind of node only.
@@ -219,8 +236,7 @@ export function startImeTrace(onCopied: () => void): () => void {
           const event = (args as unknown[])[1] as KeyboardEvent;
           push({
             type: "pm:key",
-            key: event.key,
-            keyCode: event.keyCode,
+            ...keyOf(event),
             trusted: event.isTrusted,
             composing,
             handled: Boolean(handled),
