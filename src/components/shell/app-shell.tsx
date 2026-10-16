@@ -1,12 +1,14 @@
 "use client";
 
-import { Menu } from "lucide-react";
+import { Menu, PanelLeftOpen } from "lucide-react";
 import {
   createContext,
   type ReactNode,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import { FolderDrawer } from "@/components/shell/folder-drawer";
@@ -19,6 +21,8 @@ import { Button } from "@/components/ui/button";
 import { useDrawerSwipe } from "@/lib/hooks/use-drawer-swipe";
 import { useUnreadNews } from "@/lib/hooks/use-news";
 import { SIDEBAR, usePaneWidth } from "@/lib/hooks/use-pane-width";
+import { isSidebarKey, useSidebarShown } from "@/lib/hooks/use-sidebar-shown";
+import { useModKeyLabel } from "@/lib/platform";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { cn } from "@/lib/utils";
 
@@ -33,9 +37,18 @@ export const useShell = () => useContext(ShellContext);
 export function AppShell({ children }: { children: ReactNode }) {
   const { selection, navigate, openFolder, openPinned } = useWorkspace();
   const drawer = useDrawerSwipe();
+  const unreadNews = useUnreadNews();
   const [sidebarWidth] = usePaneWidth(SIDEBAR);
   const { show: showDrawer, hide: hideDrawer, areaRef, pageRef, barRef } = drawer;
   const [drawerElement, setDrawerElement] = useState<HTMLDivElement | null>(null);
+  const {
+    shown: sidebarShown,
+    hide: hideSidebar,
+    show: showSidebar,
+    shortcut: sidebarShortcut,
+    asideRef,
+    railRef,
+  } = useSidebarShownHere();
 
   const value = useMemo<ShellContextValue>(() => ({ openDrawer: showDrawer }), [showDrawer]);
 
@@ -79,9 +92,16 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div ref={areaRef} className="flex min-h-dvh overflow-x-clip md:h-dvh md:overflow-clip">
         {/* Its width as set on this device, but never so wide that a narrow
             window has no room left for the note. */}
+        {/* Put away, it stays mounted (its folders open as they were), and
+            leaves a rail with the one way back, on every page. */}
         <aside
+          ref={asideRef}
           id={SIDEBAR.id}
-          className={cn("relative hidden w-64 shrink-0 border-r md:block", PANE_WIDTH_CLASS)}
+          className={cn(
+            "relative hidden w-64 shrink-0 border-r",
+            sidebarShown && "md:block",
+            PANE_WIDTH_CLASS,
+          )}
           style={paneWidthStyle(SIDEBAR, sidebarWidth)}
         >
           <div className="h-full" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
@@ -92,10 +112,38 @@ export function AppShell({ children }: { children: ReactNode }) {
               onSelectPinned={selectPinned}
               selectedNoteId={selection.noteId}
               onOpenNote={openNoteHere}
+              onHide={hideSidebar}
+              hideShortcut={sidebarShortcut}
             />
           </div>
           <PaneResizer pane={SIDEBAR} label="サイドバーの幅" />
         </aside>
+        {sidebarShown ? null : (
+          <div className="hidden w-11 shrink-0 flex-col items-center border-r py-2 md:flex">
+            <Button
+              ref={railRef}
+              variant="ghost"
+              size="icon"
+              className="relative"
+              onClick={showSidebar}
+              aria-label={
+                unreadNews > 0
+                  ? `サイドバーを開く（お知らせ 未読 ${unreadNews} 件）`
+                  : "サイドバーを開く"
+              }
+              title={`サイドバーを開く（${sidebarShortcut}）`}
+            >
+              <PanelLeftOpen className="size-4" aria-hidden />
+              {/* お知らせ not seen yet: in the sidebar, out of sight. */}
+              {unreadNews > 0 ? (
+                <UnreadDot
+                  count={unreadNews}
+                  className="absolute top-0.5 right-0.5 ring-2 ring-background"
+                />
+              ) : null}
+            </Button>
+          </div>
+        )}
 
         <FolderDrawer drawer={drawer} containerRef={setDrawerElement}>
           <Sidebar
@@ -129,6 +177,51 @@ export function AppShell({ children }: { children: ReactNode }) {
   );
 }
 
+/**
+ * The sidebar put away and brought back, on a computer's screen: by its own
+ * button and the rail's, or ⌘\ (Ctrl+\). Focus in the sidebar as it goes
+ * goes to the rail's button, and from there back to the sidebar's.
+ */
+function useSidebarShownHere() {
+  const [shown, setShown] = useSidebarShown();
+  const shortcut = `${useModKeyLabel()}\\`;
+  const asideRef = useRef<HTMLElement>(null);
+  const railRef = useRef<HTMLButtonElement>(null);
+  const focusTo = useRef<"rail" | "sidebar" | null>(null);
+
+  const hide = useCallback(() => {
+    if (asideRef.current?.contains(document.activeElement)) focusTo.current = "rail";
+    setShown(false);
+  }, [setShown]);
+  const show = useCallback(() => {
+    if (railRef.current === document.activeElement) focusTo.current = "sidebar";
+    setShown(true);
+  }, [setShown]);
+
+  useEffect(() => {
+    const to = focusTo.current;
+    focusTo.current = null;
+    if (to === "rail") railRef.current?.focus();
+    else if (to === "sidebar") {
+      asideRef.current?.querySelector<HTMLElement>("[data-sidebar-hide]")?.focus();
+    }
+  }, [shown]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      // Only where there is a sidebar to put away: a phone has its drawer.
+      if (!isSidebarKey(event) || !window.matchMedia("(min-width: 768px)").matches) return;
+      event.preventDefault();
+      if (shown) hide();
+      else show();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [shown, hide, show]);
+
+  return { shown, hide, show, shortcut, asideRef, railRef };
+}
+
 /** Page header for phones: opens the folder drawer and shows the title. */
 export function MobileHeader({
   title,
@@ -144,7 +237,7 @@ export function MobileHeader({
   return (
     <header
       className={cn(
-        "bg-background/95 supports-[backdrop-filter]:bg-background/80 sticky top-0 z-30 flex items-center gap-2 border-b px-2 py-2 backdrop-blur md:hidden",
+        "sticky top-0 z-30 flex items-center gap-2 border-b bg-background/95 px-2 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden",
         className,
       )}
       style={{ top: "env(safe-area-inset-top, 0px)" }}
@@ -161,7 +254,10 @@ export function MobileHeader({
         <Menu className="size-5" aria-hidden />
         {/* お知らせ not seen yet: in the menu, which is where they are on a phone. */}
         {unreadNews > 0 ? (
-          <UnreadDot count={unreadNews} className="ring-background absolute top-0.5 right-0.5 ring-2" />
+          <UnreadDot
+            count={unreadNews}
+            className="absolute top-0.5 right-0.5 ring-2 ring-background"
+          />
         ) : null}
       </Button>
       <h1 className="min-w-0 flex-1 truncate text-sm font-medium">{title}</h1>

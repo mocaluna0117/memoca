@@ -8,6 +8,7 @@ import {
   FilePlus,
   FolderPlus,
   Megaphone,
+  PanelLeftClose,
   Pin,
   Search,
   Settings,
@@ -49,6 +50,10 @@ type Props = {
   onNavigate?: () => void;
   /** Shows a close control in the header; set only inside the mobile drawer. */
   onClose?: () => void;
+  /** Shows a control that puts the sidebar away; set only beside the page, on a computer. */
+  onHide?: () => void;
+  /** The keys that do the same, as this keyboard marks them. */
+  hideShortcut?: string;
   /** Portal target for row menus; set only inside the mobile drawer. */
   menuContainer?: HTMLElement | null;
 };
@@ -63,6 +68,8 @@ export function Sidebar({
   onOpenNote,
   onNavigate,
   onClose,
+  onHide,
+  hideShortcut,
   menuContainer,
 }: Props) {
   const { me } = useSync();
@@ -101,6 +108,19 @@ export function Sidebar({
               onClick={onClose}
             >
               <X aria-hidden />
+            </Button>
+          ) : null}
+          {onHide ? (
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="-mr-1"
+              data-sidebar-hide=""
+              aria-label="サイドバーを閉じる"
+              title={hideShortcut ? `サイドバーを閉じる（${hideShortcut}）` : undefined}
+              onClick={onHide}
+            >
+              <PanelLeftClose aria-hidden />
             </Button>
           ) : null}
         </div>
