@@ -42,6 +42,10 @@ import { uncover } from "@/components/editor/stuck-toggles";
  *   last there) closes the toggle. Nor does an open toggle close when what
  *   was inside it is all taken out some other way: open, it shows its "add
  *   a block" button, as BlockNote has a new one.
+ * - Enter in an empty line inside an open toggle makes a new line after it,
+ *   inside too, the last line there among them: more is written in a toggle
+ *   than out of it. BlockNote takes the line out of the toggle. Shift+Tab
+ *   takes a line out, as anywhere else it is a step in.
  * - ⌘/Ctrl+Enter opens or closes the toggle the caret is in: in its line, or
  *   anywhere inside it, however far down. Its line stays at the top of the
  *   screen as what is inside it is scrolled past (globals.css, and
@@ -566,10 +570,10 @@ export function backspaceAfterHidden(
 }
 
 /**
- * Enter in an empty line straight inside an open toggle, lines after it
- * there: a new line after it, inside too. BlockNote takes the line out of
- * the toggle, with all the lines after it under it. In the last line, left
- * to BlockNote: out of it, as a way out.
+ * Enter in an empty line straight inside an open toggle: a new line after
+ * it, inside too, in the last line as in any other. BlockNote takes the line
+ * out of the toggle, with all the lines after it under it; Shift+Tab is the
+ * way out.
  */
 export function enterInEmptyLine(
   state: EditorState,
@@ -577,7 +581,6 @@ export function enterInEmptyLine(
 ): Transaction | null {
   const found = lineInToggle(state, isOpen);
   if (!found || found.line.node.firstChild!.content.size > 0) return null;
-  if (found.index === found.group.childCount - 1) return null;
   const after = found.line.pos + found.line.node.nodeSize;
   const tr = state.tr.insert(after, blockOf(state, "paragraph"));
   return tr.setSelection(TextSelection.create(tr.doc, after + 2)).scrollIntoView();

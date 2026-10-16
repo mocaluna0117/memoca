@@ -917,8 +917,19 @@ describe("Enter in an empty line inside an open toggle", () => {
     ]);
   });
 
-  test("the last line: left to BlockNote, a way out of it", () => {
-    expect(enter([{ type: "paragraph", content: "一" }, { type: "paragraph" }], 0)).toBeNull();
+  test("the last line: a new line after it, inside too", () => {
+    expect(enter([{ type: "paragraph", content: "一" }, { type: "paragraph" }], 0)).toEqual([
+      "toggleListItem:箱",
+      "  paragraph:一",
+      "  paragraph:",
+      "  paragraph:",
+    ]);
+    // The only line in it.
+    expect(enter([{ type: "paragraph" }], 0)).toEqual([
+      "toggleListItem:箱",
+      "  paragraph:",
+      "  paragraph:",
+    ]);
   });
 });
 

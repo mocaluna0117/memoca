@@ -250,6 +250,34 @@ test.describe("toggles", () => {
       ]);
   });
 
+  test("Enter in the last line inside it, empty, makes another inside, and Shift+Tab takes it out", async ({
+    page,
+  }) => {
+    await toggleNote(page, "箱の見出し");
+    await flip(page, "箱の見出し");
+    await block(page, "箱の見出し").locator(".bn-toggle-add-block-button").click();
+    await page.keyboard.type("一");
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("三");
+    await expect
+      .poll(() => outline(page))
+      .toEqual(["toggleListItem:箱の見出し", "  paragraph:一", "  paragraph:", "  paragraph:三"]);
+
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Tab");
+    await page.keyboard.type("後");
+    await expect
+      .poll(() => outline(page))
+      .toEqual([
+        "toggleListItem:箱の見出し",
+        "  paragraph:一",
+        "  paragraph:",
+        "  paragraph:三",
+        "paragraph:後",
+      ]);
+  });
+
   test("closed with the caret inside it, the caret comes to its line", async ({ page }) => {
     await toggleNote(page, "箱の見出し");
     await flip(page, "箱の見出し");
@@ -315,7 +343,7 @@ test.describe("toggles", () => {
     await block(page, "箱の見出し").locator(".bn-toggle-add-block-button").click();
     await page.keyboard.type("中身の行");
     await page.keyboard.press("Enter");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Tab");
     await page.keyboard.type("最後の行");
     await flip(page, "箱の見出し");
     await expect
@@ -405,7 +433,7 @@ test.describe("toggles", () => {
     await block(page, "箱の見出し").locator(".bn-toggle-add-block-button").click();
     await page.keyboard.type("中身の行");
     await page.keyboard.press("Enter");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Tab");
     await page.keyboard.type("後の行");
     await flip(page, "箱の見出し");
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
@@ -437,9 +465,9 @@ async function longToggle(page: Page, inside: number, after: number) {
     if (i > 1) await page.keyboard.press("Enter");
     await page.keyboard.type(`中身${i}`);
   }
-  // Out of it: an empty line inside it, Enter again.
+  // Out of it: an empty line inside it, taken out with Shift+Tab.
   await page.keyboard.press("Enter");
-  await page.keyboard.press("Enter");
+  await page.keyboard.press("Shift+Tab");
   for (let i = 1; i <= after; i += 1) {
     if (i > 1) await page.keyboard.press("Enter");
     await page.keyboard.type(`後${i}`);
@@ -575,9 +603,9 @@ async function nestedToggles(page: Page) {
       if (i > 1) await page.keyboard.press("Enter");
       await page.keyboard.type(`${prefix}${i}`);
     }
-    // Out of the toggle it is in: an empty line, Enter again.
+    // Out of the toggle it is in: an empty line, taken out with Shift+Tab.
     await page.keyboard.press("Enter");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Tab");
   };
   await type("内の中", 40);
   await type("外の後", 10);
