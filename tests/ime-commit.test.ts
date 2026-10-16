@@ -1,7 +1,7 @@
 import { BlockNoteEditor } from "@blocknote/core";
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, test } from "vitest";
-import { imeCommit, settleWord, strayLine } from "@/components/editor/ime-commit";
+import { composedTakenOut, imeCommit, settleWord, strayLine } from "@/components/editor/ime-commit";
 
 const line = (id: string, children: unknown[] = []) => ({ id, content: [], children });
 /** Lines there before the composition started: none but "a". */
@@ -57,6 +57,49 @@ describe("a stray line, put right", () => {
     expect(settleWord({ keep: "", now: "メモ", word: "・", composed: "・" })).toBeNull();
     // The word nowhere.
     expect(settleWord({ keep: "にほん", now: "", word: "日本", composed: "にほん" })).toBeNull();
+  });
+});
+
+describe("ProseMirror's Enter for the line WebKit took out, committing a word", () => {
+  /** A bullet holding `text`, `from` to `to` of it selected; what composedTakenOut makes of it. */
+  function takenOut(text: string, composed: string, from: number, to = from) {
+    const editor = BlockNoteEditor.create();
+    editor.replaceBlocks(editor.document, [{ type: "bulletListItem", content: text }]);
+    let start = -1;
+    editor.prosemirrorState.doc.descendants((node, pos) => {
+      if (start < 0 && node.isTextblock) start = pos + 1;
+      return start < 0;
+    });
+    const before = editor.prosemirrorState.apply(
+      editor.prosemirrorState.tr.setSelection(
+        TextSelection.create(editor.prosemirrorState.doc, start + from, start + to),
+      ),
+    );
+    const tr = composedTakenOut(before, composed);
+    if (!tr) return null;
+    const after = before.apply(tr);
+    return {
+      text: after.selection.$from.parent.textContent,
+      caret: after.selection.empty ? after.selection.$from.parentOffset : -1,
+      lines: after.doc.firstChild!.childCount,
+    };
+  }
+
+  test("takes the word being composed out, the caret staying in its line", () => {
+    // Its first part selected, as when a phrase is converted in parts.
+    expect(takenOut("お前の首が危ない", "お前の首が危ない", 0, 3)).toEqual({
+      text: "",
+      caret: 0,
+      lines: 1,
+    });
+    // All of it selected, and the caret after it.
+    expect(takenOut("・", "・", 0, 1)).toEqual({ text: "", caret: 0, lines: 1 });
+    expect(takenOut("あいうえお", "あいうえお", 5)).toEqual({ text: "", caret: 0, lines: 1 });
+  });
+
+  test("leaves a line with anything besides the word to the Enter as it was", () => {
+    expect(takenOut("買い物あいう", "あいう", 6)).toBeNull();
+    expect(takenOut("", "", 0)).toBeNull();
   });
 });
 

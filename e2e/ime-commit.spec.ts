@@ -15,9 +15,11 @@ test.use({
  * A word written with the input method, then committed as WebKit commits it
  * in the desktop app: the word being composed deleted as one
  * (deleteCompositionText), then the word chosen inserted. No word chosen:
- * the composition given up, as with Backspace.
+ * the composition given up, as with Backspace. `clause`: the first so many
+ * characters of it selected as it is committed, as WebKit has the clause
+ * being converted when a phrase is converted in parts.
  */
-async function commitWord(page: Page, composed: string, word: string) {
+async function commitWord(page: Page, composed: string, word: string, clause = 0) {
   const content = page.locator(".ProseMirror");
   await content.evaluate((root) =>
     root.dispatchEvent(new CompositionEvent("compositionstart", { data: "" })),
@@ -27,6 +29,27 @@ async function commitWord(page: Page, composed: string, word: string) {
     composed,
   );
   await page.keyboard.insertText(composed);
+  if (clause) {
+    await content.evaluate((root, length) => {
+      const anchor = getSelection()!.anchorNode!;
+      const range = document.createRange();
+      range.setStart(anchor, 0);
+      range.setEnd(anchor, length);
+      getSelection()!.removeAllRanges();
+      getSelection()!.addRange(range);
+    }, clause);
+    // Taken in by the editor, as WebKit's is while the phrase is converted.
+    await expect
+      .poll(() =>
+        content.evaluate((root) => {
+          const { selection } = (
+            root as unknown as { editor: { view: { state: { selection: { empty: boolean } } } } }
+          ).editor.view.state;
+          return selection.empty;
+        }),
+      )
+      .toBe(false);
+  }
   await content.evaluate((root) => {
     root.dispatchEvent(
       new InputEvent("beforeinput", { inputType: "deleteCompositionText", bubbles: true }),
@@ -63,8 +86,14 @@ const outline = (page: Page) =>
     }),
   );
 
-for (const indented of [true, false]) {
-  test(`a word committed from the input method in ${indented ? "an indented" : "a"} list item comes out once`, async ({
+// With the caret after the word, and with the word selected, as WebKit has
+// it while it is being converted.
+for (const [indented, selected] of [
+  [true, false],
+  [false, false],
+  [true, true],
+] as const) {
+  test(`a word committed from the input method in ${indented ? "an indented" : "a"} list item${selected ? ", selected," : ""} comes out once`, async ({
     page,
   }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "the Mac desktop app's window");
@@ -76,7 +105,7 @@ for (const indented of [true, false]) {
     await page.keyboard.press("Enter");
     if (indented) await page.keyboard.press("Tab");
 
-    await commitWord(page, "あいうえお", "あいうえお");
+    await commitWord(page, "あいうえお", "あいうえお", selected ? 5 : 0);
 
     const content = page.locator(".ProseMirror");
     const items = page.locator('[data-content-type="bulletListItem"] .bn-inline-content');
@@ -90,11 +119,13 @@ for (const indented of [true, false]) {
 // indented item: WebKit takes it out as the word is deleted, and ProseMirror
 // splits it. Put right, the line is as the word committed leaves it: ・ made
 // a bullet of it (japanese-lists), nothing at all.
-for (const [word, made] of [
-  ["・", "bulletListItem:"],
-  ["", "paragraph:"],
+for (const [word, made, selected] of [
+  ["・", "bulletListItem:", false],
+  ["", "paragraph:", false],
+  ["・", "bulletListItem:", true],
+  ["", "paragraph:", true],
 ] as const) {
-  test(`${word ? "・ committed" : "a word given up"} in the only line inside a toggle ${word ? "makes it a bullet" : "leaves it empty"}`, async ({
+  test(`${word ? "・ committed" : "a word given up"}${selected ? ", selected," : ""} in the only line inside a toggle ${word ? "makes it a bullet" : "leaves it empty"}`, async ({
     page,
   }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "the Mac desktop app's window");
@@ -119,10 +150,51 @@ for (const [word, made] of [
     await page.keyboard.press("Enter");
     await expect.poll(() => outline(page)).toEqual(["toggleListItem:買い物", "  paragraph:"]);
 
-    await commitWord(page, "・", word);
+    await commitWord(page, "・", word, selected ? 1 : 0);
     await expect.poll(() => outline(page)).toEqual(["toggleListItem:買い物", `  ${made}`]);
   });
 }
+
+// A phrase converted in parts, committed with its first part still the one
+// being converted, in an item indented under another inside a toggle:
+// ProseMirror's Enter for the line WebKit took out took that part out with
+// the selection, and split the rest into a new line, where the phrase went too.
+test("a phrase committed in parts in an indented item inside a toggle comes out once, in its line", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the Mac desktop app's window");
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "文節");
+  await editor(page).click();
+  await page.keyboard.type("/折りたたみリスト");
+  await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("見出し");
+  const toggle = editor(page).locator('[data-content-type="toggleListItem"]');
+  await toggle.locator(".bn-toggle-button").click();
+  await expect(toggle.locator(".bn-toggle-wrapper")).toHaveAttribute("data-show-children", "true");
+  const line = toggle.locator(".bn-inline-content");
+  const box = (await line.boundingBox())!;
+  await line.click({ position: { x: box.width - 2, y: box.height / 2 } });
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("- 上の行");
+  await page.keyboard.press("Enter");
+  await page.keyboard.press("Tab");
+  await expect
+    .poll(() => outline(page))
+    .toEqual(["toggleListItem:見出し", "  bulletListItem:上の行", "    bulletListItem:"]);
+
+  await commitWord(page, "お前の首が危ない", "お前の首が危ない", 3);
+  await page.waitForTimeout(200);
+  await expect
+    .poll(() => outline(page))
+    .toEqual([
+      "toggleListItem:見出し",
+      "  bulletListItem:上の行",
+      "    bulletListItem:お前の首が危ない",
+    ]);
+});
 
 test("a word being written, when the next line is clicked, stays in its line, and the next line too", async ({
   page,
