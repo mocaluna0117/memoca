@@ -1,7 +1,7 @@
 import { BlockNoteEditor } from "@blocknote/core";
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, test } from "vitest";
-import { imeCommit, strayLine } from "@/components/editor/ime-commit";
+import { imeCommit, settleWord, strayLine } from "@/components/editor/ime-commit";
 
 const line = (id: string, children: unknown[] = []) => ({ id, content: [], children });
 /** Lines there before the composition started: none but "a". */
@@ -25,6 +25,38 @@ describe("a line a commit from the input method left the caret in", () => {
 
   test("is left alone when it was there before the composition started", () => {
     expect(strayLine("a", line("b"), line("a"), (id) => id === "a" || id === "b")).toBeNull();
+  });
+});
+
+describe("a stray line, put right", () => {
+  test("goes alone when the line the word was written in has the word already", () => {
+    // ・ committed in a toggle's only line: in both, as the input method's record had it.
+    expect(settleWord({ keep: "・", now: "・", word: "・", composed: "・" })).toBe("drop");
+    // The input rules, or anything, having taken it from the stray line.
+    expect(settleWord({ keep: "・", now: "", word: "・", composed: "・" })).toBe("drop");
+  });
+
+  test("gives its word to the line it was written in when that has none of it", () => {
+    expect(settleWord({ keep: "", now: "日本", word: "日本", composed: "にほん" })).toBe("move");
+    // Still what was being composed, and the word chosen in the stray line.
+    expect(settleWord({ keep: "にほん", now: "日本", word: "日本", composed: "にほん" })).toBe(
+      "move",
+    );
+  });
+
+  test("takes what was being composed away with it when the composition was given up", () => {
+    expect(settleWord({ keep: "・", now: "", word: "", composed: "・" })).toBe("move");
+    expect(settleWord({ keep: "", now: "", word: "", composed: "・" })).toBe("drop");
+  });
+
+  test("is left as it is when either line has anything else", () => {
+    // Text of the person's own in the line the word was written in.
+    expect(settleWord({ keep: "買い物", now: "・", word: "・", composed: "・" })).toBeNull();
+    expect(settleWord({ keep: "買い物", now: "", word: "", composed: "・" })).toBeNull();
+    // Something in the stray line besides the word.
+    expect(settleWord({ keep: "", now: "メモ", word: "・", composed: "・" })).toBeNull();
+    // The word nowhere.
+    expect(settleWord({ keep: "にほん", now: "", word: "日本", composed: "にほん" })).toBeNull();
   });
 });
 
