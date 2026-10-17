@@ -17,6 +17,8 @@ import { useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { newBuildOut } from "@/lib/build";
+import { startImeTrace } from "@/lib/debug/ime-trace";
+import { toast } from "sonner";
 import { t } from "@/lib/i18n/ja";
 import { useClientValue } from "@/lib/hooks/use-client-value";
 import { useVisibleArea } from "@/lib/hooks/use-visible-area";
@@ -39,7 +41,13 @@ import {
   useQuickTabs,
 } from "@/lib/quick/draft";
 import { db } from "@/lib/db";
-import { CloseTabDialog, type QuickTab, QuickTabs, holds, tabName } from "@/components/notes/quick-tabs";
+import {
+  CloseTabDialog,
+  type QuickTab,
+  QuickTabs,
+  holds,
+  tabName,
+} from "@/components/notes/quick-tabs";
 import { useQuickMode } from "@/lib/quick/mode";
 import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, joinShared, quickLines } from "@/lib/quick/text";
@@ -74,7 +82,10 @@ const MAX_IMAGES = 10;
 const isImage = (file: File) => file.type.startsWith("image/") || /\.(heic|heif)$/i.test(file.name);
 
 /** An image of the draft, shown again. */
-const shown = (image: DraftImage): QuickImage => ({ ...image, url: URL.createObjectURL(image.blob) });
+const shown = (image: DraftImage): QuickImage => ({
+  ...image,
+  url: URL.createObjectURL(image.blob),
+});
 /** An image as the draft keeps it, its URL left out. */
 const keptImage = (image: QuickImage): DraftImage => ({
   key: image.key,
@@ -112,6 +123,8 @@ const composing = (event: { isComposing: boolean; keyCode: number }) =>
 export function QuickCapture() {
   const { me } = useSync();
   const params = useSearchParams();
+  // Temporary, in the Mac desktop app: ⌘⌥⇧I copies what the field's input saw.
+  useEffect(() => startImeTrace(() => toast.success("入力の記録をコピーしました")), []);
   // Android's share sheet and the home-screen shortcut arrive with the text in
   // the query string, so the first render already has it. Read once, it
   // leaves the address: the page loaded again would add it a second time.
@@ -601,7 +614,12 @@ function Capture({
             ref = await stageUpload({
               noteId,
               file: new File([image.blob], image.name, { type: image.mime }),
-              prepared: { blob: image.blob, mime: image.mime, width: image.width, height: image.height },
+              prepared: {
+                blob: image.blob,
+                mime: image.mime,
+                width: image.width,
+                height: image.height,
+              },
             });
             staged.current.set(image.key, ref);
           }
@@ -656,7 +674,11 @@ function Capture({
   useImperativeHandle(handle, () => ({
     save: async () => {
       await save();
-      const all = !unsaved({ text: textRef.current, images: imagesRef.current, saved: savedRef.current });
+      const all = !unsaved({
+        text: textRef.current,
+        images: imagesRef.current,
+        saved: savedRef.current,
+      });
       return all ? (savedRef.current?.noteId ?? null) : null;
     },
     discard: () => draft.current?.cancel(),
@@ -814,7 +836,7 @@ function Capture({
         // What is scrolled to its end stays in the field rather than moving
         // the page, which the page would then chase.
         className={cn(
-          "min-h-0 flex-1 resize-none rounded-none border-0 p-4 text-base shadow-none field-sizing-fixed focus-visible:ring-0 dark:bg-transparent",
+          "field-sizing-fixed min-h-0 flex-1 resize-none rounded-none border-0 p-4 text-base shadow-none focus-visible:ring-0 dark:bg-transparent",
           !windowed && "overscroll-contain md:text-base",
         )}
         // On a phone, what is written last clears the home indicator.
@@ -826,16 +848,25 @@ function Capture({
       />
 
       {images.length > 0 ? (
-        <ul aria-label={t.quick.images} className="flex shrink-0 gap-2 overflow-x-auto border-t px-4 py-2">
+        <ul
+          aria-label={t.quick.images}
+          className="flex shrink-0 gap-2 overflow-x-auto border-t px-4 py-2"
+        >
           {images.map((image) => (
             <li key={image.key} className="relative shrink-0 pt-1.5 pr-1.5">
               {/* eslint-disable-next-line @next/next/no-img-element -- a URL of this tab's */}
-              <img src={image.url} alt={image.name} className="size-14 rounded-md border object-cover" />
+              <img
+                src={image.url}
+                alt={image.name}
+                className="size-14 rounded-md border object-cover"
+              />
               <button
                 type="button"
                 aria-label={t.quick.removeImage(image.name)}
                 className="absolute top-0 right-0 flex size-5 items-center justify-center rounded-full bg-foreground text-background"
-                onClick={() => editImages(imagesRef.current.filter((each) => each.key !== image.key))}
+                onClick={() =>
+                  editImages(imagesRef.current.filter((each) => each.key !== image.key))
+                }
               >
                 <X className="size-3" aria-hidden />
               </button>

@@ -3,7 +3,7 @@
 import type { Node } from "prosemirror-model";
 import type { Transaction } from "prosemirror-state";
 import { isApple } from "@/lib/platform";
-import { inShell } from "@/lib/quick/shell";
+import { SHELL_HIDDEN, inShell } from "@/lib/quick/shell";
 
 /**
  * A record, kept in memory, of the keys, input-method compositions and input
@@ -15,6 +15,12 @@ import { inShell } from "@/lib/quick/shell";
  * and whether one took it, each transaction, and what ime-commit decided.
  * Only counts are kept of what is written: how many lines, how long the line
  * with the caret is, where in it the caret is. ⌘⌥⇧I copies it.
+ *
+ * In the quick note's window too, whose field is a plain one: there, now and
+ * then, each character typed took the place of the one after the caret, and
+ * none could be deleted, until the window was put away and brought out
+ * again. Of a plain field, how long its text is, where its selection is, and
+ * whether it is read-only; and when the window or the field had the focus.
  *
  * Temporary: to go once those are understood.
  */
@@ -47,6 +53,10 @@ function where(): Entry {
     if (up.classList.contains("bn-block-group")) depth++;
     up = up.parentElement;
   }
+  // A plain field with the focus (the quick note's, a title): its counts.
+  const active = document.activeElement;
+  const plain =
+    active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? active : null;
   return {
     blocks: blocks.length,
     at: index,
@@ -54,6 +64,10 @@ function where(): Entry {
     prevLen: index > 0 ? own(blocks[index - 1]) : null,
     depth: block ? depth : null,
     inGroup: block?.parentElement?.children.length ?? null,
+    fieldLen: plain ? plain.value.length : null,
+    selStart: plain ? plain.selectionStart : null,
+    selEnd: plain ? plain.selectionEnd : null,
+    readOnly: plain ? plain.readOnly : null,
   };
 }
 
@@ -160,6 +174,9 @@ export function startImeTrace(onCopied: () => void): () => void {
       entry.blocksAfter = after.blocks;
       entry.lenAfter = after.len;
       entry.atAfter = after.at;
+      entry.fieldLenAfter = after.fieldLen;
+      entry.selStartAfter = after.selStart;
+      entry.selEndAfter = after.selEnd;
     }, 0);
   };
 
@@ -284,8 +301,17 @@ export function startImeTrace(onCopied: () => void): () => void {
     "compositionend",
     "beforeinput",
     "input",
+    "focusin",
+    "focusout",
+    "selectionchange",
   ];
   for (const type of types) document.addEventListener(type, record, true);
+  // The window's own: put away and brought out by the desktop shell.
+  const windowTypes = ["focus", "blur", SHELL_HIDDEN];
+  const onWindow = (event: Event) => {
+    if (event.target === window) push({ type: `window:${event.type}`, ...where() });
+  };
+  for (const type of windowTypes) window.addEventListener(type, onWindow, true);
 
   const copy = (event: KeyboardEvent) => {
     if (!(event.metaKey && event.altKey && event.shiftKey && event.code === "KeyI")) return;
@@ -305,6 +331,7 @@ export function startImeTrace(onCopied: () => void): () => void {
     watched?.off("transaction", onTransaction);
     unwrap();
     for (const type of types) document.removeEventListener(type, record, true);
+    for (const type of windowTypes) window.removeEventListener(type, onWindow, true);
     window.removeEventListener("keydown", copy, true);
   };
 }
