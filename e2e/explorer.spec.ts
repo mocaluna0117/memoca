@@ -81,6 +81,45 @@ test.describe("folders' notes in the sidebar", () => {
     await hideFolders(page);
   });
 
+  test("a long folder's notes scrolled past, its name stays at the top of the sidebar", async ({
+    page,
+  }) => {
+    test.skip(test.info().project.name !== "desktop", "the sidebar beside the note");
+    await page.setViewportSize({ width: 1280, height: 520 });
+    await newFolder(page, "長いフォルダ");
+    const panel = await folderPanel(page);
+    const add = panel.getByRole("button", { name: "長いフォルダ に新しいメモ" });
+    const notes = page.locator("[data-tree-note]").filter({ visible: true });
+    for (let i = 1; i <= 25; i += 1) {
+      await add.click();
+      await expect(notes).toHaveCount(i);
+    }
+
+    const viewport = panel.locator("[data-slot=scroll-area-viewport]").first();
+    const row = folderRow(page, "長いフォルダ");
+    const top = async () => {
+      const frame = (await viewport.boundingBox())!;
+      return Math.round((await row.boundingBox())!.y - frame.y);
+    };
+    // Its row as tall as the rows of folders inside it are put under it by.
+    expect(Math.round((await row.boundingBox())!.height)).toBe(32);
+    await viewport.evaluate((element) => (element.scrollTop = 400));
+    await expect.poll(top).toBe(0);
+    await viewport.evaluate((element) => (element.scrollTop = element.scrollHeight));
+    await expect.poll(top).toBe(0);
+    // Its notes go under it, not over it.
+    const first = notes.first();
+    await expect(first).not.toBeInViewport();
+    expect(
+      await row.evaluate((element) => {
+        const box = element.getBoundingClientRect();
+        return document.elementFromPoint(box.left + 40, box.top + box.height / 2)?.closest(
+          "[data-folder-row]",
+        ) === element;
+      }),
+    ).toBe(true);
+  });
+
   test("one folder open at a time: another opened, the one open closes", async ({ page }) => {
     test.skip(test.info().project.name !== "desktop", "the sidebar beside the note");
     await newFolder(page, "仕事");

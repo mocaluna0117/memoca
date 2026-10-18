@@ -59,7 +59,7 @@ export function FolderDrawer({
           <DrawerPrimitive.Content
             ref={contentRef}
             data-slot="drawer-content"
-            className="fixed inset-y-0 left-0 z-50 flex w-[min(85vw,20rem)] flex-col border-r bg-popover text-sm text-popover-foreground shadow-lg outline-none"
+            className="fixed inset-y-0 left-0 z-50 flex w-[min(85vw,20rem)] flex-col border-r bg-popover text-sm text-popover-foreground shadow-lg outline-none [--tree-bg:var(--popover)]"
             // On its way out it lets touches through to the page, as above.
             style={open ? undefined : { pointerEvents: "none" }}
             onOpenAutoFocus={onOpenAutoFocus}

@@ -28,7 +28,16 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { type KeyboardEvent, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type CSSProperties,
+  type KeyboardEvent,
+  type ReactNode,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -739,7 +748,7 @@ export function FolderTree({
         <div
           role="toolbar"
           aria-label="選択したメモ"
-          className="bg-background sticky top-0 z-10 mb-1 flex items-center gap-1 rounded-md border px-2 py-1"
+          className="bg-background sticky top-0 z-30 mb-1 flex items-center gap-1 rounded-md border px-2 py-1"
         >
           <span className="min-w-0 flex-1 truncate text-xs font-medium">{chosen.size} 件を選択</span>
           <Button
@@ -755,8 +764,14 @@ export function FolderTree({
           </Button>
         </div>
       ) : null}
-      <div ref={list} className="flex flex-col gap-0.5">
-        {rows.map((row, index) => {
+      <div
+        ref={list}
+        className="flex flex-col gap-0.5"
+        // The folders kept at the top go under the bar of notes chosen, kept
+        // there too (as tall as its buttons, its padding and its border).
+        style={{ "--tree-top": chosen.size > 0 ? "2.375rem" : "0px" } as CSSProperties}
+      >
+        {nested(rows, (row, index) => {
           if (row.kind === "note") {
             const { note } = row;
             const next = rows[index + 1];
@@ -1134,6 +1149,54 @@ export function FolderTree({
       </div>
     </>
   );
+}
+
+/** How tall a folder's row is (rem): each open folder's kept at the top goes under the one it is in. */
+const FOLDER_ROW_REM = 2;
+
+/**
+ * The rows, each open folder's with what is inside it in a group of its own,
+ * its row kept at the top of the sidebar while what is inside it is scrolled
+ * past (under the rows of the folders it is in), and pushed off by the end
+ * of it, as VS Code keeps a folder's: a long folder's notes scrolled, its
+ * name is still in sight.
+ */
+function nested(rows: Row[], render: (row: Row, index: number) => ReactNode): ReactNode[] {
+  const depthOf = (row: Row) => (row.kind === "folder" ? row.node.depth : row.depth);
+  const range = (start: number, end: number): ReactNode[] => {
+    const out: ReactNode[] = [];
+    for (let i = start; i < end; ) {
+      const row = rows[i]!;
+      let after = i + 1;
+      if (row.kind === "folder") {
+        while (after < end && depthOf(rows[after]!) > row.node.depth) after += 1;
+      }
+      if (row.kind === "note" || after === i + 1) {
+        out.push(render(row, i));
+        i = after;
+        continue;
+      }
+      const { depth, folderId } = row.node;
+      out.push(
+        <div key={`inside/${folderId}`} className="flex flex-col gap-0.5">
+          <div
+            className="sticky bg-(--tree-bg,var(--background))"
+            style={{
+              top: `calc(var(--tree-top, 0px) + ${depth * FOLDER_ROW_REM}rem)`,
+              // Over the rows of folders inside it, as they are pushed off under it.
+              zIndex: 20 - depth,
+            }}
+          >
+            {render(row, i)}
+          </div>
+          {range(i + 1, after)}
+        </div>,
+      );
+      i = after;
+    }
+    return out;
+  };
+  return range(0, rows.length);
 }
 
 /**
