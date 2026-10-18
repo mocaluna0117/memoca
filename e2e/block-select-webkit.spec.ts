@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { caretIn, chosen, outline, writeNote } from "./block-select-helpers";
+import { caretIn, chosen, openHandleMenu, outline, writeNote } from "./block-select-helpers";
 
 /** The Mac desktop app's user agent (desktop/src-tauri/src/window.rs), in its engine. */
 test.use({
@@ -27,6 +27,24 @@ test.describe("blocks chosen whole, in the Mac desktop app's engine", () => {
     await caretIn(page, "牛乳");
     await page.keyboard.press("Escape");
     await page.keyboard.press("Meta+c");
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { kept: string[] }).kept))
+      .toContain("memoca/blocks");
+  });
+
+  test("the handle's コピー copies it, the focus out of the note", async ({ page }) => {
+    await writeNote(page);
+    await page.evaluate(() => {
+      const kept: string[] = [];
+      (window as unknown as { kept: string[] }).kept = kept;
+      const own = DataTransfer.prototype.setData;
+      DataTransfer.prototype.setData = function (type: string, data: string) {
+        kept.push(type);
+        own.call(this, type, data);
+      };
+    });
+    await openHandleMenu(page, "卵");
+    await page.getByRole("menuitem", { name: "コピー" }).click();
     await expect
       .poll(() => page.evaluate(() => (window as unknown as { kept: string[] }).kept))
       .toContain("memoca/blocks");

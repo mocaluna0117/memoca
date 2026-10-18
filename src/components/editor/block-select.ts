@@ -200,7 +200,8 @@ export function removeChosen(editor: BlockNoteEditor, view: EditorView) {
       }
       editor.removeBlocks(idsOf(now.blocks));
       const to = before ?? after;
-      if (to && to.node.type.name === "blockContainer") {
+      // As in choose: from the handle's menu, the caret goes where it is taken.
+      if (to && to.node.type.name === "blockContainer" && view.hasFocus()) {
         editor.setTextCursorPosition(to.node.attrs.id as string, before ? "end" : "start");
       }
     }),
@@ -350,10 +351,30 @@ export function choose(view: EditorView, chosen: Chosen | null) {
   if (chosen) {
     const range = chosenRange(tr.doc, chosen);
     if (!range) return;
-    tr.setSelection(Selection.near(tr.doc.resolve(range.from + 1)));
+    // Only with the focus in the note (not from the handle's menu): moved
+    // with it out, ProseMirror puts the caret back there when the note is
+    // next clicked, not where it is clicked.
+    if (view.hasFocus()) tr.setSelection(Selection.near(tr.doc.resolve(range.from + 1)));
     tr.scrollIntoView();
   }
   view.dispatch(tr);
+}
+
+/**
+ * The blocks from one to another (by their ids) chosen: from a block's
+ * handle, or the phone's bar. One of those chosen already leaves them all
+ * chosen, as Notion has it.
+ */
+export function chooseBlocks(view: EditorView, fromId: string, toId = fromId) {
+  const { doc } = view.state;
+  const anchor = posOf(doc, fromId);
+  const head = posOf(doc, toId);
+  if (anchor === null || head === null) return;
+  const chosen = blockSelectKey.getState(view.state);
+  const range = chosen ? chosenRange(doc, chosen) : null;
+  if (fromId === toId && range && anchor >= range.from && anchor < range.to) return;
+  // The caret left where it is (see choose).
+  view.dispatch(view.state.tr.setMeta(blockSelectKey, { anchor, head }));
 }
 
 /** The caret to the end of the line of the block chosen last, the blocks let go. */
@@ -497,6 +518,18 @@ export const blockSelect = createExtension(({ editor }) => {
                 }),
               ),
             );
+          },
+          // A click in the note lets the blocks go: one where the caret is
+          // already (left there, chosen from a handle) does not move it,
+          // which lets them go otherwise. Once ProseMirror has the caret
+          // where it was clicked: a change made before would put the caret
+          // back where it was.
+          handleClick(view) {
+            if (!blockSelectKey.getState(view.state)) return false;
+            setTimeout(() => {
+              if (blockSelectKey.getState(view.state)) choose(view, null);
+            });
+            return false;
           },
           handlePaste(view, _event, slice) {
             if (!pastingBlocks || !view.editable) return false;

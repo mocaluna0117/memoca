@@ -56,3 +56,29 @@ export async function writeNote(page: Page) {
     .poll(() => outline(page))
     .toEqual(["bulletListItem:牛乳", "bulletListItem:卵", "paragraph:メモの行", "paragraph:"]);
 }
+
+/** The menu of a block's handle, opened. */
+export async function openHandleMenu(page: Page, text: string) {
+  await editor(page)
+    .locator(".bn-block-content", {
+      has: page.locator(".bn-inline-content", { hasText: new RegExp(`^${text}$`) }),
+    })
+    .first()
+    .hover();
+  await page.locator(".bn-side-menu [draggable='true']").first().click();
+  await expect(page.getByRole("menuitem", { name: "複製" })).toBeVisible();
+}
+
+/** The caret into the note's last line, empty: under a phone's bar, where a tap cannot reach. */
+export async function caretInLastLine(page: Page) {
+  await editor(page)
+    .locator(".bn-inline-content")
+    .last()
+    .evaluate((line) => {
+      const range = document.createRange();
+      range.setStart(line, 0);
+      getSelection()!.removeAllRanges();
+      getSelection()!.addRange(range);
+    });
+  await page.waitForTimeout(50);
+}

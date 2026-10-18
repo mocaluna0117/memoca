@@ -11,6 +11,7 @@ import { withCollaboration } from "@blocknote/core/yjs";
 import {
   DesktopFormattingToolbarController,
   type FloatingUIOptions,
+  SideMenuController,
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
   useCreateBlockNote,
@@ -61,6 +62,7 @@ import { japaneseLists } from "@/components/editor/japanese-lists";
 import { NoteLinkMenu, noteLinkInput, noteLinkSlashItem } from "@/components/editor/note-links";
 import { listKeys } from "@/components/editor/list-keys";
 import { blockSelect } from "@/components/editor/block-select";
+import { MemocaSideMenu } from "@/components/editor/block-menu";
 import { turningLines } from "@/components/editor/slash-turn-line";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { LayoutTemplate } from "lucide-react";
@@ -396,7 +398,10 @@ function EditorSurface({
         data-locked={locked ? "true" : undefined}
         formattingToolbar={false}
         slashMenu={false}
+        sideMenu={false}
       >
+        {/* BlockNote's + and handle, with 複製 and コピー in the handle's menu. */}
+        <SideMenuController sideMenu={MemocaSideMenu} />
         {/* BlockNote's / menu, with 二列 and 三列 among its basic blocks, and
             a heading, a list or a toggle made of the line it is typed in
             (see slash-turn-line). Not in a table's cells, as BlockNote's own

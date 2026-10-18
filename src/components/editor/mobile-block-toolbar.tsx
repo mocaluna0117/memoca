@@ -6,6 +6,8 @@ import {
   ChevronDown,
   ChevronUp,
   Code,
+  Copy,
+  CopyPlus,
   Crop,
   Heading1,
   Heading2,
@@ -18,6 +20,14 @@ import {
   Trash2,
   Type,
 } from "lucide-react";
+import type { BlockNoteEditor } from "@blocknote/core";
+import { toast } from "sonner";
+import {
+  choose,
+  chooseBlocks,
+  copyChosen,
+  duplicateChosen,
+} from "@/components/editor/block-select";
 import { useCropTarget, useOpenCrop } from "@/components/editor/image-crop";
 import { useKeyboardInset } from "@/lib/hooks/use-keyboard-inset";
 import { cn } from "@/lib/utils";
@@ -27,7 +37,7 @@ import { cn } from "@/lib/utils";
  * list would drop the file, so they get only the actions that keep it.
  */
 const FILE_BLOCKS = new Set(["image", "video", "audio", "file"]);
-const FILE_ACTIONS = new Set(["crop", "lineAbove", "up", "down", "delete"]);
+const FILE_ACTIONS = new Set(["crop", "lineAbove", "up", "down", "copy", "duplicate", "delete"]);
 
 type BlockType =
   | "paragraph"
@@ -194,6 +204,35 @@ export function MobileBlockToolbar() {
       icon: Type,
       active: currentType === "paragraph",
       run: () => setType("paragraph"),
+    },
+    {
+      // The blocks selected, as blocks (block-select.ts): pasted back as they are.
+      key: "copy",
+      label: "ブロックをコピー",
+      icon: Copy,
+      run: () => {
+        const view = editor.prosemirrorView;
+        if (!view) return;
+        chooseBlocks(view, selected[0]!.id, selected.at(-1)!.id);
+        copyChosen(editor as unknown as BlockNoteEditor, view);
+        // Let go, for the caret to be seen again.
+        choose(view, null);
+        toast.success("ブロックをコピーしました");
+        editor.focus();
+      },
+    },
+    {
+      key: "duplicate",
+      label: "ブロックを複製",
+      icon: CopyPlus,
+      run: () => {
+        const view = editor.prosemirrorView;
+        if (!view) return;
+        chooseBlocks(view, selected[0]!.id, selected.at(-1)!.id);
+        duplicateChosen(editor as unknown as BlockNoteEditor, view);
+        choose(view, null);
+        editor.focus();
+      },
     },
     {
       key: "delete",
