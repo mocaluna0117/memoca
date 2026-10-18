@@ -1,6 +1,15 @@
 import { expect, test } from "@playwright/test";
 import { editor } from "./helpers";
-import { caretIn, chosen, openHandleMenu, outline, writeNote } from "./block-select-helpers";
+import {
+  caretIn,
+  chosen,
+  dragBox,
+  lineBox,
+  openHandleMenu,
+  outline,
+  rightMargin,
+  writeNote,
+} from "./block-select-helpers";
 
 test.describe("blocks chosen whole", () => {
   test.beforeEach(({}, testInfo) => {
@@ -219,6 +228,35 @@ test.describe("blocks chosen whole", () => {
     await expect.poll(() => chosen(page)).toEqual(["牛乳", "卵"]);
     await page.getByRole("menuitem", { name: "削除" }).click();
     await expect.poll(() => outline(page)).toEqual(["paragraph:メモの行", "paragraph:"]);
+  });
+
+  test("a box dragged from the margin chooses the blocks it reaches, down or up", async ({
+    page,
+  }) => {
+    await writeNote(page);
+    await dragBox(page, "牛乳", "メモの行");
+    await expect.poll(() => chosen(page)).toEqual(["牛乳", "卵", "メモの行"]);
+    await expect(page.locator(".memoca-block-box")).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect.poll(() => chosen(page)).toEqual([]);
+
+    await dragBox(page, "メモの行", "卵");
+    await expect.poll(() => chosen(page)).toEqual(["卵", "メモの行"]);
+    await page.keyboard.press("Backspace");
+    await expect.poll(() => outline(page)).toEqual(["bulletListItem:牛乳", "paragraph:"]);
+  });
+
+  test("a click in the margin, not dragged, puts the caret at the end of the line beside it", async ({
+    page,
+  }) => {
+    await writeNote(page);
+    await dragBox(page, "牛乳", "卵");
+    await expect.poll(() => chosen(page)).toEqual(["牛乳", "卵"]);
+    const line = await lineBox(page, "メモの行");
+    await page.mouse.click(await rightMargin(page), line.y + line.height / 2);
+    await expect.poll(() => chosen(page)).toEqual([]);
+    await page.keyboard.type("の続き");
+    await expect.poll(() => outline(page)).toContain("paragraph:メモの行の続き");
   });
 
   test("Esc with the / menu open closes the menu, choosing nothing", async ({ page }) => {

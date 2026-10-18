@@ -40,6 +40,11 @@ import { forThisSystem, plainTextBetween } from "@/lib/plain-text";
  * Chosen blocks are always side by side, in one group: taken in past either
  * end of it, the block it is in is chosen instead; a row of columns is
  * chosen as one.
+ *
+ * Blocks are chosen by a box too, dragged with the mouse from the margin
+ * beside them or below them: those whose line it reaches, top to bottom
+ * (and those between). A click there, not dragged, puts the caret in the
+ * line beside it, as it did.
  */
 
 /** The block it started from and the one it was taken to, each by where it is. */
@@ -389,6 +394,54 @@ function editChosen(view: EditorView, chosen: Chosen) {
   view.dispatch(tr.scrollIntoView());
 }
 
+/** What a box dragged from the margin starts from: a press beside the blocks, or below them, not on them. */
+function inMargin(dom: HTMLElement, frame: Element, target: EventTarget | null): boolean {
+  if (!(target instanceof Element) || !frame.contains(target)) return false;
+  return target === dom || target.contains(dom);
+}
+
+/** What scrolls the note: the pane on a computer's screen. */
+function scrollerOf(element: Element): Element {
+  for (let at = element.parentElement; at; at = at.parentElement) {
+    const { overflowY } = getComputedStyle(at);
+    if ((overflowY === "auto" || overflowY === "scroll") && at.scrollHeight > at.clientHeight) {
+      return at;
+    }
+  }
+  return document.scrollingElement ?? document.documentElement;
+}
+
+/**
+ * The blocks whose own line (not what is inside it) a band of the screen
+ * reaches, by where each is, top to bottom: those shown only, a closed
+ * toggle's hidden lines left out.
+ */
+function blocksAcross(view: EditorView, top: number, bottom: number): number[] {
+  const found: number[] = [];
+  view.dom.querySelectorAll<HTMLElement>('[data-node-type="blockContainer"]').forEach((block) => {
+    const line = block.querySelector(":scope > .bn-block-content");
+    if (!line) return;
+    const box = line.getBoundingClientRect();
+    if (box.height === 0 || box.bottom < top || box.top > bottom) return;
+    const pos = view.posAtDOM(block, 0) - 1;
+    if (view.state.doc.nodeAt(pos)?.type.name === "blockContainer") found.push(pos);
+  });
+  return found;
+}
+
+/** The caret where a click in the margin puts it: in the line beside it, as the browser does. */
+function caretBeside(view: EditorView, x: number, y: number): Selection | null {
+  const box = view.dom.getBoundingClientRect();
+  const style = getComputedStyle(view.dom);
+  const left = box.left + parseFloat(style.paddingLeft) + 1;
+  const right = box.right - parseFloat(style.paddingRight) - 1;
+  const at = view.posAtCoords({
+    left: Math.min(right, Math.max(left, x)),
+    top: Math.min(box.bottom - 2, Math.max(box.top + 2, y)),
+  });
+  return at ? Selection.near(view.state.doc.resolve(at.pos)) : null;
+}
+
 /** Whether a change is the document's own syncing (y-prosemirror), or added after one. */
 const keeps = (tr: { getMeta(key: string): unknown }) =>
   Boolean((tr.getMeta("y-sync$") as { isChangeOrigin?: boolean } | undefined)?.isChangeOrigin) ||
@@ -398,6 +451,8 @@ export const blockSelect = createExtension(({ editor }) => {
   const plain = editor as unknown as BlockNoteEditor;
   // A paste of blocks Memoca copied as blocks, under way.
   let pastingBlocks = false;
+  // A press in the margin, for a box (or a click) of its own: not ProseMirror's.
+  let boxing = false;
   /** The view, while blocks are chosen in it. */
   const chosenIn = () => {
     const view = editor.prosemirrorView;
@@ -524,6 +579,9 @@ export const blockSelect = createExtension(({ editor }) => {
           // which lets them go otherwise. Once ProseMirror has the caret
           // where it was clicked: a change made before would put the caret
           // back where it was.
+          handleDOMEvents: {
+            mousedown: () => boxing,
+          },
           handleClick(view) {
             if (!blockSelectKey.getState(view.state)) return false;
             setTimeout(() => {
@@ -545,6 +603,119 @@ export const blockSelect = createExtension(({ editor }) => {
       }),
     ],
     mount({ dom, signal }) {
+      // A box dragged from the margin: drawn over the page, the blocks its
+      // band reaches chosen as it goes, the pane scrolled at its edges.
+      const frame = dom.closest(".bn-container") ?? dom;
+      let box: {
+        x: number;
+        y: number;
+        scroller: Element;
+        scrolled: number;
+        moved: boolean;
+        last: { x: number; y: number };
+        overlay: HTMLElement | null;
+        frame: number;
+      } | null = null;
+      const chosenByBox = (view: EditorView): Chosen | null => {
+        if (!box) return null;
+        const startY = box.y - (box.scroller.scrollTop - box.scrolled);
+        const { y } = box.last;
+        const blocks = blocksAcross(view, Math.min(startY, y), Math.max(startY, y));
+        if (blocks.length === 0) return null;
+        const [first, last] = [blocks[0]!, blocks.at(-1)!];
+        return y >= startY ? { anchor: first, head: last } : { anchor: last, head: first };
+      };
+      const draw = () => {
+        const view = editor.prosemirrorView;
+        if (!box || !view) return;
+        box.frame = 0;
+        const edge = box.scroller.getBoundingClientRect();
+        const { x, y } = box.last;
+        // At the pane's edge: scrolled on, the box with it.
+        if (y < edge.top + 32) box.scroller.scrollTop -= 12;
+        else if (y > edge.bottom - 32) box.scroller.scrollTop += 12;
+        const startY = box.y - (box.scroller.scrollTop - box.scrolled);
+        const overlay = box.overlay!;
+        overlay.style.left = `${Math.min(box.x, x)}px`;
+        overlay.style.top = `${Math.min(startY, y)}px`;
+        overlay.style.width = `${Math.abs(x - box.x)}px`;
+        overlay.style.height = `${Math.abs(y - startY)}px`;
+        const chosen = chosenByBox(view);
+        const now = blockSelectKey.getState(view.state);
+        if (JSON.stringify(chosen) !== JSON.stringify(now)) {
+          view.dispatch(view.state.tr.setMeta(blockSelectKey, chosen));
+        }
+        if (y < edge.top + 32 || y > edge.bottom - 32) box.frame = requestAnimationFrame(draw);
+      };
+      frame.addEventListener(
+        "mousedown",
+        (event) => {
+          const press = event as MouseEvent;
+          const view = editor.prosemirrorView;
+          boxing = false;
+          if (!view || press.button !== 0 || press.shiftKey || press.detail > 1) return;
+          if (!inMargin(dom, frame, press.target)) return;
+          // Not the browser's selection of text, begun there.
+          press.preventDefault();
+          boxing = true;
+          const scroller = scrollerOf(dom);
+          box = {
+            x: press.clientX,
+            y: press.clientY,
+            scroller,
+            scrolled: scroller.scrollTop,
+            moved: false,
+            last: { x: press.clientX, y: press.clientY },
+            overlay: null,
+            frame: 0,
+          };
+        },
+        { capture: true, signal },
+      );
+      document.addEventListener(
+        "mousemove",
+        (event) => {
+          if (!box) return;
+          box.last = { x: event.clientX, y: event.clientY };
+          if (!box.moved && Math.hypot(event.clientX - box.x, event.clientY - box.y) < 5) return;
+          if (!box.moved) {
+            box.moved = true;
+            const overlay = document.createElement("div");
+            overlay.className = "memoca-block-box";
+            document.body.append(overlay);
+            box.overlay = overlay;
+          }
+          if (!box.frame) box.frame = requestAnimationFrame(draw);
+        },
+        { signal },
+      );
+      const end = (event: MouseEvent | null) => {
+        const view = editor.prosemirrorView;
+        const ended = box;
+        box = null;
+        boxing = false;
+        if (!ended) return;
+        if (ended.frame) cancelAnimationFrame(ended.frame);
+        ended.overlay?.remove();
+        if (!view || !event) return;
+        view.focus();
+        if (ended.moved) {
+          box = { ...ended, last: { x: event.clientX, y: event.clientY } };
+          const chosen = chosenByBox(view);
+          box = null;
+          choose(view, chosen);
+          return;
+        }
+        // A click, not dragged: the caret beside it, as before.
+        const caret = caretBeside(view, event.clientX, event.clientY);
+        const tr = view.state.tr.setMeta(blockSelectKey, null);
+        if (caret) tr.setSelection(caret);
+        view.dispatch(tr.scrollIntoView());
+      };
+      document.addEventListener("mouseup", (event) => end(event), { signal });
+      window.addEventListener("blur", () => end(null), { signal });
+      signal.addEventListener("abort", () => end(null));
+
       // WebKit's Edit menu has Copy and Cut only when its beforecopy (or
       // beforecut) is taken, there being no selection to copy.
       for (const type of ["beforecopy", "beforecut"]) {

@@ -82,3 +82,30 @@ export async function caretInLastLine(page: Page) {
     });
   await page.waitForTimeout(50);
 }
+
+/** Where a line is on the screen. */
+export async function lineBox(page: Page, text: string) {
+  return (await editor(page)
+    .locator(".bn-block-content", {
+      has: page.locator(".bn-inline-content", { hasText: new RegExp(`^${text}$`) }),
+    })
+    .first()
+    .boundingBox())!;
+}
+
+/** Where in the editor's own margin, right of the lines, a press is: left of it, the side menu. */
+export async function rightMargin(page: Page) {
+  const frame = (await editor(page).boundingBox())!;
+  return frame.x + frame.width - 20;
+}
+
+/** A box dragged with the mouse, from the margin right of one line to over another. */
+export async function dragBox(page: Page, from: string, to: string) {
+  const start = await lineBox(page, from);
+  const end = await lineBox(page, to);
+  const x = await rightMargin(page);
+  await page.mouse.move(x, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(x - 300, end.y + end.height / 2, { steps: 12 });
+  await page.mouse.up();
+}

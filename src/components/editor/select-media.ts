@@ -419,6 +419,11 @@ export const selectMedia = createExtension(({ editor }) => ({
     dom.addEventListener(
       "mousedown",
       (event) => {
+        // Taken for a box of blocks (block-select.ts): not a selection of text.
+        if (event.defaultPrevented) {
+          down = null;
+          return;
+        }
         const view = editor.prosemirrorView;
         const target = event.target instanceof Element ? event.target : null;
         const block = target?.closest(".bn-block-content");

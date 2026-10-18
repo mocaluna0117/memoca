@@ -184,6 +184,16 @@
   background-color: rgba(100, 160, 255, 0.16);
 }
 
+/* The box dragged from the margin to choose blocks. */
+.memoca-block-box {
+  position: fixed;
+  z-index: 50;
+  pointer-events: none;
+  border: 1px solid rgba(100, 160, 255, 0.6);
+  border-radius: 2px;
+  background-color: rgba(100, 160, 255, 0.1);
+}
+
 .bn-block-content.memoca-selected-media > * {
   position: relative;
 }
