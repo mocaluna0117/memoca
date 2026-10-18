@@ -60,6 +60,7 @@ import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
 import { NoteLinkMenu, noteLinkInput, noteLinkSlashItem } from "@/components/editor/note-links";
 import { listKeys } from "@/components/editor/list-keys";
+import { blockSelect } from "@/components/editor/block-select";
 import { turningLines } from "@/components/editor/slash-turn-line";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { LayoutTemplate } from "lucide-react";
@@ -305,6 +306,7 @@ function EditorSurface({
           stuckToggles,
           dragHandle,
           selectMedia(),
+          blockSelect(),
           linesAbove(),
           imeCommit(),
           noteLinkInput(),

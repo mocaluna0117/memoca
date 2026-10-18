@@ -173,6 +173,17 @@
 
 /* An image or a file a selection of text runs over, shown as selected as
    BlockNote shows one selected on its own (src/components/editor/select-media.ts). */
+/* Blocks chosen whole (block-select.ts): each as one, what is inside it
+   with it, and the caret, there to type at, not shown. */
+.ProseMirror.memoca-blocks-chosen {
+  caret-color: transparent;
+}
+.bn-block-outer.memoca-chosen-block > .bn-block,
+.memoca-chosen-block[data-node-type="columnList"] {
+  border-radius: 4px;
+  background-color: rgba(100, 160, 255, 0.16);
+}
+
 .bn-block-content.memoca-selected-media > * {
   position: relative;
 }

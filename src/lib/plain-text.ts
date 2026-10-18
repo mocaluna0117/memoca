@@ -22,6 +22,11 @@ function cellText(cell: Node): string {
   return textOf(cell).replace(/\n/g, " ");
 }
 
+/** Windows' plain-text apps want CRLF, which the browser adds to a copy of
+ *  its own but not to one a page writes. */
+export const forThisSystem = (text: string) =>
+  /Windows/.test(navigator.userAgent) ? text.replace(/\n/g, "\r\n") : text;
+
 /**
  * The text of what is selected in a note, as it reads on the screen, for
  * pasting into an app that takes plain text only (a chat, a mail, a text
@@ -39,7 +44,13 @@ function cellText(cell: Node): string {
  * start of the next line, say) is left out. Blocks with no text (images,
  * files) leave nothing.
  */
-export function plainTextBetween(doc: Node, from: number, to: number): string {
+export function plainTextBetween(
+  doc: Node,
+  from: number,
+  to: number,
+  /** Blocks copied whole (block-select.ts): one with its mark too, as several have theirs. */
+  { blocks = false }: { blocks?: boolean } = {},
+): string {
   const lines: { text: string; mark: string; level: number }[] = [];
   doc.nodesBetween(from, to, (node, pos) => {
     if (node.type.name === "tableRow") {
@@ -67,7 +78,7 @@ export function plainTextBetween(doc: Node, from: number, to: number): string {
     lines.push({ text, mark: markOf(node, $pos), level: levelAt($pos) });
     return false;
   });
-  if (lines.length === 1) return lines[0]!.text;
+  if (lines.length === 1 && !blocks) return lines[0]!.text;
   const least = Math.min(...lines.map((line) => line.level));
   return lines
     .map(({ text, mark, level }) => {

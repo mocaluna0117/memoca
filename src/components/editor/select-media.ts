@@ -21,10 +21,10 @@ const isMedia = (container: Node) => {
 };
 
 /** A block (blockContainer) and where it is. */
-type Found = { node: Node; pos: number };
+export type Found = { node: Node; pos: number };
 
 /** Whether the blocks inside a block are shown: all are, but a closed toggle's. */
-type Shown = (block: Found) => boolean;
+export type Shown = (block: Found) => boolean;
 
 /** Where a block's line ends, and the group of blocks inside it (if any) starts. */
 const afterLine = (block: Found) => block.pos + 1 + block.node.firstChild!.nodeSize;
@@ -33,7 +33,7 @@ const afterLine = (block: Found) => block.pos + 1 + block.node.firstChild!.nodeS
 const hasShownInside = (block: Found, shown: Shown) => block.node.childCount > 1 && shown(block);
 
 /** The blockContainer a position is in (the deepest), and where it is. */
-function blockAt($pos: ResolvedPos): Found | null {
+export function blockAt($pos: ResolvedPos): Found | null {
   for (let depth = $pos.depth; depth > 0; depth -= 1) {
     const node = $pos.node(depth);
     if (node.type.name === "blockContainer") return { node, pos: $pos.before(depth) };
@@ -53,14 +53,14 @@ function blockAfterPos(doc: Node, pos: number): Found | null {
 }
 
 /** The block reading after a block's line: its first inside, if shown, or the next after it. */
-function blockAfter(doc: Node, block: Found, shown: Shown): Found | null {
+export function blockAfter(doc: Node, block: Found, shown: Shown): Found | null {
   return hasShownInside(block, shown)
     ? blockAfterPos(doc, afterLine(block) + 1)
     : blockAfterPos(doc, block.pos + block.node.nodeSize);
 }
 
 /** The block reading before a block: the one before it (its last inside, if shown), or the one it is in. */
-function blockBefore(doc: Node, block: Found, shown: Shown): Found | null {
+export function blockBefore(doc: Node, block: Found, shown: Shown): Found | null {
   const $pos = doc.resolve(block.pos);
   const previous = $pos.nodeBefore;
   if (previous?.type.name !== "blockContainer") {
@@ -273,7 +273,7 @@ function mediaSelected(state: EditorState): DecorationSet {
 }
 
 /** Whether a block's inside is on the screen: not a closed toggle's. */
-const shownOn =
+export const shownOn =
   (view: EditorView): Shown =>
   (block) =>
     !isToggle(block.node.firstChild) || isOpenOnScreen(view, block);

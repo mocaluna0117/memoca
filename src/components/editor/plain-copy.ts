@@ -13,12 +13,13 @@ import {
   stitch,
 } from "@/components/editor/copy-image";
 import { clipboardFor, copyRange, cutRange, isOpenOnScreen } from "@/components/editor/toggles";
-import { plainTextBetween, plainTextOf } from "@/lib/plain-text";
-
-/** Windows' plain-text apps want CRLF, which the browser adds to a copy of
- *  its own but not to one a page writes. */
-const forThisSystem = (text: string) =>
-  /Windows/.test(navigator.userAgent) ? text.replace(/\n/g, "\r\n") : text;
+import {
+  blockSelectKey,
+  chosenRange,
+  removeChosen,
+  writeBlocks,
+} from "@/components/editor/block-select";
+import { forThisSystem, plainTextBetween, plainTextOf } from "@/lib/plain-text";
 
 /**
  * Copying or cutting from a note gives apps that take plain text the text as
@@ -78,6 +79,17 @@ export function usePlainTextCopy(
       observer?.forceFlush?.();
       observer?.flush?.();
       const { selection, doc } = view.state;
+      // Blocks chosen whole (block-select.ts): written as blocks, and cut so.
+      const chosen = blockSelectKey.getState(view.state);
+      const blocks = chosen ? chosenRange(doc, chosen) : null;
+      const data = (event as ClipboardEvent).clipboardData;
+      if (blocks && data) {
+        writeBlocks(editor, view, blocks, data);
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.type === "cut" && view.editable) removeChosen(editor, view);
+        return;
+      }
       if (selection.empty) return;
       const toggle =
         selection instanceof TextSelection
