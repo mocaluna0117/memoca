@@ -51,6 +51,7 @@ import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { pasteOwnImage } from "@/components/editor/copy-image";
+import { pasteMarkingUnreadableImages } from "@/components/editor/unreadable-images";
 import { dragHandle } from "@/components/editor/drag-handle";
 import { fromTitle, linesAbove } from "@/components/editor/line-above";
 import { selectMedia } from "@/components/editor/select-media";
@@ -315,9 +316,12 @@ function EditorSurface({
           findInNote(),
         ],
         dropCursor: { hooks: { computeDropPosition } },
-        // An image Memoca copied alone, pasted back as the block it was.
+        // An image Memoca copied alone, pasted back as the block it was; and
+        // images that cannot be read (Notion's) marked by a line in their place.
         pasteHandler: ({ event, editor: pasting, defaultPasteHandler }) =>
-          pasteOwnImage(event, pasting as unknown as BlockNoteEditor) || defaultPasteHandler(),
+          pasteOwnImage(event, pasting as unknown as BlockNoteEditor) ||
+          pasteMarkingUnreadableImages(event, pasting as unknown as BlockNoteEditor) ||
+          defaultPasteHandler(),
       }),
     [doc, me?.name, uploadFile, resolveFileUrl, links],
   );

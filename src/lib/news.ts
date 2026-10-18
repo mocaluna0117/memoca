@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-10-19-notion-images",
+    date: "2026-10-19",
+    title: "Notion から貼り付けたときの画像",
+    details: [
+      "Notion で文章と画像をまとめてコピーすると、Notion は画像そのものをクリップボードに入れないため、Memoca では画像を取り込めません。これまでは名前（image.png）だけの壊れた画像になっていました。",
+      "画像のあった所に「（Notion の画像：image.png）」という行を入れ、取り込めなかった枚数をお知らせするようにしました。画像は Notion で1枚ずつコピー（右クリックの「画像をコピー」など）して、その行の所に貼り付けてください。",
+    ],
+  },
+  {
     id: "2026-10-19-sticky-folder-name",
     date: "2026-10-19",
     title: "サイドバーでフォルダの中をスクロールしても、フォルダ名が見えるように",
