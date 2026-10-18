@@ -134,7 +134,8 @@ for (const [word, made, selected] of [
     await createNote(page, "トグル");
     await editor(page).click();
     await page.keyboard.type("/折りたたみリスト");
-    await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+    // The list for all that was typed, not an earlier one, loaded after it.
+    await expect(page.getByRole("option").first()).toContainText("折りたたみリスト");
     await page.keyboard.press("Enter");
     await page.keyboard.type("買い物");
     const toggle = editor(page).locator('[data-content-type="toggleListItem"]');
@@ -168,7 +169,8 @@ test("a phrase committed in parts in an indented item inside a toggle comes out 
   await createNote(page, "文節");
   await editor(page).click();
   await page.keyboard.type("/折りたたみリスト");
-  await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+  // The list for all that was typed, not an earlier one, loaded after it.
+  await expect(page.getByRole("option").first()).toContainText("折りたたみリスト");
   await page.keyboard.press("Enter");
   await page.keyboard.type("見出し");
   const toggle = editor(page).locator('[data-content-type="toggleListItem"]');

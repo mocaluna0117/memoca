@@ -57,7 +57,8 @@ async function imagesInToggle(page: Page) {
   await createNote(page, "トグル");
   await editor(page).click();
   await page.keyboard.type("/折りたたみリスト");
-  await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+  // The list for all that was typed, not an earlier one, loaded after it.
+  await expect(page.getByRole("option").first()).toContainText("折りたたみリスト");
   await page.keyboard.press("Enter");
   await page.keyboard.type("箱");
   const box = editor(page)

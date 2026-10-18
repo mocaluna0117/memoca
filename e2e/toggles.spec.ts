@@ -29,7 +29,8 @@ async function toggleNote(page: Page, title: string) {
   await createNote(page, "トグル");
   await editor(page).click();
   await page.keyboard.type("/折りたたみリスト");
-  await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+  // The list for all that was typed, not an earlier one, loaded after it.
+  await expect(page.getByRole("option").first()).toContainText("折りたたみリスト");
   await page.keyboard.press("Enter");
   await page.keyboard.type(title);
 }
@@ -300,7 +301,8 @@ test.describe("toggles", () => {
     await page.keyboard.type("もう一つの行");
     await page.keyboard.press("Enter");
     await page.keyboard.type("/折りたたみリスト");
-    await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+    // The list for all that was typed, not an earlier one, loaded after it.
+    await expect(page.getByRole("option").first()).toContainText("折りたたみリスト");
     await page.keyboard.press("Enter");
     await page.keyboard.type("箱の見出し");
     await flip(page, "箱の見出し");
@@ -336,7 +338,8 @@ test.describe("toggles", () => {
     await page.keyboard.type("動かす行");
     await page.keyboard.press("Enter");
     await page.keyboard.type("/折りたたみリスト");
-    await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+    // The list for all that was typed, not an earlier one, loaded after it.
+    await expect(page.getByRole("option").first()).toContainText("折りたたみリスト");
     await page.keyboard.press("Enter");
     await page.keyboard.type("箱の見出し");
     await flip(page, "箱の見出し");
@@ -593,7 +596,8 @@ async function nestedToggles(page: Page) {
   await flip(page, "外");
   await block(page, "外").locator(".bn-toggle-add-block-button").click();
   await page.keyboard.type("/折りたたみリスト");
-  await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+  // The list for all that was typed, not an earlier one, loaded after it.
+  await expect(page.getByRole("option").first()).toContainText("折りたたみリスト");
   await page.keyboard.press("Enter");
   await page.keyboard.type("内");
   await flip(page, "内");
@@ -743,7 +747,8 @@ test("a toggle kept at the top inside a coloured block keeps the block's colour"
   await page.keyboard.type("親");
   await page.keyboard.press("Enter");
   await page.keyboard.type("/折りたたみリスト");
-  await expect(page.getByRole("option", { name: /折りたたみリスト/ })).toBeVisible();
+  // The list for all that was typed, not an earlier one, loaded after it.
+  await expect(page.getByRole("option").first()).toContainText("折りたたみリスト");
   await page.keyboard.press("Enter");
   await page.keyboard.type("子トグル");
   // Inside 親.
