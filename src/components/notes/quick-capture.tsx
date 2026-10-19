@@ -102,6 +102,8 @@ const keptImage = (image: QuickImage): DraftImage => ({
 });
 /** An image made ready: the draft keeps those alone, so none is read back as it came. */
 const ready = (image: QuickImage) => !image.preparing;
+/** What is still said as the window goes: why an image was turned away; not that it was saved. */
+const stillSaid = (said: Status): Status => (said?.kind === "refused" ? said : null);
 
 /**
  * Once every image still being made ready is: ready, or turned away. One
@@ -458,6 +460,17 @@ function Capture({
   const staged = useRef(new Map<string, string>());
   /** Each image still being made ready, by key: a save, and the draft, wait for it. */
   const preparing = useRef(new Map<string, Promise<void>>());
+  /**
+   * The preparations, one after another: each holds its whole bitmap (and
+   * more, on WebKit) until the worker takes it, which ten at once would not fit.
+   */
+  const chain = useRef<Promise<void>>(Promise.resolve());
+  /** How many images were turned away: one more while a save waits, and it saves nothing over the reason. */
+  const refusals = useRef(0);
+  /** Whether this tab's quick note is still shown: an image made ready once it is gone goes into its draft alone. */
+  const mounted = useRef(false);
+  /** Whether what is written was let go of (the tab closed unsaved): its draft is not written again. */
+  const discarded = useRef(false);
   const showImages = (next: QuickImage[]) => {
     for (const image of imagesRef.current) {
       if (!next.includes(image)) URL.revokeObjectURL(image.url);
@@ -476,6 +489,7 @@ function Capture({
   useEffect(() => {
     const kept = keepDraft(userKey, tabId);
     draft.current = kept;
+    mounted.current = true;
     // What was shared is part of the draft from the start.
     if (shared) kept.update(shared);
     // The tab's draft: in the empty field, or under what is there already
@@ -507,10 +521,23 @@ function Capture({
         kept.update(textRef.current);
         kept.release();
       });
+    // The images being made ready: the one map all along, read as the tab goes.
+    const jobs = preparing.current;
     return () => {
       current = false;
-      kept.dispose();
+      mounted.current = false;
       draft.current = null;
+      // An image still being made ready as the tab goes (another shown, the
+      // page left) is written into its draft once it is, the draft let go of
+      // then; not into one let go of already (its tab closed unsaved).
+      if (jobs.size > 0 && !discarded.current) {
+        void allReady(jobs).then(() => {
+          kept.images(imagesRef.current.filter(ready).map(keep));
+          kept.dispose();
+        });
+        return;
+      }
+      kept.dispose();
     };
     // Once for the tab: another is a new Capture.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -539,11 +566,18 @@ function Capture({
 
   /**
    * Adds files as images: each shown at once, as it came, while it is made
-   * ready (compressed) and checked as one added to a note is; one that
-   * cannot be is taken out and said so, the others kept. A save, the draft
-   * and the window's going wait for those still being made ready.
+   * ready (compressed) and checked as one added to a note is, one after
+   * another; one that cannot be is taken out and said so, the others kept.
+   * A save, the draft and the window's going wait for those still being
+   * made ready.
    */
   const addFiles = (files: File[]) => {
+    // This tab's draft: written into even once the tab is gone (see the
+    // effect's cleanup), when draft.current is not it any more.
+    const kept = draft.current;
+    // What was said before is over. What this batch says stays said while
+    // its images are made ready: that does not go through editImages.
+    setStatus(null);
     for (const file of files) {
       if (!isImage(file)) {
         setStatus({ kind: "refused", message: t.quick.imagesOnly });
@@ -569,53 +603,67 @@ function Capture({
           preparing: true,
         },
       ]);
-      const job = prepareUpload(file, allowance)
+      const job = chain.current
+        .then(() => prepareUpload(file, allowance))
         .then(
           (prepared) => {
             // Taken out meanwhile: nothing to put in its place.
             if (!imagesRef.current.some((each) => each.key === key)) return;
-            editImages(
-              imagesRef.current.map((each) =>
-                each.key === key
-                  ? shown({
-                      key,
-                      name,
-                      blob: prepared.blob,
-                      mime: prepared.mime,
-                      width: prepared.width,
-                      height: prepared.height,
-                    })
-                  : each,
-              ),
+            const made: DraftImage = {
+              key,
+              name,
+              blob: prepared.blob,
+              mime: prepared.mime,
+              width: prepared.width,
+              height: prepared.height,
+            };
+            // The tab gone meanwhile: nothing shows it, so no URL to show it by.
+            const next = imagesRef.current.map((each) =>
+              each.key !== key ? each : mounted.current ? shown(made) : { ...made, url: each.url },
             );
+            if (mounted.current) showImages(next);
+            else imagesRef.current = next;
+            if (!discarded.current) kept?.images(next.filter(ready).map(keep));
           },
           (error: unknown) => {
             if (!imagesRef.current.some((each) => each.key === key)) return;
-            showImages(imagesRef.current.filter((each) => each.key !== key));
+            const next = imagesRef.current.filter((each) => each.key !== key);
+            if (!mounted.current) {
+              imagesRef.current = next;
+              return;
+            }
+            showImages(next);
+            refusals.current += 1;
             setStatus({ kind: "refused", message: uploadRefusal(error) });
           },
         )
         .finally(() => preparing.current.delete(key));
       preparing.current.set(key, job);
+      // The next waits for this one, however it ends.
+      chain.current = job.catch(() => undefined);
     }
   };
 
   /** Waits for a save under way, keeps what is written, and puts the window away. */
   const close = useCallback(async () => {
     await inFlight.current;
-    await allReady(preparing.current);
+    // A window of a page's is unloaded as it closes, an image still being
+    // made ready with it. The shell keeps the page, and waits for the image
+    // itself as it puts the window away (SHELL_HIDDEN): not kept up for it.
+    if (!window.memocaShell) await allReady(preparing.current);
     await draft.current?.flush(true);
     // Shown again by the shell, the window should not still say saved.
-    setStatus(null);
+    setStatus(stillSaid);
     closeQuickWindow();
   }, []);
 
   /** As {@link close}, Memoca's own window brought out in its place, as it was left. */
   const showApp = useCallback(async () => {
     await inFlight.current;
-    await allReady(preparing.current);
+    // The shell's alone: an image still being made ready is waited for as
+    // it puts the window away.
     await draft.current?.flush(true);
-    setStatus(null);
+    setStatus(stillSaid);
     window.memocaShell?.showApp?.();
   }, []);
 
@@ -628,7 +676,7 @@ function Capture({
       await inFlight.current;
       await allReady(preparing.current);
       await draft.current?.flush(true);
-      setStatus(null);
+      setStatus(stillSaid);
       // Out again by the time the server says (and maybe being typed in):
       // left for the next time it is put away.
       if ((await newBuildOut()) && !document.hasFocus()) window.location.reload();
@@ -650,12 +698,16 @@ function Capture({
     return () => document.removeEventListener("keydown", onKey);
   }, [windowed, close, escapeEnabled]);
 
-  const save = async () => {
-    // One at a time: ⌘ + Enter again while the first waits for an image is not another.
-    if (inFlight.current) return;
+  const save = async (): Promise<void> => {
+    // One at a time: ⌘ + Enter again while the first waits for an image is
+    // not another; a tab's closing, asking, waits for the one under way.
+    if (inFlight.current) return inFlight.current;
     const run = (async () => {
-      // An image still being made ready goes in as it will be once it is.
+      // An image still being made ready goes in as it will be once it is;
+      // one turned away meanwhile is said, and nothing is saved over that.
+      const refused = refusals.current;
       await allReady(preparing.current);
+      if (refusals.current !== refused) return;
       const body = quickLines(textRef.current);
       const pictures = imagesRef.current;
       if (body.length === 0 && pictures.length === 0) return;
@@ -757,7 +809,10 @@ function Capture({
       });
       return all ? (savedRef.current?.noteId ?? null) : null;
     },
-    discard: () => draft.current?.cancel(),
+    discard: () => {
+      discarded.current = true;
+      draft.current?.cancel();
+    },
   }));
 
   const link = "text-foreground underline underline-offset-2";
@@ -957,9 +1012,11 @@ function Capture({
                 type="button"
                 aria-label={t.quick.removeImage(image.name)}
                 className="absolute top-0 right-0 flex size-5 items-center justify-center rounded-full bg-foreground text-background"
-                onClick={() =>
-                  editImages(imagesRef.current.filter((each) => each.key !== image.key))
-                }
+                onClick={() => {
+                  // Still being made ready: not waited for any more.
+                  preparing.current.delete(image.key);
+                  editImages(imagesRef.current.filter((each) => each.key !== image.key));
+                }}
               >
                 <X className="size-3" aria-hidden />
               </button>

@@ -157,14 +157,12 @@ beforeEach(async () => {
   h.release.mockReset().mockResolvedValue(undefined);
   h.newBuild.mockReset().mockResolvedValue(false);
   // Made ready at once, as it came: the tests of that have it wait.
-  h.prepare
-    .mockReset()
-    .mockImplementation(async (file: File) => ({
-      blob: file,
-      mime: file.type,
-      width: 1,
-      height: 1,
-    }));
+  h.prepare.mockReset().mockImplementation(async (file: File) => ({
+    blob: file,
+    mime: file.type,
+    width: 1,
+    height: 1,
+  }));
   h.stage.mockReset().mockResolvedValue("memoca://att-1");
   host = document.createElement("div");
   document.body.append(host);
@@ -242,7 +240,10 @@ describe("the quick note, saving", () => {
     await key({ key: "Enter", ctrlKey: true });
     expect(h.createNote).toHaveBeenCalledOnce();
     await pause();
-    expect(await draftOf(ME)).toMatchObject({ text: "すぐ保存", saved: { noteId: "note-1", text: "すぐ保存" } });
+    expect(await draftOf(ME)).toMatchObject({
+      text: "すぐ保存",
+      saved: { noteId: "note-1", text: "すぐ保存" },
+    });
     // Nothing new to save: the button says so.
     expect(button("保存").disabled).toBe(true);
 
@@ -555,15 +556,19 @@ describe("the quick note's draft, coming back", () => {
 });
 
 describe("the quick note's tabs", () => {
-  const tabs = () => Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent);
+  const tabs = () =>
+    Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent);
   const selected = () => host.querySelector('[role="tab"][aria-selected="true"]')?.textContent;
-  const labelled = (label: string) => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+  const labelled = (label: string) =>
+    host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
   async function press(element: HTMLElement) {
     await act(async () => element.click());
     await settle();
   }
   const tab = (name: string) =>
-    Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find((found) => found.textContent === name)!;
+    Array.from(host.querySelectorAll<HTMLButtonElement>('[role="tab"]')).find(
+      (found) => found.textContent === name,
+    )!;
   const dialog = () => document.querySelector('[role="alertdialog"]');
   const inDialog = (name: string) =>
     Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')).find(
@@ -663,6 +668,11 @@ describe("the quick note's images", () => {
   const busy = () => host.querySelector('li[aria-busy="true"]');
   const remover = (name: string) =>
     host.querySelector<HTMLButtonElement>(`button[aria-label="${name} を外す"]`)!;
+  const newTab = () => host.querySelector<HTMLButtonElement>('button[aria-label="新しいタブ"]')!;
+  const inDialog = (name: string) =>
+    Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')).find(
+      (found) => found.textContent === name,
+    )!;
   /** The image blocks a save wrote, by their reference and name. */
   const imagesOf = (noteId: string) =>
     bodyFragment(docs.get(noteId)!)
@@ -693,6 +703,10 @@ describe("the quick note's images", () => {
     h.prepare.mockImplementation(
       () => new Promise<Prepared>((resolve, reject) => (making = { resolve, reject })),
     );
+  });
+
+  afterEach(() => {
+    delete window.memocaShell;
   });
 
   test("one pasted is shown at once, and is in the draft only once it is ready", async () => {
@@ -755,7 +769,7 @@ describe("the quick note's images", () => {
     expect((await draftOf(ME))?.images ?? []).toEqual([]);
   });
 
-  test("Esc waits for one being made ready, so that the draft keeps it", async () => {
+  test("Esc, in a window of a page's, waits for one being made ready, so that the draft keeps it", async () => {
     await render();
     await paste(png());
     await key({ key: "Escape" }, document);
@@ -765,12 +779,130 @@ describe("the quick note's images", () => {
     expect((await draftOf(ME))?.images).toHaveLength(1);
   });
 
+  test("in the desktop shell, Esc puts the window away at once; the shell, putting it away, waits for the image", async () => {
+    window.memocaShell = { hide() {}, openExternal() {}, platform: "macos" };
+    await render();
+    await paste(png());
+    await key({ key: "Escape" }, document);
+    expect(h.closed).toHaveBeenCalledOnce();
+    // Hidden, the window is told so by the shell (desktop/src-tauri/src/window.rs).
+    await act(async () => {
+      window.dispatchEvent(new Event(SHELL_HIDDEN));
+    });
+    await settle();
+    expect(h.newBuild).not.toHaveBeenCalled();
+    await finish(() => making.resolve(READY));
+    expect(h.newBuild).toHaveBeenCalledOnce();
+    expect((await draftOf(ME))?.images).toHaveLength(1);
+  });
+
+  test("one turned away while Esc waits for it is still said as the window comes back", async () => {
+    await render();
+    await paste(png());
+    await key({ key: "Escape" }, document);
+    expect(h.closed).not.toHaveBeenCalled();
+    await finish(() => making.reject(new QuotaError("quotaExceeded")));
+    expect(h.closed).toHaveBeenCalledOnce();
+    expect(status()).toContain("保存できる容量を超えました");
+  });
+
   test("a file that is not an image is turned away at once", async () => {
     await render();
     await paste(new File(["text"], "memo.txt", { type: "text/plain" }));
     expect(h.prepare).not.toHaveBeenCalled();
     expect(thumbs()).toHaveLength(0);
     expect(status()).toContain("文字と画像だけ");
+  });
+
+  test("one turned away while ⌘ + Enter waits for it is said, and nothing is saved over that", async () => {
+    await render();
+    await type("本文");
+    await paste(png());
+    await key({ key: "Enter", metaKey: true });
+    await finish(() => making.reject(new QuotaError("quotaExceeded")));
+    expect(h.createNote).not.toHaveBeenCalled();
+    expect(thumbs()).toHaveLength(0);
+    expect(status()).toContain("保存できる容量を超えました");
+    expect(field().value).toBe("本文");
+    expect(field().readOnly).toBe(false);
+  });
+
+  test("the limit, said of a batch, is still said once the first of them is ready", async () => {
+    await render();
+    await paste(...Array.from({ length: 11 }, (_, at) => png(`${at + 1}.png`)));
+    expect(thumbs()).toHaveLength(10);
+    expect(status()).toContain("10 枚まで");
+    // Made ready one after another, each shown as it came meanwhile.
+    expect(h.prepare).toHaveBeenCalledOnce();
+    await finish(() => making.resolve(READY));
+    expect(status()).toContain("10 枚まで");
+    expect(h.prepare).toHaveBeenCalledTimes(2);
+    expect(host.querySelectorAll('li[aria-busy="true"]')).toHaveLength(9);
+  });
+
+  test("a file that is not an image, pasted with a photo, is still said once the photo is ready", async () => {
+    await render();
+    await paste(png(), new File(["text"], "memo.txt", { type: "text/plain" }));
+    expect(status()).toContain("文字と画像だけ");
+    await finish(() => making.resolve(READY));
+    expect(busy()).toBeNull();
+    expect(status()).toContain("文字と画像だけ");
+    // The next batch says its own.
+    await paste(png("次.png"));
+    expect(status()).toBe("");
+  });
+
+  test("one still being made ready as another tab is shown goes into the draft of the tab it was pasted in", async () => {
+    await render();
+    const first = (await loadTabs(ME)).active;
+    await paste(png());
+    await act(async () => newTab().click());
+    await settle();
+    expect(thumbs()).toHaveLength(0);
+    const urls = nextUrl;
+    await finish(() => making.resolve(READY));
+    // Shown nowhere: no URL is made for it.
+    expect(nextUrl).toBe(urls);
+    await pause();
+    expect((await loadDraft(ME, first))?.images).toMatchObject([
+      { name: "写真.png", mime: "image/webp", width: 40, height: 30 },
+    ]);
+  });
+
+  test("a tab let go of while its image is being made ready does not get its draft written back", async () => {
+    await render();
+    await type("一つ目");
+    await act(async () => newTab().click());
+    await settle();
+    const second = (await loadTabs(ME)).active;
+    await paste(png());
+    await act(async () => {
+      host
+        .querySelector<HTMLButtonElement>('button[aria-label="画像 1 枚 のタブを閉じる"]')!
+        .click();
+    });
+    await settle();
+    await act(async () => inDialog("保存せずに閉じる").click());
+    await settle();
+    expect(field().value).toBe("一つ目");
+    await finish(() => making.resolve(READY));
+    await pause();
+    expect(await loadDraft(ME, second)).toBeNull();
+    expect((await loadTabs(ME)).ids).toHaveLength(1);
+  });
+
+  test("one taken out while being made ready is not waited for", async () => {
+    await render();
+    await type("本文");
+    await paste(png());
+    await act(async () => remover("写真.png").click());
+    await settle();
+    await key({ key: "Enter", metaKey: true });
+    expect(h.createNote).toHaveBeenCalledOnce();
+    expect(h.stage).not.toHaveBeenCalled();
+    expect(bodyOf("note-1")).toEqual(["本文"]);
+    await finish(() => making.resolve(READY));
+    expect(thumbs()).toHaveLength(0);
   });
 });
 
