@@ -104,6 +104,7 @@ export const ja = {
     removeImage: (name: string) => `${name} を外す`,
     imagesOnly: "即席メモに入れられるのは、文字と画像だけです。",
     tooManyImages: (max: number) => `画像は、1 つの即席メモに ${max} 枚までです。`,
+    preparing: "画像を準備しています",
   },
   storage: {
     title: "内訳",

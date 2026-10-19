@@ -1,6 +1,6 @@
 "use client";
 
-import { AppWindow, ArrowLeft, Check, ImagePlus, X } from "lucide-react";
+import { AppWindow, ArrowLeft, Check, ImagePlus, Loader2, X } from "lucide-react";
 import { uuidv7 } from "uuidv7";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -73,7 +73,11 @@ type CaptureHandle = {
 };
 
 /** An image added, with a URL of this tab's to show it by. */
-type QuickImage = DraftImage & { url: string };
+type QuickImage = DraftImage & {
+  url: string;
+  /** Still being made ready (compressed) and checked: shown as it came, in no draft yet. */
+  preparing?: boolean;
+};
 
 /** The most images one quick note takes. */
 const MAX_IMAGES = 10;
@@ -95,6 +99,16 @@ const keptImage = (image: QuickImage): DraftImage => ({
   width: image.width,
   height: image.height,
 });
+/** An image made ready: the draft keeps those alone, so none is read back as it came. */
+const ready = (image: QuickImage) => !image.preparing;
+
+/**
+ * Once every image still being made ready is: ready, or turned away. One
+ * added while that is waited for is waited for too.
+ */
+async function allReady(jobs: Map<string, Promise<void>>): Promise<void> {
+  while (jobs.size > 0) await Promise.all(jobs.values());
+}
 
 /** Both keys the save is on, for whatever keyboard: ⌘ on a Mac, Ctrl elsewhere. */
 const SAVE_KEYS = "Meta+Enter Control+Enter";
@@ -426,6 +440,8 @@ function Capture({
   const picker = useRef<HTMLInputElement>(null);
   /** The images a save staged already, by key: one tried again stages none twice. */
   const staged = useRef(new Map<string, string>());
+  /** Each image still being made ready, by key: a save, and the draft, wait for it. */
+  const preparing = useRef(new Map<string, Promise<void>>());
   const showImages = (next: QuickImage[]) => {
     for (const image of imagesRef.current) {
       if (!next.includes(image)) URL.revokeObjectURL(image.url);
@@ -464,7 +480,7 @@ function Capture({
         const pictures = (left?.images ?? []).map(shown);
         if (pictures.length > 0) {
           showImages([...imagesRef.current, ...pictures]);
-          kept.images(imagesRef.current.map(keep));
+          kept.images(imagesRef.current.filter(ready).map(keep));
         }
         if (!left || left.text.trim() === "" || now.includes(left.text)) return;
         show(now.trim() === "" ? left.text : `${now}\n\n${left.text}`);
@@ -502,14 +518,16 @@ function Capture({
   const editImages = (next: QuickImage[]) => {
     showImages(next);
     setStatus(null);
-    draft.current?.images(next.map(keep));
+    draft.current?.images(next.filter(ready).map(keep));
   };
 
   /**
-   * Adds files as images, each made ready (compressed) and checked as one
-   * added to a note is; one that cannot be is said so, the others added.
+   * Adds files as images: each shown at once, as it came, while it is made
+   * ready (compressed) and checked as one added to a note is; one that
+   * cannot be is taken out and said so, the others kept. A save, the draft
+   * and the window's going wait for those still being made ready.
    */
-  const addFiles = async (files: File[]) => {
+  const addFiles = (files: File[]) => {
     for (const file of files) {
       if (!isImage(file)) {
         setStatus({ kind: "refused", message: t.quick.imagesOnly });
@@ -519,28 +537,57 @@ function Capture({
         setStatus({ kind: "refused", message: t.quick.tooManyImages(MAX_IMAGES) });
         return;
       }
-      try {
-        const prepared = await prepareUpload(file, allowance);
-        editImages([
-          ...imagesRef.current,
-          shown({
-            key: uuidv7(),
-            name: file.name || "image",
-            blob: prepared.blob,
-            mime: prepared.mime,
-            width: prepared.width,
-            height: prepared.height,
-          }),
-        ]);
-      } catch (error) {
-        setStatus({ kind: "refused", message: uploadRefusal(error) });
-      }
+      const key = uuidv7();
+      const name = file.name || "image";
+      // Not through editImages: the draft is not written with the file as it came.
+      showImages([
+        ...imagesRef.current,
+        {
+          key,
+          name,
+          blob: file,
+          mime: file.type || "image/*",
+          width: 0,
+          height: 0,
+          url: URL.createObjectURL(file),
+          preparing: true,
+        },
+      ]);
+      const job = prepareUpload(file, allowance)
+        .then(
+          (prepared) => {
+            // Taken out meanwhile: nothing to put in its place.
+            if (!imagesRef.current.some((each) => each.key === key)) return;
+            editImages(
+              imagesRef.current.map((each) =>
+                each.key === key
+                  ? shown({
+                      key,
+                      name,
+                      blob: prepared.blob,
+                      mime: prepared.mime,
+                      width: prepared.width,
+                      height: prepared.height,
+                    })
+                  : each,
+              ),
+            );
+          },
+          (error: unknown) => {
+            if (!imagesRef.current.some((each) => each.key === key)) return;
+            showImages(imagesRef.current.filter((each) => each.key !== key));
+            setStatus({ kind: "refused", message: uploadRefusal(error) });
+          },
+        )
+        .finally(() => preparing.current.delete(key));
+      preparing.current.set(key, job);
     }
   };
 
   /** Waits for a save under way, keeps what is written, and puts the window away. */
   const close = useCallback(async () => {
     await inFlight.current;
+    await allReady(preparing.current);
     await draft.current?.flush(true);
     // Shown again by the shell, the window should not still say saved.
     setStatus(null);
@@ -550,6 +597,7 @@ function Capture({
   /** As {@link close}, Memoca's own window brought out in its place, as it was left. */
   const showApp = useCallback(async () => {
     await inFlight.current;
+    await allReady(preparing.current);
     await draft.current?.flush(true);
     setStatus(null);
     window.memocaShell?.showApp?.();
@@ -562,6 +610,7 @@ function Capture({
     // (nothing else would ever load this page again).
     const hidden = async () => {
       await inFlight.current;
+      await allReady(preparing.current);
       await draft.current?.flush(true);
       setStatus(null);
       // Out again by the time the server says (and maybe being typed in):
@@ -586,14 +635,18 @@ function Capture({
   }, [windowed, close, escapeEnabled]);
 
   const save = async () => {
-    const body = quickLines(textRef.current);
-    const pictures = imagesRef.current;
-    if ((body.length === 0 && pictures.length === 0) || saving) return;
-    // Saved already, as it is: nothing to write again.
-    if (!unsaved({ text: textRef.current, images: pictures, saved: savedRef.current })) return;
-    setSaving(true);
-    setStatus(null);
+    // One at a time: ⌘ + Enter again while the first waits for an image is not another.
+    if (inFlight.current) return;
     const run = (async () => {
+      // An image still being made ready goes in as it will be once it is.
+      await allReady(preparing.current);
+      const body = quickLines(textRef.current);
+      const pictures = imagesRef.current;
+      if (body.length === 0 && pictures.length === 0) return;
+      // Saved already, as it is: nothing to write again.
+      if (!unsaved({ text: textRef.current, images: pictures, saved: savedRef.current })) return;
+      setSaving(true);
+      setStatus(null);
       try {
         // Into the note it was saved as before, while that is still there, as
         // a text editor saves a document again; or a new one, with no title:
@@ -778,7 +831,7 @@ function Capture({
             onChange={(event) => {
               const files = [...(event.target.files ?? [])];
               event.target.value = "";
-              void addFiles(files);
+              addFiles(files);
             }}
           />
           <Button
@@ -817,7 +870,7 @@ function Capture({
           if (files.length === 0) return;
           // Text that comes with them (an image copied from a page) is pasted as text too.
           if (!event.clipboardData.types.includes("text/plain")) event.preventDefault();
-          void addFiles(files);
+          addFiles(files);
         }}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes("Files")) event.preventDefault();
@@ -826,7 +879,7 @@ function Capture({
           const files = [...event.dataTransfer.files];
           if (files.length === 0) return;
           event.preventDefault();
-          void addFiles(files);
+          addFiles(files);
         }}
         onKeyDown={(event) => {
           if (composing(event.nativeEvent)) return;
@@ -860,13 +913,30 @@ function Capture({
           className="flex shrink-0 gap-2 overflow-x-auto border-t px-4 py-2"
         >
           {images.map((image) => (
-            <li key={image.key} className="relative shrink-0 pt-1.5 pr-1.5">
+            <li
+              key={image.key}
+              className="relative shrink-0 pt-1.5 pr-1.5"
+              aria-busy={image.preparing || undefined}
+              aria-label={image.preparing ? t.quick.preparing : undefined}
+            >
               {/* eslint-disable-next-line @next/next/no-img-element -- a URL of this tab's */}
               <img
                 src={image.url}
                 alt={image.name}
-                className="size-14 rounded-md border object-cover"
+                className={cn(
+                  "size-14 rounded-md border object-cover",
+                  image.preparing && "opacity-50",
+                )}
               />
+              {image.preparing ? (
+                // Over it while it is made ready; it can be taken out meanwhile.
+                <span
+                  className="pointer-events-none absolute top-1.5 left-0 flex size-14 items-center justify-center"
+                  aria-hidden
+                >
+                  <Loader2 className="size-5 animate-spin" />
+                </span>
+              ) : null}
               <button
                 type="button"
                 aria-label={t.quick.removeImage(image.name)}

@@ -33,6 +33,8 @@ const h = vi.hoisted(() => ({
   acquire: vi.fn(),
   release: vi.fn(),
   newBuild: vi.fn(),
+  prepare: vi.fn(),
+  stage: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: h.replace, push: h.push }),
@@ -47,10 +49,21 @@ vi.mock("@/lib/quick/shell", async (original) => ({
   closeQuickWindow: h.closed,
   openNoteInApp: h.opened,
 }));
+vi.mock("@/lib/media/attachments", async (original) => ({
+  ...(await original<typeof import("@/lib/media/attachments")>()),
+  prepareUpload: h.prepare,
+  stageUpload: h.stage,
+}));
 
 import { QuickCapture } from "@/components/notes/quick-capture";
+import { QuotaError } from "@/lib/media/attachments";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+
+// jsdom has no object URLs; each thumbnail is shown by one.
+let nextUrl = 0;
+URL.createObjectURL = () => `blob:test/${nextUrl++}`;
+URL.revokeObjectURL = () => {};
 
 /**
  * Lets effects, Dexie and the promises after them run: the tabs, written and
@@ -143,6 +156,16 @@ beforeEach(async () => {
   });
   h.release.mockReset().mockResolvedValue(undefined);
   h.newBuild.mockReset().mockResolvedValue(false);
+  // Made ready at once, as it came: the tests of that have it wait.
+  h.prepare
+    .mockReset()
+    .mockImplementation(async (file: File) => ({
+      blob: file,
+      mime: file.type,
+      width: 1,
+      height: 1,
+    }));
+  h.stage.mockReset().mockResolvedValue("memoca://att-1");
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -627,6 +650,127 @@ describe("the quick note's tabs", () => {
     await press(labelled("二つ目 のタブを閉じる"));
     await key({ key: "Escape" }, document.activeElement ?? document);
     expect(h.closed).not.toHaveBeenCalled();
+  });
+});
+
+describe("the quick note's images", () => {
+  type Prepared = { blob: Blob; mime: string; width: number; height: number };
+  /** The making ready of the image last pasted, finished by hand. */
+  let making: { resolve: (prepared: Prepared) => void; reject: (error: unknown) => void };
+  const READY: Prepared = { blob: new Blob(["ready"]), mime: "image/webp", width: 40, height: 30 };
+  const png = (name = "写真.png") => new File([new Uint8Array(4)], name, { type: "image/png" });
+  const thumbs = () => host.querySelectorAll("li img");
+  const busy = () => host.querySelector('li[aria-busy="true"]');
+  const remover = (name: string) =>
+    host.querySelector<HTMLButtonElement>(`button[aria-label="${name} を外す"]`)!;
+  /** The image blocks a save wrote, by their reference and name. */
+  const imagesOf = (noteId: string) =>
+    bodyFragment(docs.get(noteId)!)
+      .toArray()
+      .flatMap((group) => (group instanceof Y.XmlElement ? group.toArray() : []))
+      .map((container) => (container as Y.XmlElement).toArray()[0] as Y.XmlElement)
+      .filter((block) => block.nodeName === "image")
+      .map((image) => ({ url: image.getAttribute("url"), name: image.getAttribute("name") }));
+
+  /** Pastes files into the field, as a browser does. */
+  async function paste(...files: File[]) {
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: { files, types: ["Files"], getData: () => "" },
+    });
+    await act(async () => {
+      field().dispatchEvent(event);
+    });
+    await settle();
+  }
+  /** The making ready ends, one way or the other. */
+  async function finish(outcome: () => void) {
+    await act(async () => outcome());
+    await settle();
+  }
+
+  beforeEach(() => {
+    h.prepare.mockImplementation(
+      () => new Promise<Prepared>((resolve, reject) => (making = { resolve, reject })),
+    );
+  });
+
+  test("one pasted is shown at once, and is in the draft only once it is ready", async () => {
+    await render();
+    await type("写真つき");
+    await paste(png());
+    expect(h.prepare).toHaveBeenCalledOnce();
+    expect(busy()?.getAttribute("aria-label")).toBe("画像を準備しています");
+    expect(busy()?.querySelector("img")?.getAttribute("alt")).toBe("写真.png");
+    await pause();
+    expect((await draftOf(ME))?.images ?? []).toEqual([]);
+    await finish(() => making.resolve(READY));
+    expect(busy()).toBeNull();
+    expect(thumbs()).toHaveLength(1);
+    await pause();
+    expect((await draftOf(ME))?.images).toMatchObject([
+      { name: "写真.png", mime: "image/webp", width: 40, height: 30 },
+    ]);
+  });
+
+  test("⌘ + Enter while one is being made ready saves once it is, with the image, once", async () => {
+    await render();
+    await type("本文");
+    await paste(png());
+    await key({ key: "Enter", metaKey: true });
+    await key({ key: "Enter", metaKey: true });
+    expect(h.createNote).not.toHaveBeenCalled();
+    await finish(() => making.resolve(READY));
+    expect(h.createNote).toHaveBeenCalledOnce();
+    expect(h.stage).toHaveBeenCalledOnce();
+    expect(h.stage.mock.calls[0]![0]).toMatchObject({
+      noteId: "note-1",
+      prepared: { mime: "image/webp", width: 40, height: 30 },
+    });
+    expect(bodyOf("note-1")).toEqual(["本文", ""]);
+    expect(imagesOf("note-1")).toEqual([{ url: "memoca://att-1", name: "写真.png" }]);
+    expect(status()).toContain("保存しました");
+  });
+
+  test("one turned away goes, and the status line says why", async () => {
+    await render();
+    await paste(png());
+    expect(busy()).not.toBeNull();
+    await finish(() => making.reject(new QuotaError("quotaExceeded")));
+    expect(thumbs()).toHaveLength(0);
+    expect(status()).toContain("保存できる容量を超えました");
+    expect(button("保存").disabled).toBe(true);
+  });
+
+  test("one taken out before it is ready stays out", async () => {
+    await render();
+    await paste(png());
+    await act(async () => remover("写真.png").click());
+    await settle();
+    expect(thumbs()).toHaveLength(0);
+    await finish(() => making.resolve(READY));
+    expect(thumbs()).toHaveLength(0);
+    expect(status()).toBe("");
+    await pause();
+    expect((await draftOf(ME))?.images ?? []).toEqual([]);
+  });
+
+  test("Esc waits for one being made ready, so that the draft keeps it", async () => {
+    await render();
+    await paste(png());
+    await key({ key: "Escape" }, document);
+    expect(h.closed).not.toHaveBeenCalled();
+    await finish(() => making.resolve(READY));
+    expect(h.closed).toHaveBeenCalledOnce();
+    expect((await draftOf(ME))?.images).toHaveLength(1);
+  });
+
+  test("a file that is not an image is turned away at once", async () => {
+    await render();
+    await paste(new File(["text"], "memo.txt", { type: "text/plain" }));
+    expect(h.prepare).not.toHaveBeenCalled();
+    expect(thumbs()).toHaveLength(0);
+    expect(status()).toContain("文字と画像だけ");
   });
 });
 
