@@ -9,7 +9,7 @@ import { useSync, useSyncStatus } from "@/components/providers/sync-provider";
 import { vault } from "@/lib/crypto/vault";
 import type { SyncStatus } from "@/lib/sync/engine";
 import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
-import { repairDue } from "@/lib/vault/repair-schedule";
+import { NO_PASS_YET, type RepairSchedule, repairDue, settled } from "@/lib/vault/repair-schedule";
 
 /** How long sync is given to settle further before the pass runs. */
 const REPAIR_AFTER_MS = 2_000;
@@ -44,7 +44,7 @@ export function LockRepairs() {
     };
   }, []);
 
-  const run = useCallback(async () => {
+  const pass = useCallback(async () => {
     const report = await repairLocks(client, engine());
     if (!mounted.current) return;
     if (report.inboxUnlocked) {
@@ -90,41 +90,71 @@ export function LockRepairs() {
     unreadableSeen.current = Math.max(unreadableSeen.current, report.unreadable);
   }, [client, engine, router]);
 
+  // One pass at a time: asked for again meanwhile, it runs once more after,
+  // rather than joining the pass under way and showing its report again.
+  const inFlight = useRef(false);
+  const again = useRef(false);
+  const run = useCallback(async () => {
+    if (inFlight.current) {
+      again.current = true;
+      return;
+    }
+    inFlight.current = true;
+    try {
+      do {
+        again.current = false;
+        await pass();
+      } while (again.current && mounted.current);
+    } finally {
+      inFlight.current = false;
+    }
+  }, [pass]);
+
   // On a change of the sync status: a pass two seconds on, when sync settling
   // or the end of a catch-up calls for one (repairDue). A pass called for
   // already is left to run as it was: the status changes again within the
-  // second as a sync ends, and a pass put off by that would be lost to the
-  // ten-minute limit.
+  // second as a sync ends. It runs only if sync is still settled by then:
+  // typing resumed, it is left to the next settling (a catch-up's pass stays
+  // owed, so that one is not lost to the ten-minute limit).
+  const latest = useRef(status);
   const prevStatus = useRef<SyncStatus | null>(null);
-  const lastSettledRunAt = useRef(0);
+  const schedule = useRef<RepairSchedule>(NO_PASS_YET);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    const due = repairDue(prevStatus.current, status, lastSettledRunAt.current, Date.now());
+    latest.current = status;
+    const due = repairDue(prevStatus.current, status, schedule.current, Date.now());
     prevStatus.current = status;
-    if (!due) return;
+    schedule.current = due.schedule;
+    if (!due.run) return;
+    const kind = due.run;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       timer.current = null;
-      lastSettledRunAt.current = Date.now();
+      if (!settled(latest.current)) {
+        if (kind === "catchUp") schedule.current = { ...schedule.current, catchUpOwed: true };
+        return;
+      }
+      schedule.current = { ...schedule.current, lastSettledRunAt: Date.now() };
       void run();
     }, REPAIR_AFTER_MS);
   }, [status, run]);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);
+      timer.current = null;
+      // Mounted again (development's StrictMode): the status is seen afresh.
+      prevStatus.current = null;
     },
     [],
   );
 
-  // When the vault opens, when the network returns, and when the sealed
-  // folder names change after this was mounted: one arrived from another
-  // device, to be unsealed, or went.
+  // When the vault opens, when the network returns, and when a sealed folder
+  // name arrives from another device after this was mounted, to be unsealed
+  // (fewer of them is the pass's own doing).
   const sealedSeen = useRef(sealedNames);
   useEffect(() => {
-    if (sealedNames !== sealedSeen.current) {
-      sealedSeen.current = sealedNames;
-      void run();
-    }
+    if (sealedNames > sealedSeen.current) void run();
+    sealedSeen.current = sealedNames;
     const unsubscribe = vault.subscribe((unlocked) => unlocked && void run());
     const onOnline = () => void run();
     window.addEventListener("online", onOnline);
