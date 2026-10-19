@@ -52,6 +52,7 @@ import { bodyFragment } from "@/lib/sync/ydoc";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { pasteOwnImage } from "@/components/editor/copy-image";
 import { pasteMarkingUnreadableImages } from "@/components/editor/unreadable-images";
+import { showUploadPreview } from "@/components/editor/upload-preview";
 import { dragHandle } from "@/components/editor/drag-handle";
 import { fromTitle, linesAbove } from "@/components/editor/line-above";
 import { selectMedia } from "@/components/editor/select-media";
@@ -99,7 +100,6 @@ const OVER_MEDIA: FloatingUIOptions = {
   },
 };
 
-
 /**
  * Puts right the block a refused file leaves. BlockNote makes one before the
  * file is handed over (for a paste or a drop), or uses the empty one the
@@ -133,6 +133,17 @@ function describeFailure(error: unknown): string {
   }
   return String(error);
 }
+
+/**
+ * Resolves once what was just put on the screen has been drawn: a frame
+ * alone comes before the paint, and a task after it lands after it. Or
+ * after a moment, where no frame comes (the page hidden).
+ */
+const paintFrame = () =>
+  new Promise<void>((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+    setTimeout(resolve, 100);
+  });
 
 /**
  * The note body.
@@ -254,7 +265,12 @@ function EditorSurface({
   const uploadFile = useCallback(
     async (file: File, blockId?: string) => {
       const { me: figures, locked: lockedNow } = latest.current;
+      // An image is shown at once, from the file itself, while it is made
+      // smaller and staged; the block is drawn again with the staged file.
+      const release = showUploadPreview(editorRef.current, blockId, file);
       try {
+        // On the screen before reading and drawing the image holds the thread.
+        await paintFrame();
         // Checked before it is staged: a refusal later happens in the
         // background, with nobody to tell.
         const prepared = await prepareUpload(file, figures, { locked: lockedNow });
@@ -263,6 +279,8 @@ function EditorSurface({
         toast.error(uploadRefusal(error));
         settleRefusedBlock(editorRef.current, blockId, file);
         throw error;
+      } finally {
+        release();
       }
     },
     [noteId],

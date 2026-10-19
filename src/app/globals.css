@@ -58,8 +58,7 @@
   --font-stack-sans:
     var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Hiragino Sans",
     "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", Meiryo, sans-serif;
-  --font-stack-mono:
-    var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
+  --font-stack-mono: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo, monospace;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -386,4 +385,27 @@
 .memoca-editor .memoca-find-current {
   background-color: #f97316;
   color: #fff;
+}
+
+/* An image being added, shown at once from the file itself, dimmed, in the
+   "Loading..." box of the block BlockNote made for it, while it is made
+   smaller and staged (src/components/editor/upload-preview.ts). The box's
+   wrapper is given the block's width, as BlockNote gives it with its own
+   button in it, for the image not to run out of the note. */
+.memoca-editor
+  [data-file-block]
+  .bn-file-block-content-wrapper:has(> .bn-file-loading-preview > .memoca-upload-preview) {
+  width: 100%;
+}
+.memoca-upload-preview {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  opacity: 0.6;
+}
+.memoca-upload-preview-label {
+  display: block;
+  padding-block: 4px;
+  font-size: 0.8em;
+  color: var(--muted-foreground);
 }
