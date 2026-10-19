@@ -8,6 +8,7 @@ import {
   type Ref,
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
   useRef,
@@ -267,27 +268,30 @@ function Tabbed({
     setClosing(id);
   };
   // In the desktop shell, a text editor's keys: a browser keeps them to itself.
+  // Listened for once; what a key does is read as it is pressed, so the
+  // listener is not taken off and put back on each render.
+  const onKey = useEffectEvent((event: KeyboardEvent) => {
+    const ids = live?.tabs.ids ?? [];
+    const shown = live?.tabs.active;
+    const mod = event.metaKey || event.ctrlKey;
+    if (mod && !event.shiftKey && event.key.toLowerCase() === "t") {
+      event.preventDefault();
+      if (ids.length < MAX_TABS) open();
+    } else if (mod && !event.shiftKey && event.key.toLowerCase() === "w") {
+      event.preventDefault();
+      if (shown) void close(shown);
+    } else if (event.ctrlKey && event.key === "Tab" && shown && ids.length > 1) {
+      event.preventDefault();
+      const at = ids.indexOf(shown);
+      show(ids[(at + (event.shiftKey ? -1 : 1) + ids.length) % ids.length]!);
+    }
+  });
   useEffect(() => {
     if (!inShell()) return;
-    const onKey = (event: KeyboardEvent) => {
-      const ids = live?.tabs.ids ?? [];
-      const shown = live?.tabs.active;
-      const mod = event.metaKey || event.ctrlKey;
-      if (mod && !event.shiftKey && event.key.toLowerCase() === "t") {
-        event.preventDefault();
-        if (ids.length < MAX_TABS) open();
-      } else if (mod && !event.shiftKey && event.key.toLowerCase() === "w") {
-        event.preventDefault();
-        if (shown) void close(shown);
-      } else if (event.ctrlKey && event.key === "Tab" && shown && ids.length > 1) {
-        event.preventDefault();
-        const at = ids.indexOf(shown);
-        show(ids[(at + (event.shiftKey ? -1 : 1) + ids.length) % ids.length]!);
-      }
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  });
+    const listener = (event: KeyboardEvent) => onKey(event);
+    document.addEventListener("keydown", listener);
+    return () => document.removeEventListener("keydown", listener);
+  }, []);
 
   if (!ready || !live || !active) return null;
   const asked = closing ? tabs.find((tab) => tab.id === closing) : undefined;
@@ -394,13 +398,25 @@ function Capture({
     const ref = uploaded.current.get(image.key);
     return ref ? { ...keptImage(image), ref } : keptImage(image);
   };
-  /** Tells the tabs what it holds now, and whether all of it is saved. */
-  const report = () =>
-    onText(
-      textRef.current,
-      imagesRef.current.length,
-      unsaved({ text: textRef.current, images: imagesRef.current, saved: savedRef.current }),
-    );
+  /** What the tabs were last told of it, as they show it: its name, its images, whether it is saved. */
+  const reported = useRef<{ name: string; images: number; changed: boolean } | null>(null);
+  /**
+   * Tells the tabs what it holds now, and whether all of it is saved: only
+   * as what they show of it changes, not on every key, which would render
+   * them all again.
+   */
+  const report = () => {
+    const text = textRef.current;
+    const images = imagesRef.current.length;
+    const changed = unsaved({ text, images: imagesRef.current, saved: savedRef.current });
+    const now = { name: tabName({ text, images }), images, changed };
+    const last = reported.current;
+    if (last && last.name === now.name && last.images === images && last.changed === changed) {
+      return;
+    }
+    reported.current = now;
+    onText(text, images, changed);
+  };
   const field = useRef<HTMLTextAreaElement>(null);
   // iOS pans what is seen down to the caret as its keyboard comes up, and the
   // page, kept to what is seen, takes back just as much, the caret's line
