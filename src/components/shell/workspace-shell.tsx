@@ -35,8 +35,15 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   // The vault closes after a period of no use, counted from the last
   // activity, and says so when it does.
   useEffect(() => watchVaultActivity(), []);
-  // Temporary, in the Mac desktop app: ⌘⌥⇧I copies what the editor's input saw.
-  useEffect(() => startImeTrace(() => toast.success("入力の記録をコピーしました")), []);
+  // Temporary, in the Mac desktop app: ⌘⌥⇧I starts the input record, and again copies it.
+  useEffect(
+    () =>
+      startImeTrace({
+        onStarted: () => toast("入力の記録を始めました。もう一度 ⌘⌥⇧I を押すとコピーします"),
+        onCopied: () => toast.success("入力の記録をコピーしました"),
+      }),
+    [],
+  );
   // A reading dictionary kept on this device that is not to be kept goes.
   useEffect(() => void tidyYomi(), []);
   useEffect(

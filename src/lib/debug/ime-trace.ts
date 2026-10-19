@@ -14,13 +14,18 @@ import { SHELL_HIDDEN, inShell } from "@/lib/quick/shell";
  * handed its handlers (its own, made up from a change it read, among them)
  * and whether one took it, each transaction, and what ime-commit decided.
  * Only counts are kept of what is written: how many lines, how long the line
- * with the caret is, where in it the caret is. ⌘⌥⇧I copies it.
+ * with the caret is, where in it the caret is.
  *
  * In the quick note's window too, whose field is a plain one: there, now and
  * then, each character typed took the place of the one after the caret, and
  * none could be deleted, until the window was put away and brought out
  * again. Of a plain field, how long its text is, where its selection is, and
  * whether it is read-only; and when the window or the field had the focus.
+ *
+ * Kept only when asked for: ⌘⌥⇧I starts the record, and pressed again copies
+ * it and stops it; with localStorage's memoca:ime-trace set to 1 it is kept
+ * from the page's load. Until it is asked for, nothing of this runs on a key
+ * but the one listener for ⌘⌥⇧I.
  *
  * Temporary: to go once those are understood.
  */
@@ -30,6 +35,9 @@ type Entry = Record<string, string | number | boolean | null>;
 /** Enough for a few minutes of typing: what went wrong is copied soon after. */
 const KEEP = 3000;
 
+/** What, set to 1 in localStorage, keeps the record from the page's load. */
+const FROM_LOAD = "memoca:ime-trace";
+
 /** Where ime-commit's entries go while the record is kept; nowhere otherwise. */
 let sink: ((entry: Entry) => void) | null = null;
 
@@ -38,9 +46,25 @@ export function traceIme(entry: Entry) {
   sink?.(entry);
 }
 
-/** Where the caret is, in counts only. */
+type SomeProp = (name: string, f?: (prop: unknown) => unknown) => unknown;
+/** As much of ProseMirror's view as is read; `dom` is the editor's element. */
+type Viewish = { composing: boolean; someProp: SomeProp; dom?: Element };
+type Editorish = {
+  view: Viewish;
+  on(event: "transaction", handler: (props: { transaction: Transaction }) => void): void;
+  off(event: "transaction", handler: (props: { transaction: Transaction }) => void): void;
+};
+/** The editor whose doings are recorded: while the record is kept, and there is one. */
+let watched: Editorish | null = null;
+
+/** A plain field (the quick note's, a title), when that is what has the focus. */
+const plainField = (node: Element | null) =>
+  node instanceof HTMLTextAreaElement || node instanceof HTMLInputElement ? node : null;
+
+/** Where the caret is, in counts only: looked for in the editor, not the whole page. */
 function where(): Entry {
-  const blocks = document.querySelectorAll('.ProseMirror [data-node-type="blockContainer"]');
+  const root = watched?.view.dom ?? document;
+  const blocks = root.querySelectorAll('[data-node-type="blockContainer"]');
   const anchor = document.getSelection()?.anchorNode ?? null;
   const element = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
   const block = element?.closest('[data-node-type="blockContainer"]') ?? null;
@@ -54,16 +78,15 @@ function where(): Entry {
     up = up.parentElement;
   }
   // A plain field with the focus (the quick note's, a title): its counts.
-  const active = document.activeElement;
-  const plain =
-    active instanceof HTMLTextAreaElement || active instanceof HTMLInputElement ? active : null;
+  const plain = plainField(document.activeElement);
   return {
     blocks: blocks.length,
     at: index,
     len: own(block),
     prevLen: index > 0 ? own(blocks[index - 1]) : null,
     depth: block ? depth : null,
-    inGroup: block?.parentElement?.children.length ?? null,
+    // Its group's lines: its own parent is BlockNote's outer wrapper, it alone in it.
+    inGroup: block?.closest(".bn-block-group")?.children.length ?? null,
     fieldLen: plain ? plain.value.length : null,
     selStart: plain ? plain.selectionStart : null,
     selEnd: plain ? plain.selectionEnd : null,
@@ -117,17 +140,28 @@ function caretAfter(transaction: Transaction): Entry {
   };
 }
 
-export function startImeTrace(onCopied: () => void): () => void {
+/**
+ * Listens for ⌘⌥⇧I, which starts the record (`onStarted`) and, pressed
+ * again, copies it and stops it (`onCopied`). Nothing else is listened for
+ * until it is pressed, unless the record is to be kept from the load.
+ */
+export function startImeTrace({
+  onStarted,
+  onCopied,
+}: {
+  onStarted: () => void;
+  onCopied: () => void;
+}): () => void {
   if (typeof window === "undefined" || !inShell() || !isApple(navigator.userAgent)) {
     return () => {};
   }
-  const entries: Entry[] = [];
-  const start = performance.now();
+  let recording = false;
+  let entries: Entry[] = [];
+  let start = 0;
   const push = (entry: Entry) => {
     entries.push({ t: Math.round(performance.now() - start), ...entry });
     if (entries.length > KEEP) entries.shift();
   };
-  sink = push;
 
   /** A node as a short name: its tag, and the first of its classes or its node type. */
   const short = (node: globalThis.Node | null): string => {
@@ -141,6 +175,9 @@ export function startImeTrace(onCopied: () => void): () => void {
   };
 
   const record = (event: Event) => {
+    // The caret moving in the editor is in its transactions already: of the
+    // selection, a plain field's alone, which the overwriting is about.
+    if (event.type === "selectionchange" && !plainField(document.activeElement)) return;
     const entry: Entry = {
       t: Math.round(performance.now() - start),
       type: event.type,
@@ -169,14 +206,14 @@ export function startImeTrace(onCopied: () => void): () => void {
     queueMicrotask(() => {
       entry.prevented = event.defaultPrevented;
     });
+    // What a plain field made of it: the editor's doings are in its
+    // transactions, so the page is not gone over again for them.
     setTimeout(() => {
-      const after = where();
-      entry.blocksAfter = after.blocks;
-      entry.lenAfter = after.len;
-      entry.atAfter = after.at;
-      entry.fieldLenAfter = after.fieldLen;
-      entry.selStartAfter = after.selStart;
-      entry.selEndAfter = after.selEnd;
+      const plain = plainField(document.activeElement);
+      if (!plain) return;
+      entry.fieldLenAfter = plain.value.length;
+      entry.selStartAfter = plain.selectionStart;
+      entry.selEndAfter = plain.selectionEnd;
     }, 0);
   };
 
@@ -192,15 +229,6 @@ export function startImeTrace(onCopied: () => void): () => void {
       });
     }
   });
-
-  type SomeProp = (name: string, f?: (prop: unknown) => unknown) => unknown;
-  type Viewish = { composing: boolean; someProp: SomeProp };
-  type Editorish = {
-    view: Viewish;
-    on(event: "transaction", handler: (props: { transaction: Transaction }) => void): void;
-    off(event: "transaction", handler: (props: { transaction: Transaction }) => void): void;
-  };
-  let watched: Editorish | null = null;
 
   // What the editor itself did: each transaction's steps, by kind and size,
   // whether it came from the Yjs document, and where it left the caret.
@@ -290,8 +318,7 @@ export function startImeTrace(onCopied: () => void): () => void {
       attributeFilter: ["class", "data-is-empty-and-focused", "data-placeholder"],
     });
   };
-  const watching = setInterval(watch, 1000);
-  watch();
+  let watching: ReturnType<typeof setInterval> | null = null;
 
   const types = [
     "keydown",
@@ -305,33 +332,69 @@ export function startImeTrace(onCopied: () => void): () => void {
     "focusout",
     "selectionchange",
   ];
-  for (const type of types) document.addEventListener(type, record, true);
   // The window's own: put away and brought out by the desktop shell.
   const windowTypes = ["focus", "blur", SHELL_HIDDEN];
   const onWindow = (event: Event) => {
     if (event.target === window) push({ type: `window:${event.type}`, ...where() });
   };
-  for (const type of windowTypes) window.addEventListener(type, onWindow, true);
 
-  const copy = (event: KeyboardEvent) => {
+  /** Starts the record, afresh. */
+  const begin = () => {
+    if (recording) return;
+    recording = true;
+    entries = [];
+    start = performance.now();
+    sink = push;
+    for (const type of types) document.addEventListener(type, record, true);
+    for (const type of windowTypes) window.addEventListener(type, onWindow, true);
+    watching = setInterval(watch, 1000);
+    watch();
+  };
+  /** Stops it: nothing listened for, and the editor left as it was. */
+  const end = () => {
+    if (!recording) return;
+    recording = false;
+    sink = null;
+    if (watching !== null) clearInterval(watching);
+    watching = null;
+    mutations.disconnect();
+    watched?.off("transaction", onTransaction);
+    unwrap();
+    unwrap = () => {};
+    watched = null;
+    for (const type of types) document.removeEventListener(type, record, true);
+    for (const type of windowTypes) window.removeEventListener(type, onWindow, true);
+  };
+
+  // ⌘⌥⇧I starts the record; kept already, it is copied and stopped, before
+  // the key reaches the page, so the key itself is not in it.
+  const toggle = (event: KeyboardEvent) => {
     if (!(event.metaKey && event.altKey && event.shiftKey && event.code === "KeyI")) return;
     event.preventDefault();
+    if (!recording) {
+      begin();
+      onStarted();
+      return;
+    }
     const text = [
       `${navigator.userAgent} vendor=${navigator.vendor}`,
       ...entries.map((entry) => JSON.stringify(entry)),
     ].join("\n");
+    end();
     void navigator.clipboard.writeText(text).then(onCopied);
   };
-  window.addEventListener("keydown", copy, true);
+  window.addEventListener("keydown", toggle, true);
+
+  let fromLoad = false;
+  try {
+    fromLoad = localStorage.getItem(FROM_LOAD) === "1";
+  } catch {
+    // No storage to ask: only ⌘⌥⇧I starts it, then.
+  }
+  if (fromLoad) begin();
 
   return () => {
-    sink = null;
-    clearInterval(watching);
-    mutations.disconnect();
-    watched?.off("transaction", onTransaction);
-    unwrap();
-    for (const type of types) document.removeEventListener(type, record, true);
-    for (const type of windowTypes) window.removeEventListener(type, onWindow, true);
-    window.removeEventListener("keydown", copy, true);
+    end();
+    window.removeEventListener("keydown", toggle, true);
   };
 }

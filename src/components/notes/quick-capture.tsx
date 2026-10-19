@@ -123,8 +123,15 @@ const composing = (event: { isComposing: boolean; keyCode: number }) =>
 export function QuickCapture() {
   const { me } = useSync();
   const params = useSearchParams();
-  // Temporary, in the Mac desktop app: ⌘⌥⇧I copies what the field's input saw.
-  useEffect(() => startImeTrace(() => toast.success("入力の記録をコピーしました")), []);
+  // Temporary, in the Mac desktop app: ⌘⌥⇧I starts the input record, and again copies it.
+  useEffect(
+    () =>
+      startImeTrace({
+        onStarted: () => toast("入力の記録を始めました。もう一度 ⌘⌥⇧I を押すとコピーします"),
+        onCopied: () => toast.success("入力の記録をコピーしました"),
+      }),
+    [],
+  );
   // Android's share sheet and the home-screen shortcut arrive with the text in
   // the query string, so the first render already has it. Read once, it
   // leaves the address: the page loaded again would add it a second time.
