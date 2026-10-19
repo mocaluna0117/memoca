@@ -250,14 +250,12 @@ describe("writing WebP in the worker", () => {
     // Long past when the first image's timer would have fired.
     expect(made.at(-1)!.terminated).toBe(false);
     answer = "webp";
-    made
-      .at(-1)!
-      .say({
-        id: made.at(-1)!.posted.at(-1)!.message.id,
-        webp: new ArrayBuffer(4),
-        ms: 1,
-        heap: null,
-      });
+    made.at(-1)!.say({
+      id: made.at(-1)!.posted.at(-1)!.message.id,
+      webp: new ArrayBuffer(4),
+      ms: 1,
+      heap: null,
+    });
     expect((await next).webp?.size).toBe(4);
   });
 
@@ -345,13 +343,22 @@ describe("starting the worker ahead of an image", () => {
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     canvasWrites(false);
     prestartWebpEncoder();
-    await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(10_000);
     const report = encodeWebp(pixels(), 0.8);
     await vi.advanceTimersByTimeAsync(10);
     // Its loading is reported for this image, the first it was asked.
     expect(await report).toMatchObject({ loadMs: 3, encodeMs: 5 });
     expect(made).toHaveLength(1);
-    // Idle again from the image, not from its start.
+    // Idle is counted from the image, not from the start: 20 s on from the
+    // start, it is still up.
+    await vi.advanceTimersByTimeAsync(10_100);
+    expect(made[0]!.terminated).toBe(false);
+    // The next image goes to it too.
+    const next = encodeWebp(pixels(), 0.8);
+    await vi.advanceTimersByTimeAsync(10);
+    expect(await next).toMatchObject({ encodeMs: 5 });
+    expect(made).toHaveLength(1);
+    // And it is let go 20 s after that one.
     await vi.advanceTimersByTimeAsync(19_000);
     expect(made[0]!.terminated).toBe(false);
     await vi.advanceTimersByTimeAsync(1_100);

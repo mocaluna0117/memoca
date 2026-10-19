@@ -37,7 +37,10 @@ export function showUploadPreview(
   const loading = editor?.domElement?.querySelector<HTMLElement>(
     `[data-id="${CSS.escape(blockId)}"] ${LOADING}`,
   );
-  if (!loading) return nothing;
+  // The block's own, not that of a block nested under it still loading.
+  if (!loading || loading.closest("[data-id]")?.getAttribute("data-id") !== blockId) {
+    return nothing;
+  }
   const url = URL.createObjectURL(file);
   const image = document.createElement("img");
   image.className = "memoca-upload-preview";
