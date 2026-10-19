@@ -56,6 +56,8 @@ type Editorish = {
 };
 /** The editor whose doings are recorded: while the record is kept, and there is one. */
 let watched: Editorish | null = null;
+/** Its element on the page: the editor's own view may be gone before the next look. */
+let watchedDom: Element | null = null;
 
 /** A plain field (the quick note's, a title), when that is what has the focus. */
 const plainField = (node: Element | null) =>
@@ -63,8 +65,10 @@ const plainField = (node: Element | null) =>
 
 /** Where the caret is, in counts only: looked for in the editor, not the whole page. */
 function where(): Entry {
-  const root = watched?.view.dom ?? document;
-  const blocks = root.querySelectorAll('[data-node-type="blockContainer"]');
+  // In the editor recorded, while its element is on the page; else wherever one is.
+  const blocks = watchedDom?.isConnected
+    ? watchedDom.querySelectorAll('[data-node-type="blockContainer"]')
+    : document.querySelectorAll('.ProseMirror [data-node-type="blockContainer"]');
   const anchor = document.getSelection()?.anchorNode ?? null;
   const element = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
   const block = element?.closest('[data-node-type="blockContainer"]') ?? null;
@@ -307,6 +311,7 @@ export function startImeTrace({
     unwrap = () => {};
     mutations.disconnect();
     watched = editor;
+    watchedDom = dom && editor ? dom : null;
     if (!dom || !editor) return;
     editor.on("transaction", onTransaction);
     wrap(editor.view);
@@ -362,12 +367,13 @@ export function startImeTrace({
     unwrap();
     unwrap = () => {};
     watched = null;
+    watchedDom = null;
     for (const type of types) document.removeEventListener(type, record, true);
     for (const type of windowTypes) window.removeEventListener(type, onWindow, true);
   };
 
-  // ⌘⌥⇧I starts the record; kept already, it is copied and stopped, before
-  // the key reaches the page, so the key itself is not in it.
+  // ⌘⌥⇧I starts the record; kept already, it is copied, and stopped once
+  // the clipboard has it (refused the record goes on, to be copied again).
   const toggle = (event: KeyboardEvent) => {
     if (!(event.metaKey && event.altKey && event.shiftKey && event.code === "KeyI")) return;
     event.preventDefault();
@@ -380,8 +386,13 @@ export function startImeTrace({
       `${navigator.userAgent} vendor=${navigator.vendor}`,
       ...entries.map((entry) => JSON.stringify(entry)),
     ].join("\n");
-    end();
-    void navigator.clipboard.writeText(text).then(onCopied);
+    void navigator.clipboard.writeText(text).then(
+      () => {
+        end();
+        onCopied();
+      },
+      (error: unknown) => console.error("Memoca: the input record could not be copied", error),
+    );
   };
   window.addEventListener("keydown", toggle, true);
 
