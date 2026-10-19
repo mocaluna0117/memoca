@@ -12,7 +12,13 @@ import {
   hasTransparency,
   mayHideTransparency,
 } from "./crop";
-import { type WorkerReport, canvasWritesWebp, encodeWebp, webpWorkerAvailable } from "./webp-encoder";
+import {
+  type WorkerReport,
+  canvasWritesWebp,
+  encodeWebp,
+  prestartWebpEncoder,
+  webpWorkerAvailable,
+} from "./webp-encoder";
 
 /**
  * For an image still over the limit for one image: smaller long edges, each
@@ -129,6 +135,9 @@ export async function prepareImage(
     return { blob: file, mime: file.type, width: 0, height: 0 };
   }
 
+  // Where the canvas cannot write WebP, the worker is started now, and
+  // loads while the image is read and drawn.
+  prestartWebpEncoder();
   const reading = performance.now();
   const bitmap = await createImageBitmap(file).catch(() => null);
   if (!bitmap) {
@@ -155,7 +164,14 @@ export async function prepareImage(
   let best: PreparedImage | null = null;
   try {
     for (const [step, size] of fits.entries()) {
-      const written = await writeAt(bitmap, size, file.type, quality - step * QUALITY_STEP, step, opts);
+      const written = await writeAt(
+        bitmap,
+        size,
+        file.type,
+        quality - step * QUALITY_STEP,
+        step,
+        opts,
+      );
       if (!written) break;
       if (!best || written.blob.size < best.blob.size) best = written;
       if (!mustFit || !over(best.blob.size)) break;
@@ -238,7 +254,17 @@ export async function cropImage(source: Blob, crop: Rect): Promise<CroppedImage>
     throw new Error("canvas unavailable");
   }
   context.imageSmoothingQuality = "high";
-  context.drawImage(bitmap, kept.x, kept.y, kept.width, kept.height, 0, 0, output.width, output.height);
+  context.drawImage(
+    bitmap,
+    kept.x,
+    kept.y,
+    kept.width,
+    kept.height,
+    0,
+    0,
+    output.width,
+    output.height,
+  );
   bitmap.close();
 
   const blob = (await encodeCanvas(canvas, context, source.type, quality))?.blob;
@@ -261,8 +287,22 @@ function flatnessOf(bitmap: ImageBitmap, area: Rect): number | null {
   const context = canvas.getContext("2d", { willReadFrequently: true });
   if (!context) return null;
   try {
-    context.drawImage(bitmap, area.x, area.y, area.width, area.height, 0, 0, size.width, size.height);
-    return flatShare(context.getImageData(0, 0, size.width, size.height).data, size.width, size.height);
+    context.drawImage(
+      bitmap,
+      area.x,
+      area.y,
+      area.width,
+      area.height,
+      0,
+      0,
+      size.width,
+      size.height,
+    );
+    return flatShare(
+      context.getImageData(0, 0, size.width, size.height).data,
+      size.width,
+      size.height,
+    );
   } catch {
     return null;
   }
@@ -306,7 +346,8 @@ async function encodeCanvas(
   }
   transparent ??= mayHideTransparency(sourceMime) && seeThrough(canvas, context);
   const fallback = fallbackEncoding(sourceMime, transparent);
-  const fallbackQuality = fallback.quality === undefined ? undefined : fallback.quality - step * QUALITY_STEP;
+  const fallbackQuality =
+    fallback.quality === undefined ? undefined : fallback.quality - step * QUALITY_STEP;
   const blob = await toBlob(canvas, fallback.type, fallbackQuality);
   return blob ? { blob, by: "fallback", details } : null;
 }

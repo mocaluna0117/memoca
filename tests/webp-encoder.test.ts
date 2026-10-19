@@ -6,6 +6,7 @@ import {
   WEBP_ASSET_VERSION,
   encodeWebp,
   forgetWebpSupport,
+  prestartWebpEncoder,
   webpWorkerAvailable,
   webpWorkerState,
 } from "@/lib/media/webp-encoder";
@@ -32,7 +33,8 @@ class FakeWorker {
     const how = loads;
     queueMicrotask(() => {
       if (how === "breaks") this.onerror?.(new Event("error"));
-      else this.say(how === "ready" ? { ready: true, loadMs: 3 } : { ready: false, error: "offline" });
+      else
+        this.say(how === "ready" ? { ready: true, loadMs: 3 } : { ready: false, error: "offline" });
     });
   }
   say(data: unknown) {
@@ -43,7 +45,12 @@ class FakeWorker {
     if (answer === "nothing") return;
     this.say(
       answer === "webp"
-        ? { id: message.id, webp: new TextEncoder().encode("RIFF....WEBP").buffer, ms: 5, heap: 1_234 }
+        ? {
+            id: message.id,
+            webp: new TextEncoder().encode("RIFF....WEBP").buffer,
+            ms: 5,
+            heap: 1_234,
+          }
         : { id: message.id, error: "encoding failed" },
     );
   }
@@ -74,7 +81,16 @@ afterEach(() => {
   setVisibility("visible");
   vi.useRealTimers();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
+
+/** What the canvas says when asked whether it writes WebP, as jsdom's cannot be asked. */
+const canvasWrites = (webp: boolean) =>
+  vi
+    .spyOn(HTMLCanvasElement.prototype, "toBlob")
+    .mockImplementation((callback) =>
+      callback(new Blob([new Uint8Array(1)], { type: webp ? "image/webp" : "image/png" })),
+    );
 
 describe("writing WebP in the worker", () => {
   test("hands the pixels over rather than copying them, and says where the time went", async () => {
@@ -113,7 +129,10 @@ describe("writing WebP in the worker", () => {
 
   test("an image that takes too long falls back, and the stuck worker is let go", async () => {
     answer = "nothing";
-    expect(await encodeWebp(pixels(), 0.8, { timeoutMs: 20 })).toMatchObject({ webp: null, issue: "timed out" });
+    expect(await encodeWebp(pixels(), 0.8, { timeoutMs: 20 })).toMatchObject({
+      webp: null,
+      issue: "timed out",
+    });
     expect(made[0]!.terminated).toBe(true);
     answer = "webp";
     expect((await encodeWebp(pixels(), 0.8)).webp?.type).toBe("image/webp");
@@ -147,7 +166,12 @@ describe("writing WebP in the worker", () => {
     await later(40);
     const current = made.at(-1)!;
     expect(current.terminated).toBe(false);
-    current.say({ id: current.posted.at(-1)!.message.id, webp: new ArrayBuffer(4), ms: 1, heap: null });
+    current.say({
+      id: current.posted.at(-1)!.message.id,
+      webp: new ArrayBuffer(4),
+      ms: 1,
+      heap: null,
+    });
     expect((await next).webp?.size).toBe(4);
   });
 
@@ -165,6 +189,25 @@ describe("writing WebP in the worker", () => {
     const sent = sentCount();
     expect((await encodeWebp(pixels(), 0.8)).webp).toBeNull();
     expect(sentCount()).toBe(sent);
+  });
+
+  test("after a while it is asked again: one that works starts the count again, one that fails not", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    answer = "error";
+    await encodeWebp(pixels(), 0.8);
+    await encodeWebp(pixels(), 0.8);
+    expect(webpWorkerAvailable()).toBe(false);
+    vi.setSystemTime(Date.now() + 5 * 60_000 - 1);
+    expect(webpWorkerAvailable()).toBe(false);
+    vi.setSystemTime(Date.now() + 1);
+    expect(webpWorkerAvailable()).toBe(true);
+    expect((await encodeWebp(pixels(), 0.8)).issue).toBe("encoding failed");
+    // Failed again: not for another while.
+    expect(webpWorkerState()).toMatchObject({ available: false, failures: 3 });
+    vi.setSystemTime(Date.now() + 5 * 60_000);
+    answer = "webp";
+    expect((await encodeWebp(pixels(), 0.8)).webp?.type).toBe("image/webp");
+    expect(webpWorkerState()).toMatchObject({ available: true, failures: 0 });
   });
 
   test("a worker that failed an image is not used for the next", async () => {
@@ -207,7 +250,14 @@ describe("writing WebP in the worker", () => {
     // Long past when the first image's timer would have fired.
     expect(made.at(-1)!.terminated).toBe(false);
     answer = "webp";
-    made.at(-1)!.say({ id: made.at(-1)!.posted.at(-1)!.message.id, webp: new ArrayBuffer(4), ms: 1, heap: null });
+    made
+      .at(-1)!
+      .say({
+        id: made.at(-1)!.posted.at(-1)!.message.id,
+        webp: new ArrayBuffer(4),
+        ms: 1,
+        heap: null,
+      });
     expect((await next).webp?.size).toBe(4);
   });
 
@@ -222,7 +272,12 @@ describe("writing WebP in the worker", () => {
     const current = made.at(-1)!;
     expect(current).not.toBe(old);
     expect(current.terminated).toBe(false);
-    current.say({ id: current.posted.at(-1)!.message.id, webp: new ArrayBuffer(4), ms: 1, heap: null });
+    current.say({
+      id: current.posted.at(-1)!.message.id,
+      webp: new ArrayBuffer(4),
+      ms: 1,
+      heap: null,
+    });
     expect((await next).webp?.size).toBe(4);
   });
 
@@ -263,6 +318,61 @@ describe("writing WebP in the worker", () => {
     );
     expect((await encodeWebp(pixels(), 0.8)).webp).toBeNull();
     expect(webpWorkerState().loadBlocked).toBe(true);
+  });
+});
+
+describe("starting the worker ahead of an image", () => {
+  test("where the canvas cannot write WebP, one worker is made, sent nothing, and let go once idle", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    canvasWrites(false);
+    prestartWebpEncoder();
+    prestartWebpEncoder();
+    // Not before the canvas has said.
+    expect(made).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(made).toHaveLength(1);
+    prestartWebpEncoder();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(made).toHaveLength(1);
+    expect(sentCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(made[0]!.terminated).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(made[0]!.terminated).toBe(true);
+  });
+
+  test("an image that comes meanwhile goes to the worker already up, which stays for the next", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    canvasWrites(false);
+    prestartWebpEncoder();
+    await vi.advanceTimersByTimeAsync(0);
+    const report = encodeWebp(pixels(), 0.8);
+    await vi.advanceTimersByTimeAsync(10);
+    // Its loading is reported for this image, the first it was asked.
+    expect(await report).toMatchObject({ loadMs: 3, encodeMs: 5 });
+    expect(made).toHaveLength(1);
+    // Idle again from the image, not from its start.
+    await vi.advanceTimersByTimeAsync(19_000);
+    expect(made[0]!.terminated).toBe(false);
+    await vi.advanceTimersByTimeAsync(1_100);
+    expect(made[0]!.terminated).toBe(true);
+  });
+
+  test("where the canvas writes WebP, or the worker is not to be asked, nothing is started", async () => {
+    canvasWrites(true);
+    prestartWebpEncoder();
+    await later(0);
+    expect(made).toHaveLength(0);
+    forgetWebpSupport();
+    canvasWrites(false);
+    answer = "error";
+    await encodeWebp(pixels(), 0.8);
+    await encodeWebp(pixels(), 0.8);
+    expect(webpWorkerAvailable()).toBe(false);
+    const count = made.length;
+    prestartWebpEncoder();
+    await later(0);
+    expect(made).toHaveLength(count);
   });
 });
 

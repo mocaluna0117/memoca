@@ -34,8 +34,10 @@ const WASM_URL = `/webp/${WEBP_ASSET_VERSION}/webp_enc.wasm`;
 const ENCODE_TIMEOUT_MS = 8_000;
 /** Longest the encoder may take to download and start, likewise. */
 const LOAD_TIMEOUT_MS = 30_000;
-/** Failed encodings in a row after which the worker is not asked again this session. */
+/** Failed encodings in a row after which the worker is not asked again for a while. */
 const GIVE_UP_AFTER = 2;
+/** How long that while is: a machine with no room then (a meeting) may have some later. */
+const RETRY_AFTER_MS = 5 * 60_000;
 /** A worker left idle this long is let go, with the memory its encoder holds. */
 const IDLE_MS = 20_000;
 
@@ -55,7 +57,9 @@ export type WorkerReport = {
 };
 
 type Ready = { ready: true; loadMs: number } | { ready: false; error: string };
-type Reply = { id: number; webp: ArrayBuffer; ms: number; heap: number | null } | { id: number; error: string };
+type Reply =
+  | { id: number; webp: ArrayBuffer; ms: number; heap: number | null }
+  | { id: number; error: string };
 
 type Running = {
   worker: Worker;
@@ -67,6 +71,8 @@ type Running = {
 
 let running: Running | null = null;
 let failures = 0;
+/** When the last of them was, for the worker to be asked again after RETRY_AFTER_MS. */
+let failedAt = 0;
 /** The encoder could not be loaded: not tried again until the network is back. */
 let loadBlocked = false;
 let idle: ReturnType<typeof setTimeout> | null = null;
@@ -81,11 +87,11 @@ if (typeof window !== "undefined") {
   });
 }
 
-/** Whether asking the worker is worth it here: it can run, and has not kept failing. */
+/** Whether asking the worker is worth it here: it can run, and has not kept failing, or not lately. */
 export function webpWorkerAvailable(): boolean {
   return (
     !loadBlocked &&
-    failures < GIVE_UP_AFTER &&
+    (failures < GIVE_UP_AFTER || Date.now() - failedAt >= RETRY_AFTER_MS) &&
     typeof Worker !== "undefined" &&
     typeof WebAssembly !== "undefined"
   );
@@ -252,7 +258,13 @@ async function encodeOnce(
     try {
       const pixels = image.data.buffer as ArrayBuffer;
       encoder.worker.postMessage(
-        { id, width: image.width, height: image.height, pixels, quality: Math.round(quality * 100) },
+        {
+          id,
+          width: image.width,
+          height: image.height,
+          pixels,
+          quality: Math.round(quality * 100),
+        },
         [pixels],
       );
     } catch (error) {
@@ -264,14 +276,21 @@ async function encodeOnce(
 
   if (running === encoder) idle = setTimeout(stopWorker, IDLE_MS);
   if (!reply || "error" in reply) {
-    if (!trial) failures += 1;
+    if (!trial) {
+      failures += 1;
+      failedAt = Date.now();
+    }
     // A worker that failed an image is not trusted with the next one.
     if (reply) stopWorker();
     return {
       webp: null,
       waitedMs,
       loadMs,
-      issue: timedOut ? "timed out" : reply && "error" in reply ? reply.error : "the encoder stopped",
+      issue: timedOut
+        ? "timed out"
+        : reply && "error" in reply
+          ? reply.error
+          : "the encoder stopped",
     };
   }
   failures = 0;
@@ -295,7 +314,28 @@ export async function warmWebpEncoder(): Promise<void> {
   if (warmed || typeof navigator === "undefined" || !navigator.onLine) return;
   if (await canvasWritesWebp()) return;
   warmed = true;
-  await Promise.all([fetch(WORKER_URL), fetch(WASM_URL)].map((request) => request.catch(() => undefined)));
+  await Promise.all(
+    [fetch(WORKER_URL), fetch(WASM_URL)].map((request) => request.catch(() => undefined)),
+  );
+}
+
+/**
+ * Starts the worker ahead of an image's pixels, where the canvas cannot
+ * write WebP: making a worker, fetching its script and compiling the
+ * encoder take a few hundred milliseconds, overlapped now with the image
+ * being read and drawn rather than paid after them. A worker is let go
+ * once idle for IDLE_MS, so almost every image added in a meeting paid
+ * that; one started here and then sent nothing is let go the same way.
+ */
+export function prestartWebpEncoder(): void {
+  if (!webpWorkerAvailable() || running) return;
+  void canvasWritesWebp().then((ok) => {
+    if (ok || running || !webpWorkerAvailable()) return;
+    if (startWorker()) {
+      if (idle) clearTimeout(idle);
+      idle = setTimeout(stopWorker, IDLE_MS);
+    }
+  });
 }
 
 /** Forgets what was found out, as if the page had just loaded: for tests. */
@@ -303,6 +343,7 @@ export function forgetWebpSupport(): void {
   canvasWebp = null;
   stopWorker();
   failures = 0;
+  failedAt = 0;
   loadBlocked = false;
   warmed = false;
   queue = Promise.resolve();
