@@ -379,6 +379,17 @@ Q4〜D0 と、1 回目のレビューで直したもの（Opus 3 人：安全、
 - 金庫：Mac では、署名がないのでパスキーは使えない。パスワードで開く。
 - CI（Windows）：即席メモの窓の確認のあと、`--app` で起動し、2 つ目のプロセスが残らないことと、全体のウィンドウが `/sign-in?next=/app` で殻用のログイン画面と橋渡し（7 つのコマンド）を持つことを見る。
 
+### ホットキーで出した Memoca 全体のウィンドウが前に出ない・最初のクリックが効かない・即席メモを隠すと Memoca が Dock に残る（2026-10-19、0.4.7）
+
+オーナーの Mac（macOS 26.5）で、Zoom や Meet の最中に ⌘⇧M（オーナーの設定では全体のウィンドウのホットキー）を押しても出ない（何回か押すと出る）、出た直後にフォルダを押しても 2 回押さないと開かない、即席メモを隠したあと Dock と ⌘Tab に Memoca が残り、選ぶと全体のウィンドウが戻ってくる、と言われた。
+
+- 原因（前に出ない・最初のクリック）：macOS 14 から、アプリをアクティブにするのは「頼みごと」で、システムが断ることがある（cooperative activation。Apple のリリースノートと WWDC23）。tao の `set_focus` は `makeKeyAndOrderFront` と非推奨の `activateIgnoringOtherApps:` を 1 回送るだけで、確かめも頼み直しもなく、窓が最小化中・見えていないときは何も頼まない。`put_away` は `app.hide()` するのに `bring_out` は unhide しないので、閉じたあとの表示はアクティブ化が通ることに全面的に頼っていた。さらに、ピン留めしていない即席メモが key のまま ⌘⇧M を押すと、全体のウィンドウが key になった瞬間に即席メモの blur が `window::hide` → `app.hide()` を呼び、出したばかりの全体のウィンドウごと隠れていた（`commands::show_app` は先に即席メモを片付けていたが、ホットキーと `open` にはその保護がなかった）。`is_in_use` が key だけを見ていたので、別のデスクトップ（Space）にある窓は 2 回目で見えないまま隠れた。非アクティブな窓への最初のクリックは、WebKit（`WebPage::requestAcceptsFirstMouse`）がスクロールバーと選択中テキストのドラッグ以外は通さず、アプリをアクティブにするだけ。
+- 原因（Dock に残る）：⌘⇧M の片付けは unified log で 34 回とも正常（13 ms 以内に前のアプリが前面、Dock がタイルを作り直す）。残るのは即席メモの経路で、ほかのアプリから即席メモを出した（`CameFromApp=false`）あと Esc などで隠すと、`window::hide` の `app.hide()` が見えていた全体のウィンドウも一緒に隠すが Regular のままなので、Dock と ⌘Tab に窓なしの Memoca が残り、次に即席メモを出す `unhide` で戻っていた。⌘H（`PredefinedMenuItem::hide`）も同じ。
+- 直し方（`activation.rs`）：全体のウィンドウは 1 ターンで Regular → `unhideWithoutActivation` → `unminimize` → `show` → 頼む（`activateIgnoringOtherApps:` と、14 以上では `activate()` も。11〜13 では未知のセレクタで abort するので `NSProcessInfo` で判定）。そのあと別のスレッドから 0・50・150・400 ms に主スレッドで見直し（800 ms は記録だけ）、`isActive && isKeyWindow && isOnActiveSpace` でなければ unhide・`makeKeyAndOrderFront`・頼み直し、まだ非アクティブなら `orderFrontRegardless` で少なくとも前に出す。見直しは世代番号で、どちらかの窓を出す・片付けるたびに無効になる（片付けた窓が遅れて戻らない、即席メモから key を奪わない）。一度アクティブになったあと非アクティブなら、人が移ったので取り返さない。何を見て何をするかは純粋関数（`follow_up`）にして `cargo test`。`open`／`open_at` はピン留めしていない即席メモを先に片付ける（`quick_note_away`）。`is_in_use` は active・key・`isOnActiveSpace`。全体のウィンドウは `accept_first_mouse(true)`（非アクティブでも最初のクリックがページに届く）。`put_away` の順序（orderOut → Accessory → `app.hide()`）はログで正常だったので変えていない。
+- 直し方（Dock に残る）：`window::hide` は、即席メモを出す前に全体のウィンドウを使っておらず（`CameFromApp=false`）、いまも使っていない（クリックで key にしたのではない）なら、全体のウィンドウが出ていれば `app_window::hide` で片付ける（Accessory ＋ `app.hide()`。⌘⇧M で戻る）。⌘H は独自の項目にして、即席メモと全体のウィンドウの両方を片付ける。
+- 確かめ：`activation::tests`。実機は `open /Applications/Memoca.app --stderr ~/memoca.log` で起動し、`Memoca: window look n` の行で、どの見直しで active・key になったかを読む。Zoom から ⌘⇧M → 1 回で前に出てフォルダが 1 クリックで開く、⌘⇧M で消える（`lsappinfo info -only ApplicationType -app io.github.mocaluna0117.memoca` が `UIElement`）、即席メモが key のまま ⌘⇧M、Zoom のフルスクリーンから ⌘⇧M、最小化から ⌘⇧M、300 ms 以内に 2 回、Zoom から ⌘M → Esc で Dock に残らない。
+- 決めなかったこと：即席メモの `window::show` には同じ見直しを入れていない（報告は全体のウィンドウだけ）。`collectionBehavior`（別の Space から呼ぶときに移す）は変えていない。既定の ⌘⇧M は Zoom の「ミニマルウィンドウに切り替え」と同じで、Carbon のホットキーは非排他なので Zoom 側でグローバルにしていると両方に届くが、既定は変えず docs に書いた。
+
 ### Windows で Memoca 全体のウィンドウを開くとアプリが固まる（2026-10-04、0.4.4）
 
 オーナーの Windows（0.4.1）で、即席メモの ×・Esc・「Memoca を開く」・全体のウィンドウの Q が効かず、トレイの右クリックも反応しなくなった。
