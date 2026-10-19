@@ -14,6 +14,12 @@ import { ORIGIN, extractText, firstLine } from "./ydoc";
 
 /** Local edits are batched for this long before becoming one update row. */
 const FLUSH_MS = 500;
+/**
+ * A note typed in has its updatedAt (its place in the lists, and the time
+ * they show) written this often, rather than with every flush: each write
+ * runs every list that shows the note again.
+ */
+export const STAMP_EVERY_MS = 10_000;
 
 type Handle = {
   noteId: string;
@@ -24,6 +30,10 @@ type Handle = {
   /** The write under way, if one is: the next waits for it. */
   writing: Promise<void> | null;
   timer: ReturnType<typeof setTimeout> | null;
+  /** When the note's updatedAt was last written for edits made here. */
+  stampedAt: number;
+  /** The write of it due for the edits since, while one waits. */
+  stampTimer: ReturnType<typeof setTimeout> | null;
   detach: () => void;
 };
 
@@ -225,18 +235,23 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
 
   if (!note.locked) {
     const preview = firstLine(text, 160);
+    const now = Date.now();
     if (preview !== note.preview) {
       // Sent on its own, never bundled with the title: this runs on every
       // meaningful body edit, and `note` was read before the flush, so
       // resending a title from here would overwrite a rename made in between.
-      const { stamp } = await import("./clock");
+      const { stamp: clockStamp } = await import("./clock");
       const { deviceId } = await import("@/lib/db/meta");
-      const ts = stamp(await deviceId());
+      const ts = clockStamp(await deviceId());
       await database.notes.update(handle.noteId, {
         preview,
-        updatedAt: Date.now(),
+        updatedAt: now,
         ts: { ...note.ts, preview: ts },
       });
+      // Stamped with it: a write due for the edits before has nothing to add.
+      if (handle.stampTimer) clearTimeout(handle.stampTimer);
+      handle.stampTimer = null;
+      handle.stampedAt = now;
       await enqueue({
         kind: "note",
         entityId: handle.noteId,
@@ -246,11 +261,38 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
           preview: { value: preview, ts },
         },
       });
-    } else {
-      await database.notes.update(handle.noteId, { updatedAt: Date.now() });
+    } else if (now - handle.stampedAt >= STAMP_EVERY_MS) {
+      await database.notes.update(handle.noteId, { updatedAt: now });
+      handle.stampedAt = now;
+    } else if (!handle.stampTimer) {
+      // Within STAMP_EVERY_MS of the last: written once that is up, for
+      // these edits and any flushed before then. A note opened afresh is
+      // stamped by its first flush, so the lists put it first at once.
+      handle.stampTimer = setTimeout(
+        () => void stamp(handle),
+        handle.stampedAt + STAMP_EVERY_MS - now,
+      );
     }
   }
   announce(handle.noteId);
+}
+
+/**
+ * Writes the note's updatedAt now, for the edits flushed since it was last
+ * written: once STAMP_EVERY_MS is up, or as the note closes before that.
+ */
+async function stamp(handle: Handle): Promise<void> {
+  if (handle.stampTimer) clearTimeout(handle.stampTimer);
+  handle.stampTimer = null;
+  // Closed, and opened again meanwhile: the new document stamps for itself.
+  if (handles.get(handle.noteId) !== handle) return;
+  const database = db();
+  const note = await database.notes.get(handle.noteId);
+  // Gone, or locked since: as a flush leaves it.
+  if (!note || note.locked) return;
+  const now = Date.now();
+  handle.stampedAt = now;
+  await database.notes.update(handle.noteId, { updatedAt: now });
 }
 
 /**
@@ -321,6 +363,8 @@ async function openHandle(noteId: string): Promise<Handle> {
     buffer: [],
     writing: null,
     timer: null,
+    stampedAt: 0,
+    stampTimer: null,
     detach: () => {},
   };
 
@@ -375,6 +419,8 @@ export async function releaseDoc(noteId: string): Promise<void> {
   // Opened again while its last edits were being written: someone is using
   // it, so it stays.
   if (handle.refs > 0) return;
+  // The updatedAt write due for its last edits: now, not once it is gone.
+  if (handle.stampTimer) await stamp(handle);
   handle.detach();
   handle.doc.destroy();
   if (handles.get(noteId) === handle) handles.delete(noteId);
@@ -514,7 +560,10 @@ export async function withStoredDoc<T>(
  * The note as the server has it, without what this device has yet to send:
  * as it was before the edits now going out (see lib/sync/versions).
  */
-export async function withSentDoc<T>(noteId: string, fn: (doc: Y.Doc) => Promise<T> | T): Promise<T> {
+export async function withSentDoc<T>(
+  noteId: string,
+  fn: (doc: Y.Doc) => Promise<T> | T,
+): Promise<T> {
   const doc = new Y.Doc();
   try {
     const note = await db().notes.get(noteId);

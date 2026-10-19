@@ -4,6 +4,7 @@ import * as Y from "yjs";
 import { db, resetLocalData } from "@/lib/db";
 import { appendParagraphs } from "@/lib/quick/body";
 import {
+  STAMP_EVERY_MS,
   acquireDoc,
   flushAll,
   flushDoc,
@@ -243,5 +244,98 @@ describe("an edit that could not be stored", () => {
     expect(await saved()).toBe(1);
     expect((await elsewhere()).getText("t").toString()).toBe("一");
     await releaseDoc("n1");
+  });
+});
+
+describe("the note's updatedAt while it is typed in", () => {
+  const FLUSH_MS = 500;
+  const updatedAt = async () => (await db().notes.get("n1"))!.updatedAt;
+  /** Lets the writes a flush or a stamp started reach storage (setImmediate stays real). */
+  const settle = async () => {
+    for (let i = 0; i < 40; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  };
+  /** The usual short wait, and what it writes. */
+  const flushed = async () => {
+    await vi.advanceTimersByTimeAsync(FLUSH_MS);
+    await settle();
+  };
+
+  beforeEach(async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] });
+    // Its first line is its preview already: a flush writes the stamp alone.
+    await db().notes.update("n1", { preview: "" });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("is written by the first flush, and not by one half a second on", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    await flushed();
+    const first = await updatedAt();
+    expect(first).toBe(Date.now());
+
+    doc.getText("t").insert(1, "二");
+    await flushed();
+    expect(await updatedAt()).toBe(first);
+  });
+
+  test("the edits after it are stamped once ten seconds are up", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    await flushed();
+    const first = await updatedAt();
+    doc.getText("t").insert(1, "二");
+    await flushed();
+
+    await vi.advanceTimersByTimeAsync(STAMP_EVERY_MS - FLUSH_MS - 1);
+    await settle();
+    expect(await updatedAt()).toBe(first);
+    await vi.advanceTimersByTimeAsync(1);
+    await settle();
+    expect(await updatedAt()).toBe(first + STAMP_EVERY_MS);
+  });
+
+  test("closed with such a write still to come, it is written at once", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    await flushed();
+    const first = await updatedAt();
+    doc.getText("t").insert(1, "二");
+    await flushed();
+    await vi.advanceTimersByTimeAsync(1_000);
+
+    await releaseDoc("n1");
+    expect(openDoc("n1")).toBeUndefined();
+    expect(await updatedAt()).toBe(Date.now());
+    expect(await updatedAt()).toBe(first + 1_500);
+  });
+
+  test("a changed first line is written at once, whenever the last was", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    await flushed();
+    const first = await updatedAt();
+
+    appendParagraphs(doc, ["本文"]);
+    await flushed();
+    expect((await db().notes.get("n1"))?.preview).toBe("本文");
+    expect(await updatedAt()).toBe(first + FLUSH_MS);
+  });
+
+  test("opened again, it is written by the first flush, however recent the last", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    await flushed();
+    const first = await updatedAt();
+    await releaseDoc("n1");
+
+    const again = await acquireDoc("n1");
+    expect(again).not.toBe(doc);
+    again.getText("t").insert(0, "二");
+    await flushed();
+    expect(await updatedAt()).toBe(first + FLUSH_MS);
   });
 });
