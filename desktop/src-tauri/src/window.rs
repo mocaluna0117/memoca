@@ -5,7 +5,7 @@
 
 use crate::screen::{self, Area};
 use crate::settings::{Corner, Store};
-use crate::{app_window, sign_in};
+use crate::{activation, app_window, sign_in};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -308,6 +308,9 @@ fn place(app: &AppHandle, window: &WebviewWindow, place: &Place) {
 /// (pinned, say, and moved by hand) stays where it is.
 pub fn show(app: &AppHandle, where_: Place) {
     let Some(window) = window(app) else { return };
+    // Any look at Memoca's own window under way is over (activation.rs):
+    // this one takes the keyboard.
+    activation::begin();
     if !window.is_visible().unwrap_or(false) {
         app.state::<CameFromApp>()
             .0
@@ -345,12 +348,20 @@ pub fn show(app: &AppHandle, where_: Place) {
 /// sight.
 pub fn hide(app: &AppHandle) {
     if put_away(app) {
+        // Any look at Memoca's own window under way is over (activation.rs).
+        activation::begin();
         // On a Mac, the app in use before is the one the keyboard goes back
-        // to only once Memoca is hidden: Memoca's own window too, unless it
-        // was the one in use.
+        // to only once Memoca is hidden: unless Memoca's own window was the
+        // one in use before, or is now (clicked, say). Out but not in use,
+        // it is put away too, rather than hidden with the app and left in
+        // the Dock and ⌘Tab with no window to show.
         #[cfg(target_os = "macos")]
-        if !app.state::<CameFromApp>().0.load(Ordering::Relaxed) {
-            let _ = app.hide();
+        if !app.state::<CameFromApp>().0.load(Ordering::Relaxed) && !app_window::is_in_use(app) {
+            if app_window::is_shown(app) {
+                app_window::hide(app);
+            } else {
+                let _ = app.hide();
+            }
         }
     }
 }

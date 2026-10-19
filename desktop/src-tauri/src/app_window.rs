@@ -14,7 +14,7 @@
 //! agent, bridge and WebView2 arguments, and so the same sign-in. Other
 //! sites open in the browser; files the page saves go to Downloads.
 
-use crate::{sign_in, window};
+use crate::{activation, sign_in, window};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -77,13 +77,24 @@ pub fn prepare(app: &AppHandle) {
     });
 }
 
-/// Whether the window is the one in use.
+/// Whether the window is the one in use: on a Mac, the app active, the
+/// window its key one and on the desktop shown (one key on another desktop
+/// is brought over, not put away unseen); elsewhere, and off the main
+/// thread, the window with the focus.
 pub fn is_in_use(app: &AppHandle) -> bool {
-    window(app).is_some_and(|window| window.is_focused().unwrap_or(false))
+    let Some(window) = window(app) else {
+        return false;
+    };
+    #[cfg(target_os = "macos")]
+    if let Some(seen) = activation::seen(&window) {
+        return seen.in_use();
+    }
+    window.is_focused().unwrap_or(false)
 }
 
 /// Opens the window on Memoca's notes, or brings it forward as it is.
 pub fn open(app: &AppHandle) {
+    quick_note_away(app);
     if let Some(window) = window(app) {
         bring_out(&window);
     } else {
@@ -96,6 +107,7 @@ pub fn open(app: &AppHandle) {
 /// the page moves to one (src/components/notes/quick-entry.tsx), rather
 /// than loaded again, which would close the vault.
 pub fn open_at(app: &AppHandle, url: Url) {
+    quick_note_away(app);
     let Some(window) = window(app) else {
         make_apart(app, url, true);
         return;
@@ -146,15 +158,33 @@ pub fn discard(app: &AppHandle) {
     }
 }
 
+/// The quick note, out and not pinned, is put away before this window
+/// comes over it: made key over it, this window would have the quick note
+/// put away as a click on another app does (window.rs), which on a Mac
+/// hides the whole app, this window with it. The quick note's own 「Memoca
+/// を開く」 does the same (commands::show_app).
+#[cfg(target_os = "macos")]
+fn quick_note_away(app: &AppHandle) {
+    if !app.state::<crate::settings::Store>().get().pinned {
+        window::put_away(app);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn quick_note_away(_app: &AppHandle) {}
+
 fn bring_out(window: &WebviewWindow) {
-    // On a Mac, an app in the Dock and ⌘Tab while it is out.
+    // On a Mac, an app in the Dock and ⌘Tab while it is out, made active
+    // and looked at again after (activation.rs): being made active is only
+    // asked for, and may be refused.
     #[cfg(target_os = "macos")]
-    let _ = window
-        .app_handle()
-        .set_activation_policy(tauri::ActivationPolicy::Regular);
-    let _ = window.unminimize();
-    let _ = window.show();
-    let _ = window.set_focus();
+    activation::bring_out(window);
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = window.unminimize();
+        let _ = window.show();
+        let _ = window.set_focus();
+    }
 }
 
 /// Hides the window, as closing it does: its size and place kept, the menu
@@ -164,6 +194,8 @@ fn put_away(app: &AppHandle, window: &WebviewWindow) {
     if !window.is_visible().unwrap_or(false) {
         return;
     }
+    // Any look of a bringing out under way is over (activation.rs).
+    activation::begin();
     let _ = app.save_window_state(KEPT);
     let _ = window.hide();
     #[cfg(target_os = "macos")]
@@ -265,6 +297,10 @@ fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
         .initialization_script(window::bridge())
         // The page's own: files dropped into a note, blocks dragged in it.
         .disable_drag_drop_handler()
+        // A click on the window while another app is in use reaches the page
+        // as well as making Memoca active: the folder clicked opens. (On a
+        // Mac, WebKit lets such a click through only on a scrollbar.)
+        .accept_first_mouse(true)
         .on_navigation(move |url| {
             sign_in::on_navigation(&guard, LABEL, url);
             if is_app_page(url) {
@@ -294,6 +330,7 @@ fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
         WindowEvent::Destroyed => {
             // Kept now, not only when the app quits: an update starts it again.
             let _ = handle.save_window_state(KEPT);
+            activation::begin();
             // Back to the menu bar alone.
             #[cfg(target_os = "macos")]
             let _ = handle.set_activation_policy(tauri::ActivationPolicy::Accessory);

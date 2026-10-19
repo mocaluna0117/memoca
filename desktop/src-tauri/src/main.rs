@@ -8,6 +8,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+mod activation;
 mod app_window;
 mod clipboard;
 mod commands;
@@ -21,16 +23,18 @@ mod tray;
 mod updater;
 mod window;
 
-use tauri::menu::{Menu, PredefinedMenuItem, Submenu};
+use tauri::menu::{Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::{AppHandle, Manager, RunEvent, Wry};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 
 /// The keys the windows type with: ⌘C, ⌘V, ⌘Z and the rest are the menu's
 /// on a Mac, as are ⌘W (the quick note's put away, Memoca's closed) and ⌘M.
-/// No 終了 here: Memoca quits from the menu bar icon's menu, not by a slip
-/// in a window. Not on Windows, where an app's menu is a bar across its
-/// window, and the keys work without one.
+/// ⌘H puts both windows away, as closing them does (the system's own hide
+/// would leave Memoca in the Dock and ⌘Tab with no window to show). No 終了
+/// here: Memoca quits from the menu bar icon's menu, not by a slip in a
+/// window. Not on Windows, where an app's menu is a bar across its window,
+/// and the keys work without one.
 fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     Menu::with_items(
         app,
@@ -39,7 +43,13 @@ fn app_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 app,
                 "Memoca",
                 true,
-                &[&PredefinedMenuItem::hide(app, Some("Memoca を隠す"))?],
+                &[&MenuItem::with_id(
+                    app,
+                    "hide-memoca",
+                    "Memoca を隠す",
+                    true,
+                    Some("CmdOrCtrl+H"),
+                )?],
             )?,
             &Submenu::with_items(
                 app,
@@ -106,7 +116,12 @@ fn main() {
         .manage(sign_in::Taking::default())
         .manage(app_window::Downloads::default());
     #[cfg(target_os = "macos")]
-    let builder = builder.menu(app_menu);
+    let builder = builder.menu(app_menu).on_menu_event(|app, event| {
+        if event.id().as_ref() == "hide-memoca" {
+            window::hide(app);
+            app_window::hide(app);
+        }
+    });
     #[cfg(not(target_os = "macos"))]
     let _ = app_menu;
     let app = builder
