@@ -41,7 +41,8 @@ export function CommandPalette() {
   const { selection, navigate } = useWorkspace();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const { hits, locked } = useSearch(query);
+  // The index is every note on the device: built only while the palette is open.
+  const { hits, locked } = useSearch(query, { enabled: open });
   const lockedNote = query.trim().length > 0 ? lockedSearchNote(locked) : null;
 
   useEffect(() => {
@@ -101,7 +102,7 @@ export function CommandPalette() {
               </CommandGroup>
             ) : null}
             {lockedNote ? (
-              <p className="text-muted-foreground flex items-center gap-1.5 px-3 pt-1 pb-2 text-xs">
+              <p className="flex items-center gap-1.5 px-3 pt-1 pb-2 text-xs text-muted-foreground">
                 <Lock className="size-3 shrink-0 opacity-60" aria-hidden />
                 {lockedNote}
               </p>

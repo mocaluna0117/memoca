@@ -14,8 +14,16 @@ import { openTitles, useOpenedTitles } from "@/lib/vault/titles";
  *
  * Locked notes are searched by title only, and only while the vault is open;
  * their titles are opened in memory for it and dropped when the vault closes.
+ *
+ * Not `enabled`, it reads nothing and finds nothing: the index is every note
+ * and body on the device, read and built again whenever one is written, which
+ * typing in a note does every half second. The palette is open for a moment
+ * at a time; its index is built then.
  */
-export function useSearch(query: string): {
+export function useSearch(
+  query: string,
+  { enabled = true }: { enabled?: boolean } = {},
+): {
   hits: SearchHit[];
   total: number;
   /** Locked notes, and whether the vault is open to search them by title. */
@@ -27,7 +35,10 @@ export function useSearch(query: string): {
   // Notes are found by their readings only with reading search turned on.
   const readings = useSyncExternalStore(onYomiOn, isYomiOn, () => false);
 
+  // Dexie runs the query again only on writes to the tables it read: read
+  // none, it is left alone until the search is enabled.
   const rows = useLiveQuery(async () => {
+    if (!enabled) return null;
     const database = db();
     const [notes, folders, bodies] = await Promise.all([
       database.notes.toArray(),
@@ -35,7 +46,7 @@ export function useSearch(query: string): {
       database.bodies.toArray(),
     ]);
     return { notes, folders, bodies };
-  }, []);
+  }, [enabled]);
 
   useEffect(() => {
     if (unlocked && rows) void openTitles(rows.notes);
