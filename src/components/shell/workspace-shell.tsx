@@ -1,8 +1,7 @@
 "use client";
 
-import { useConvex } from "convex/react";
 import { useRouter } from "next/navigation";
-import { type ReactNode, useEffect, useRef } from "react";
+import { type ReactNode, useEffect } from "react";
 import { toast } from "sonner";
 import { OpenNoteFromQuickWindow, QuickNoteShortcut } from "@/components/notes/quick-entry";
 import { CommandPalette } from "@/components/search/command-palette";
@@ -10,6 +9,7 @@ import { AppShell } from "@/components/shell/app-shell";
 import { PwaPrompts } from "@/components/shell/pwa-prompts";
 import { useShellRefresh } from "@/components/shell/shell-refresh";
 import { WorkspaceDnd } from "@/components/shell/workspace-dnd";
+import { LockRepairs } from "@/components/vault/lock-repairs";
 import { VaultDialog } from "@/components/vault/vault-dialog";
 import { VaultRecordSync } from "@/components/vault/vault-record-sync";
 import { recoveryKeyState } from "@/components/vault/recovery-settings";
@@ -18,22 +18,15 @@ import { META } from "@/lib/db/meta";
 import { useVaultRecord } from "@/lib/vault/record";
 import { vault } from "@/lib/crypto/vault";
 import { flushAll } from "@/lib/sync/docs";
-import { useLiveQuery } from "dexie-react-hooks";
 import { watchVaultActivity } from "@/lib/vault/activity";
 import { startImeTrace } from "@/lib/debug/ime-trace";
-import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
 import { tidyYomi } from "@/lib/search/yomi";
-
-import { useSync, useSyncStatus } from "@/components/providers/sync-provider";
 
 /**
  * Owns the interactions that need both the vault and the server: locking a
  * folder, and finishing a cascade that an earlier session left half done.
  */
 export function WorkspaceShell({ children }: { children: ReactNode }) {
-  const client = useConvex();
-  const { engine } = useSync();
-  const status = useSyncStatus();
   const router = useRouter();
 
   // Kept hidden by the desktop shell: a new version loaded out of sight.
@@ -101,77 +94,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  // Puts right what earlier versions left behind: folder names they sealed,
-  // plaintext notes and files inside locks, an unfinished unlock, Inbox's old
-  // lock. Runs when the vault opens, when the network returns, when sync
-  // settles, and when a sealed folder name arrives from another device.
-  const sealedNames = useLiveQuery(async () => (await sealedNameFolders()).length, [], 0);
-  const settled = status.state === "idle" && !status.catchingUp && status.pending === 0;
-  const unreadableSeen = useRef(0);
-  // Said once per session: the repair pass runs often.
-  const copiesWarned = useRef(false);
-  const plainCopiesWarned = useRef(false);
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      const report = await repairLocks(client, engine());
-      if (cancelled) return;
-      if (report.inboxUnlocked) {
-        toast(
-          "Inbox はロックできなくなったため、Inbox のロックを外しました。ロックしていたメモは、ロックされたままです。",
-        );
-      }
-      if (report.namesRestored > 0) {
-        toast.success(
-          `ロックしたフォルダの名前を、ロック中も表示されるようにしました（${report.namesRestored} 件）`,
-        );
-      }
-      if (report.unlockResumed) toast.success("フォルダのロックを外す処理を再開しました");
-      if (report.notesLocked > 0)
-        toast.success(`ロックが途中だったメモ ${report.notesLocked} 件をロックしました`);
-      if (report.attachmentsLocked > 0) {
-        toast.success(
-          `ロックしたメモの添付ファイル ${report.attachmentsLocked} 件を暗号化しました`,
-        );
-      }
-      if (report.copiesLocked > 0) {
-        toast.success(
-          `ほかのメモからロックしたメモにコピーされていた画像 ${report.copiesLocked} 件を、そのメモ用に暗号化しました`,
-        );
-      }
-      if (report.copiesTooLarge > 0 && !copiesWarned.current) {
-        copiesWarned.current = true;
-        toast.warning(
-          `ロックしたメモに、ほかのメモからコピーした画像が ${report.copiesTooLarge} 件あり、容量が足りないため暗号化できていません。不要なファイルを削除すると、自動で暗号化します。`,
-          { action: { label: "設定を開く", onClick: () => router.push("/app/settings") } },
-        );
-      }
-      if (report.plainCopiesTooLarge > 0 && !plainCopiesWarned.current) {
-        plainCopiesWarned.current = true;
-        toast.warning(
-          `ロックしたメモからコピーした画像が ${report.plainCopiesTooLarge} 件あり、容量が足りないため、コピー先のメモに保存できていません。不要なファイルを削除すると、自動で保存します。`,
-          { action: { label: "設定を開く", onClick: () => router.push("/app/settings") } },
-        );
-      }
-      if (report.unreadable > unreadableSeen.current) {
-        toast.warning(`この金庫の鍵では開けないメモが ${report.unreadable} 件あります`, {
-          action: { label: "設定を開く", onClick: () => router.push("/app/settings") },
-        });
-      }
-      unreadableSeen.current = Math.max(unreadableSeen.current, report.unreadable);
-    };
-    const later = settled ? setTimeout(() => void run(), 2_000) : null;
-    const unsubscribe = vault.subscribe((unlocked) => unlocked && void run());
-    const onOnline = () => void run();
-    window.addEventListener("online", onOnline);
-    return () => {
-      cancelled = true;
-      if (later) clearTimeout(later);
-      unsubscribe();
-      window.removeEventListener("online", onOnline);
-    };
-  }, [client, engine, router, settled, sealedNames]);
-
   return (
     <>
       {/* One place for the drags of both the sidebar and the list: a note
@@ -184,6 +106,9 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       <OpenNoteFromQuickWindow />
       <PwaPrompts />
       <VaultRecordSync />
+      {/* Follows the sync status, which changes with every flush of a note
+          being typed in: a leaf of its own, so that nothing else here does. */}
+      <LockRepairs />
       <VaultDialog />
     </>
   );
