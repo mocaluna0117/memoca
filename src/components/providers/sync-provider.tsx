@@ -12,6 +12,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import { uuidv7 } from "uuidv7";
 import { api } from "@convex/_generated/api";
@@ -20,6 +21,7 @@ import { db, getMeta, setMeta } from "@/lib/db";
 import { META, deviceId } from "@/lib/db/meta";
 import { flushAll } from "@/lib/sync/docs";
 import { SyncEngine, type SyncStatus } from "@/lib/sync/engine";
+import { type StatusStore, createStatusStore } from "@/lib/sync/status-store";
 
 type ServerProfile = NonNullable<
   Exclude<ReturnType<typeof useQuery<typeof api.users.me>>, undefined>
@@ -30,7 +32,6 @@ type Provision = "pending" | "created" | "closed" | "badInvite";
 
 type SyncContextValue = {
   engine: () => SyncEngine | null;
-  status: SyncStatus;
   /** The account, from the server when reachable and from disk when not. */
   me: ServerProfile | null;
   gate: "loading" | "ready" | "closed" | "badInvite";
@@ -38,11 +39,34 @@ type SyncContextValue = {
 };
 
 const SyncContext = createContext<SyncContextValue | null>(null);
+/**
+ * The status apart from the rest: it changes with every flush of a note being
+ * typed in, and only the badge and the lock repairs follow it. Through the
+ * context, each change would draw everything that reads anything of sync.
+ */
+const SyncStatusContext = createContext<StatusStore | null>(null);
+
+const IDLE: SyncStatus = {
+  state: "idle",
+  pending: 0,
+  lastSyncAt: null,
+  catchingUp: false,
+  quotaFull: false,
+};
 
 export function useSync(): SyncContextValue {
   const value = useContext(SyncContext);
   if (!value) throw new Error("useSync must be used inside SyncProvider");
   return value;
+}
+
+const serverStatus = () => IDLE;
+
+/** Where syncing stands, drawn again only when it changes. */
+export function useSyncStatus(): SyncStatus {
+  const store = useContext(SyncStatusContext);
+  if (!store) throw new Error("useSyncStatus must be used inside SyncProvider");
+  return useSyncExternalStore(store.subscribe, store.get, serverStatus);
 }
 
 /**
@@ -64,14 +88,6 @@ async function provisionAccount(
   return "created";
 }
 
-const IDLE: SyncStatus = {
-  state: "idle",
-  pending: 0,
-  lastSyncAt: null,
-  catchingUp: false,
-  quotaFull: false,
-};
-
 /**
  * Starts the background sync once an account exists, and keeps the rest of the
  * app from having to know whether it is online.
@@ -90,9 +106,11 @@ export function SyncProvider({
 }) {
   const client = useConvex();
   const remote = useQuery(api.users.me);
-  const [status, setStatus] = useState<SyncStatus>(IDLE);
+  const [store] = useState(() => createStatusStore(IDLE));
   const [provision, setProvision] = useState<Provision>("pending");
   const engineRef = useRef<SyncEngine | null>(null);
+  /** The engine of the moment, by one function for the app's whole life. */
+  const engine = useCallback(() => engineRef.current, []);
   /** The running engine, once it has started. */
   const startedRef = useRef<Promise<SyncEngine> | null>(null);
   /** The engine whose bodies have been fetched ahead, so they are fetched once. */
@@ -157,17 +175,18 @@ export function SyncProvider({
     if (!userKey) return;
     const next = new SyncEngine(client);
     engineRef.current = next;
-    const unsubscribe = next.subscribe(setStatus);
+    const unsubscribe = next.subscribe(store.set);
     startedRef.current = next.start(userKey).then(() => next);
     return () => {
       unsubscribe();
       next.stop();
       engineRef.current = null;
+      store.set(IDLE);
       void flushAll();
       // Another account's vault must not stay open for whoever signs in next.
       vault.lock();
     };
-  }, [client, userKey]);
+  }, [client, userKey, store]);
 
   // Bodies are fetched ahead only where they are read: the quick note,
   // opened to jot one line down, has no use for them.
@@ -202,17 +221,15 @@ export function SyncProvider({
           : "loading";
 
   const value = useMemo<SyncContextValue>(
-    () => ({
-      engine: () => engineRef.current,
-      status,
-      me,
-      gate,
-      submitInvite,
-    }),
-    [status, me, gate, submitInvite],
+    () => ({ engine, me, gate, submitInvite }),
+    [engine, me, gate, submitInvite],
   );
 
-  return <SyncContext.Provider value={value}>{children}</SyncContext.Provider>;
+  return (
+    <SyncContext.Provider value={value}>
+      <SyncStatusContext.Provider value={store}>{children}</SyncStatusContext.Provider>
+    </SyncContext.Provider>
+  );
 }
 
 /** Wipes the cached profile along with the rest of the device's data. */

@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, CloudOff, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
-import { useSync } from "@/components/providers/sync-provider";
+import { useSync, useSyncStatus } from "@/components/providers/sync-provider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOutboxCount } from "@/lib/hooks/data";
 import { t } from "@/lib/i18n/ja";
@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 
 /** A quiet indicator: it only asks for attention when something is wrong. */
 export function SyncBadge({ className }: { className?: string }) {
-  const { status } = useSync();
+  const status = useSyncStatus();
   const pending = useOutboxCount();
 
   const busy = status.state === "syncing" || status.catchingUp || pending > 0;
@@ -43,7 +43,7 @@ export function SyncBadge({ className }: { className?: string }) {
           aria-live="polite"
           aria-label={label}
           className={cn(
-            "text-muted-foreground inline-flex items-center gap-1.5 text-xs",
+            "inline-flex items-center gap-1.5 text-xs text-muted-foreground",
             (status.state === "error" || status.quotaFull) && "text-destructive",
             className,
           )}
@@ -58,7 +58,7 @@ export function SyncBadge({ className }: { className?: string }) {
       <TooltipContent side="bottom">
         <p>{label}</p>
         {status.lastSyncAt ? (
-          <p className="text-muted-foreground mt-0.5 text-xs">
+          <p className="mt-0.5 text-xs text-muted-foreground">
             最終同期 {new Date(status.lastSyncAt).toLocaleTimeString("ja-JP")}
           </p>
         ) : null}
@@ -73,7 +73,7 @@ export function SyncRetryButton() {
     <button
       type="button"
       onClick={() => engine()?.kick(0)}
-      className="text-muted-foreground hover:text-foreground inline-flex items-center gap-1 text-xs"
+      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
     >
       <RefreshCw className="size-3.5" aria-hidden />
       {t.action.retry}

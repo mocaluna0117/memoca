@@ -24,7 +24,7 @@ import { startImeTrace } from "@/lib/debug/ime-trace";
 import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
 import { tidyYomi } from "@/lib/search/yomi";
 
-import { useSync } from "@/components/providers/sync-provider";
+import { useSync, useSyncStatus } from "@/components/providers/sync-provider";
 
 /**
  * Owns the interactions that need both the vault and the server: locking a
@@ -32,7 +32,8 @@ import { useSync } from "@/components/providers/sync-provider";
  */
 export function WorkspaceShell({ children }: { children: ReactNode }) {
   const client = useConvex();
-  const { engine, status } = useSync();
+  const { engine } = useSync();
+  const status = useSyncStatus();
   const router = useRouter();
 
   // Kept hidden by the desktop shell: a new version loaded out of sight.

@@ -15,6 +15,7 @@ import { loadClock, syncClock } from "./clock";
 import { onOutboxChanged } from "./signal";
 import { tellPeers } from "./peers";
 import { applyRemote, migrateOpenDoc, reloadDoc, withDetachedDoc } from "./docs";
+import { sameStatus } from "./status-store";
 import { extractText, firstLine } from "./ydoc";
 import { linkTargets } from "@/lib/note-links";
 
@@ -97,7 +98,10 @@ export class SyncEngine {
   }
 
   private set(patch: Partial<SyncStatus>) {
-    this.status = { ...this.status, ...patch };
+    const next = { ...this.status, ...patch };
+    // Nothing new to say (the outbox counted at 0 again, say): nobody is told.
+    if (sameStatus(this.status, next)) return;
+    this.status = next;
     for (const listener of this.listeners) listener(this.status);
   }
 
@@ -480,7 +484,10 @@ export class SyncEngine {
     let text: string | null = null;
     let links: string[] = [];
     if (readable) {
-      [text, links] = await withDetachedDoc(noteId, (doc) => [extractText(doc), linkTargets(doc)] as const);
+      [text, links] = await withDetachedDoc(
+        noteId,
+        (doc) => [extractText(doc), linkTargets(doc)] as const,
+      );
     }
 
     if (this.stopped) return;
@@ -571,7 +578,8 @@ export class SyncEngine {
       this.set({
         state: "idle",
         pending: await database.outbox.count(),
-        quotaFull: (await database.outbox.filter((entry) => entry.retryAt !== undefined).count()) > 0,
+        quotaFull:
+          (await database.outbox.filter((entry) => entry.retryAt !== undefined).count()) > 0,
       });
       // Everything of ours is sent: a good moment, and this loop keeps
       // running while nothing else happens, which a quiet note needs.
