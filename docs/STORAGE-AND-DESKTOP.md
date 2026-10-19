@@ -379,6 +379,18 @@ Q4〜D0 と、1 回目のレビューで直したもの（Opus 3 人：安全、
 - 金庫：Mac では、署名がないのでパスキーは使えない。パスワードで開く。
 - CI（Windows）：即席メモの窓の確認のあと、`--app` で起動し、2 つ目のプロセスが残らないことと、全体のウィンドウが `/sign-in?next=/app` で殻用のログイン画面と橋渡し（7 つのコマンド）を持つことを見る。
 
+### 貼った画像をすぐ見せる、入力の重さ（2026-10-19）
+
+オーナーの Mac で、Zoom や Meet の最中は Memoca 全体のウィンドウでも即席メモでも文字が数百 ms 遅れて出る、画像を貼ってもなかなか付かない、と言われた。読み取り専用の調査（入力記録の `where()` を headless WebKit で実測：12 回／打で 0.1〜1.6 ms）で、入力記録は小さな税で、主因は 500 ms ごとの保存に伴う再描画の嵐だと分かった。
+
+- 入力の遅れ（キーごと・保存ごと）：閉じているコマンドパレットが `useSearch` で全メモの全文を正規化して索引を作り直していた（notes/bodies の書き込みごと）→ 開いているときだけに（`enabled`）。sync の status が変わるたびに `useSync()` の全利用者（NoteList の全行・FolderTree・CommandPalette・NotePane・EditorSurface…）が再描画されていた（value に status と毎回新しい `engine` クロージャ）→ status は `useSyncStatus()`（`useSyncExternalStore`、`src/lib/sync/status-store.ts`）に分け、`engine` を固定し、`engine.set()` は同値なら通知しない。`settled` の反転ごとに張り直していた `repairLocks` の 2 秒タイマー → `LockRepairs`（`src/components/vault/lock-repairs.tsx`）に移し、`repairDue`（catch-up の終わりは常に、settled の false→true は 10 分に 1 回）で。`notes.update({updatedAt})` を保存ごとに書いていた（ローカル表示用の値。サーバーは自分で付ける）→ 開いているメモは 10 秒に 1 回、閉じるときに必ず（`STAMP_EVERY_MS`）。
+- 入力記録：Mac のデスクトップ版で常時動いていた（キーごとに `document` 全体を 12 回走査、MutationObserver、`someProp` のラップ）→ ⌘⌥⇧I で始めてもう一度でコピー・停止（待機中は keydown 1 本だけ）。調査中は `localStorage['memoca:ime-trace']='1'` で読み込み時から記録。記録中も走査はエディタ内だけで 1 回、`selectionchange` は入力欄にフォーカスがあるときだけ。
+- 即席メモ：キーごとに `Tabbed`／`QuickTabs` まで再描画していた → タブ名・画像枚数・未保存が変わったときだけ `onText`。deps なしの effect が描画ごとに keydown リスナーを付け直していた → `useEffectEvent` で 1 回。
+- 画像：BlockNote 0.55 は `url` が入るまで「Loading...」しか出さず、`uploadFile` は `prepareUpload`（メインスレッドでデコード・描画・読み戻し、WebKit は WASM worker で WebP 化）→ `stageUpload` の後にしか返らない。S4 の「圧縮してから表示」は保存するものと容量の確認には維持し、表示だけ原本を先に出す（`src/components/editor/upload-preview.ts`：BlockNote が出す `.bn-file-loading-preview` の中に objectURL の `<img>` と「処理中…」。`props.url` には書かない。1 フレーム描かせてから圧縮）。即席メモは `preparing` の画像を即表示し、保存・閉じる・隠すは準備完了を待つ（準備中に ⌘Enter すると画像なしで保存されていた競合も直した）。
+- WebP worker：20 秒で捨てられ、会議中はペーストのたびに cold start だった → デコードと同時に先に起動（`prestartWebpEncoder`）。timeout 2 回でセッション中ずっとメインスレッド PNG 化していた → 5 分で使い直す。
+- しなかったこと：一覧の行の `React.memo`、NoteBacklinks の索引、デコードの worker 化は、Profiler で保存ごとの再描画が残るときに。
+- 確かめ：`tests/use-search.test.tsx`・`sync-status-store`・`repair-schedule`・`docs`・`ime-trace`・`quick-capture`・`upload-preview`・`webp-encoder`。実機は Zoom 中に長いメモで日本語入力、スクリーンショットの貼り付け、即席メモで貼って即 ⌘Enter。
+
 ### ホットキーで出した Memoca 全体のウィンドウが前に出ない・最初のクリックが効かない・即席メモを隠すと Memoca が Dock に残る（2026-10-19、0.4.7）
 
 オーナーの Mac（macOS 26.5）で、Zoom や Meet の最中に ⌘⇧M（オーナーの設定では全体のウィンドウのホットキー）を押しても出ない（何回か押すと出る）、出た直後にフォルダを押しても 2 回押さないと開かない、即席メモを隠したあと Dock と ⌘Tab に Memoca が残り、選ぶと全体のウィンドウが戻ってくる、と言われた。
