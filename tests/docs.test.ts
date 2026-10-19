@@ -313,6 +313,36 @@ describe("the note's updatedAt while it is typed in", () => {
     expect(await updatedAt()).toBe(first + 1_500);
   });
 
+  test("opened again as that write is made, it stays usable", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    await flushed();
+    doc.getText("t").insert(1, "二");
+    await flushed();
+    // Opened again in the middle of the close's own updatedAt write.
+    const notes = db().notes;
+    const update = notes.update.bind(notes);
+    let again: Y.Doc | null = null;
+    vi.spyOn(notes, "update").mockImplementationOnce((async (
+      key: string,
+      changes: Partial<Note>,
+    ) => {
+      again = await acquireDoc("n1");
+      return update(key, changes);
+    }) as unknown as typeof notes.update);
+    await releaseDoc("n1");
+
+    expect(again).toBe(doc);
+    expect(doc.isDestroyed).toBe(false);
+    expect(openDoc("n1")).toBe(doc);
+    const before = await saved();
+    doc.getText("t").insert(2, "三");
+    await flushAll();
+    expect(await saved()).toBe(before + 1);
+    await releaseDoc("n1");
+    expect(openDoc("n1")).toBeUndefined();
+  });
+
   test("a changed first line is written at once, whenever the last was", async () => {
     const doc = await acquireDoc("n1");
     doc.getText("t").insert(0, "一");

@@ -421,6 +421,8 @@ export async function releaseDoc(noteId: string): Promise<void> {
   if (handle.refs > 0) return;
   // The updatedAt write due for its last edits: now, not once it is gone.
   if (handle.stampTimer) await stamp(handle);
+  // Opened again while that was written: likewise.
+  if (handle.refs > 0) return;
   handle.detach();
   handle.doc.destroy();
   if (handles.get(noteId) === handle) handles.delete(noteId);
