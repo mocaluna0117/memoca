@@ -202,6 +202,18 @@ export const ja = {
     close: "閉じる",
     unreadable: "この PDF は表示できません。ダウンロードして開いてください。",
   },
+  /** An image in a note, shown over the whole window (a double-click, or a double tap). */
+  imageViewer: {
+    /** The title of one with no name, such as one pasted from a web page. */
+    untitled: "画像",
+    hint: "画像を押すと、原寸と画面に合わせた大きさを切り替えます。",
+    loading: "画像を読み込んでいます",
+    unavailable: "この画像はいま表示できません。まだこの端末に届いていない可能性があります。",
+    actualSize: "原寸で表示",
+    fit: "画面に合わせる",
+    download: "ダウンロード",
+    close: "閉じる",
+  },
   download: {
     ready: "ファイルの準備ができました",
     share: "共有",

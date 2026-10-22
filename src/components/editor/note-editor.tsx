@@ -32,6 +32,7 @@ import {
   MemocaFormattingToolbar,
   ToolbarOnImageTap,
 } from "@/components/editor/image-crop";
+import { ImageViewerOnDoubleClick } from "@/components/editor/image-viewer";
 import { MobileBlockToolbar } from "@/components/editor/mobile-block-toolbar";
 import { useRelockCopies } from "@/components/editor/use-relock-copies";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -456,6 +457,8 @@ function EditorSurface({
         {/* [[: the notes to link to (see note-links). */}
         <NoteLinkMenu editor={plain} noteId={noteId} />
         <ToolbarOnImageTap />
+        {/* An image double-clicked (tapped twice), over the whole window. */}
+        <ImageViewerOnDoubleClick locked={locked} />
         <MobileBlockToolbar />
       </BlockNoteView>
     </ImageCrop>

@@ -387,6 +387,13 @@
   color: #fff;
 }
 
+/* An image tapped twice opens over the whole window (image-viewer.tsx)
+   rather than zooming the page, as Safari would: a pinch still zooms, and a
+   drag still scrolls. */
+.memoca-editor img.bn-visual-media {
+  touch-action: manipulation;
+}
+
 /* An image being added, shown at once from the file itself, dimmed, in the
    "Loading..." box of the block BlockNote made for it, while it is made
    smaller and staged (src/components/editor/upload-preview.ts). The box's
