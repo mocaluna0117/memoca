@@ -27,6 +27,7 @@ import {
   type MouseEvent,
   type PointerEvent,
   type ReactNode,
+  memo,
   useEffect,
   useId,
   useMemo,
@@ -91,6 +92,7 @@ import { TemplatePicker } from "@/components/notes/template-picker";
 import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, fillFromTemplate } from "@/lib/templates";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { useEscapeFromPage } from "@/lib/hooks/use-escape-from-page";
+import { useStableActions } from "@/lib/hooks/use-stable-actions";
 import { cn } from "@/lib/utils";
 
 function relativeDate(at: number): string {
@@ -120,10 +122,10 @@ type RowDrag = {
 const noteData = (owner: string, noteId: string) => ({ owner, kind: "note" as const, noteId });
 
 /** A row that can be dragged to another place in the list, or to a folder. */
-function SortableNoteRow({
+const SortableNoteRow = memo(function SortableNoteRow({
   owner,
   ...props
-}: Omit<Parameters<typeof NoteRow>[0], "drag"> & { owner: string }) {
+}: Omit<RowProps, "drag"> & { owner: string }) {
   const { setNodeRef, listeners, transform, transition, isDragging } = useSortable({
     id: props.note.noteId,
     data: noteData(owner, props.note.noteId),
@@ -140,20 +142,20 @@ function SortableNoteRow({
       }}
     />
   );
-}
+});
 
 /** A row that can be dragged to a folder, staying where it is in the list. */
-function DraggableNoteRow({
+const DraggableNoteRow = memo(function DraggableNoteRow({
   owner,
   ...props
-}: Omit<Parameters<typeof NoteRow>[0], "drag"> & { owner: string }) {
+}: Omit<RowProps, "drag"> & { owner: string }) {
   const { setNodeRef, listeners, isDragging } = useDraggable({
     id: props.note.noteId,
     data: noteData(owner, props.note.noteId),
     disabled: props.editing,
   });
   return <NoteRow {...props} drag={{ ref: setNodeRef, listeners, dragging: isDragging }} />;
-}
+});
 
 /**
  * The notes chosen in a folder's list (`folderId`): whether it is set to
@@ -227,25 +229,24 @@ function OrderMenu({
   );
 }
 
-function NoteRow({
-  note,
-  selected,
-  editing,
-  choosing,
-  chosen,
-  hintId,
-  onSelect,
-  onStartRename,
-  onEndRename,
-  onArrow,
-  onNudge,
-  drag,
-  menu,
-  shownAt,
-}: {
+/** What every row of the list does, given the note it is done for. */
+type NoteRowActions = {
+  /** A click on the row, with the keys held (⌘/Ctrl to choose it, Shift to choose up to it). */
+  select: (noteId: string, held: { meta: boolean; ctrl: boolean; shift: boolean }) => void;
+  startRename: (noteId: string) => void;
+  endRename: (noteId: string, byKeyboard: boolean) => void;
+  /** Moves focus to another row; true when the key was one it handles. */
+  arrow: (noteId: string, key: string) => boolean;
+  /** Moves the note one place up or down, where notes are placed by hand. */
+  nudge: (noteId: string, direction: -1 | 1) => void;
+  /** What its menu (a right click, a long press) offers, as the list now has it. */
+  menu: (note: Note) => ReactNode;
+};
+
+type RowProps = {
   note: Note;
-  /** The time the row shows: when the note was changed, or made when ordered by that. */
-  shownAt: number;
+  /** The time the row shows, as it says it: when the note was changed, or made when ordered by that. */
+  when: string;
   selected: boolean;
   editing: boolean;
   /** The list is set to choose notes: a click chooses this one, or not. */
@@ -253,19 +254,39 @@ function NoteRow({
   /** Chosen, to be moved along with the others chosen. */
   chosen: boolean;
   hintId: string;
-  /** A click on the row, with the keys held (⌘/Ctrl to choose it, Shift to choose up to it). */
-  onSelect: (noteId: string, held: { meta: boolean; ctrl: boolean; shift: boolean }) => void;
-  onStartRename: (noteId: string) => void;
-  onEndRename: (noteId: string, byKeyboard: boolean) => void;
-  /** Moves focus to another row; true when the key was one it handles. */
-  onArrow: (noteId: string, key: string) => boolean;
-  /** Moves the note one place up or down, where notes are placed by hand. */
-  onNudge?: (noteId: string, direction: -1 | 1) => void;
+  /** Placed by hand (Option and up or down moves it). */
+  nudgeable: boolean;
   /** What makes the row draggable: to a folder, and, placed by hand, in the list. */
   drag?: RowDrag;
-  /** What its menu (a right click, a long press) offers. */
-  menu: ReactNode;
-}) {
+  actions: NoteRowActions;
+};
+
+/**
+ * Memoized, as its draggable forms are: the list is drawn again with every
+ * write to the notes (a note typed in is written every flush), and only a
+ * row whose note, or place in the list, changed is to be drawn again with
+ * it. Its note stays the same object while it does not change
+ * (lib/hooks/data), and its handlers are the same functions
+ * (useStableActions).
+ */
+const NoteRow = memo(function NoteRow({
+  note,
+  when,
+  selected,
+  editing,
+  choosing,
+  chosen,
+  hintId,
+  nudgeable,
+  drag,
+  actions,
+}: RowProps) {
+  // Its menu's open state, held here: opened, the row is drawn again, and
+  // its menu, made with the row, is as the list now has it (the notes
+  // chosen, say), from the render that shows it.
+  const [menuOpen, setMenuOpen] = useState(false);
+  // Renamed in place, the row has no menu: closed, not to open again after.
+  if (editing && menuOpen) setMenuOpen(false);
   const title = useNoteTitle(note);
   const unlocked = useVaultUnlocked();
   // With no title, its first line stands in for one, and is not said again below.
@@ -292,7 +313,7 @@ function NoteRow({
   );
   const details = (
     <span className="flex items-center gap-2 text-xs text-muted-foreground">
-      <span className="shrink-0">{relativeDate(shownAt)}</span>
+      <span className="shrink-0">{when}</span>
       <span className="truncate">
         {note.locked
           ? unlocked
@@ -318,7 +339,7 @@ function NoteRow({
             placeholder={name.text}
             className="-my-0.5 h-6 font-medium"
             onSubmit={(value) => renameNote(note.noteId, value)}
-            onDone={(byKeyboard) => onEndRename(note.noteId, byKeyboard)}
+            onDone={(byKeyboard) => actions.endRename(note.noteId, byKeyboard)}
           />
         </span>
         {details}
@@ -329,7 +350,7 @@ function NoteRow({
   return (
     // Modal: the finger let go after a long press does not click the row
     // under it, opening the note under the menu.
-    <ContextMenu>
+    <ContextMenu open={menuOpen} onOpenChange={setMenuOpen}>
       <ContextMenuTrigger asChild>
         <button
           type="button"
@@ -362,7 +383,7 @@ function NoteRow({
             // Safari does not focus a button it clicks, and Enter acts on the
             // focused row, so a click has to put focus there itself.
             event.currentTarget.focus();
-            onSelect(note.noteId, {
+            actions.select(note.noteId, {
               meta: event.metaKey,
               ctrl: event.ctrlKey,
               shift: event.shiftKey,
@@ -379,12 +400,12 @@ function NoteRow({
               if (!renamable) return;
               // Stops the button's own Enter, which would open the note instead.
               event.preventDefault();
-              onStartRename(note.noteId);
+              actions.startRename(note.noteId);
             } else if (event.altKey && (event.key === "ArrowUp" || event.key === "ArrowDown")) {
               event.preventDefault();
-              onNudge?.(note.noteId, event.key === "ArrowUp" ? -1 : 1);
+              if (nudgeable) actions.nudge(note.noteId, event.key === "ArrowUp" ? -1 : 1);
             } else if (!event.altKey && !event.metaKey && !event.ctrlKey && !event.shiftKey) {
-              if (onArrow(note.noteId, event.key)) event.preventDefault();
+              if (actions.arrow(note.noteId, event.key)) event.preventDefault();
             }
           }}
           className={cn(
@@ -412,10 +433,10 @@ function NoteRow({
           {details}
         </button>
       </ContextMenuTrigger>
-      {menu}
+      {actions.menu(note)}
     </ContextMenu>
   );
-}
+});
 
 export function NoteList({
   folderId,
@@ -494,7 +515,15 @@ export function NoteList({
   const choosing = choice.on || chosen.size > 0;
   const stopChoosing = () => setChoice(unchosen(listKey));
   const apple = useClientValue(() => isApple(navigator.userAgent), false);
-  const ids = notes.map((note) => note.noteId);
+  // The same array while the notes and their order are: SortableContext
+  // draws every row placed by hand again for a new one.
+  const idsKey = notes.map((note) => note.noteId).join(" ");
+  const ids = useMemo(() => (idsKey ? idsKey.split(" ") : []), [idsKey]);
+  const pinnedKey = notes
+    .filter((note) => note.pinned)
+    .map((note) => note.noteId)
+    .join(" ");
+  const pinnedIds = useMemo(() => (pinnedKey ? pinnedKey.split(" ") : []), [pinnedKey]);
   /** Chooses one more, or one less: where a Shift and a click goes from next. */
   const toggleChosen = (noteId: string, on = choice.on) => {
     const next = toggled(chosen, noteId);
@@ -928,23 +957,31 @@ export function NoteList({
     );
   };
 
-  const rowProps = (note: Note) => ({
+  // What every row does, as the same functions from render to render.
+  const rowActions = useStableActions<NoteRowActions>({
+    select: onRowSelect,
+    startRename: setEditing,
+    endRename: (noteId, byKeyboard) => {
+      if (byKeyboard) refocus.current = noteId;
+      setEditing(null);
+    },
+    arrow: onArrow,
+    nudge,
+    menu: menuOf,
+  });
+
+  const rowProps = (note: Note): RowProps => ({
     note,
+    when: relativeDate(
+      order === "created" ? (createdAt(note.noteId) ?? note.updatedAt) : note.updatedAt,
+    ),
     selected: note.noteId === selectedNoteId,
     editing: note.noteId === editing,
     choosing,
     chosen: chosen.has(note.noteId),
     hintId,
-    menu: menuOf(note),
-    onSelect: onRowSelect,
-    onStartRename: setEditing,
-    onEndRename: (noteId: string, byKeyboard: boolean) => {
-      if (byKeyboard) refocus.current = noteId;
-      setEditing(null);
-    },
-    onArrow,
-    onNudge: manual || note.pinned ? nudge : undefined,
-    shownAt: order === "created" ? (createdAt(note.noteId) ?? note.updatedAt) : note.updatedAt,
+    nudgeable: manual || note.pinned,
+    actions: rowActions,
   });
 
   // The same, with nothing focused (useEscapeFromPage).
@@ -1120,7 +1157,7 @@ export function NoteList({
                 the pinned ones (first) whatever its order is. The others
                 dragged to a folder only, with a mouse. */}
             <SortableContext
-              items={manual ? ids : notes.filter((note) => note.pinned).map((note) => note.noteId)}
+              items={manual ? ids : pinnedIds}
               strategy={verticalListSortingStrategy}
             >
               {notes.map((note) =>

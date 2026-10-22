@@ -32,6 +32,7 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
+  memo,
   useEffect,
   useId,
   useMemo,
@@ -66,6 +67,7 @@ import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
 import { t } from "@/lib/i18n/ja";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
 import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
+import { useStableActions } from "@/lib/hooks/use-stable-actions";
 import { useLockProgress } from "@/lib/store/lock-progress";
 import { type FolderLockKind, folderLockKind, lockCoverage } from "@/lib/vault/model";
 import { useLockActions } from "@/components/vault/use-lock-actions";
@@ -732,6 +734,33 @@ export function FolderTree({
   const focusKey = (row: Row | undefined) => {
     if (row) rowElement(rowKey(row))?.focus();
   };
+
+  // What a note's row does, as the same functions from render to render: a
+  // row is drawn again only when what it shows changes (see TreeNoteRow).
+  const noteRowActions = useStableActions<TreeNoteActions>({
+    open: onNoteClick,
+    choose: (noteId) => {
+      const next = toggled(chosen, noteId);
+      setChoice({ ids: next, anchor: noteId, base: next });
+    },
+    keyDown: (event, noteId, renamable) => {
+      const row = rows.find((each) => each.kind === "note" && each.note.noteId === noteId);
+      if (row) onRowKeyDown(event, row, renamable);
+    },
+    renamed: (noteId, byKeyboard) => {
+      if (byKeyboard) refocus.current = `n:${noteId}`;
+      setEditingNote(null);
+    },
+    renameInDialog: (noteId, title) => openDialog(() => setRenamingNote({ noteId, title })),
+    move: (noteId) => openDialog(() => setMovingNotes(notesTaken(noteId))),
+    toggleLock: (note, title, returnFocus) =>
+      new Promise<void>((done) =>
+        openDialog(() => void toggleNoteLock(note, title, returnFocus).finally(done)),
+      ),
+    trashed: (noteId) => {
+      if (selectedNoteId === noteId) onOpenNote(null);
+    },
+  });
   const focusRow = (folderId: string | undefined) => {
     if (folderId) rowElement(`f:${folderId}`)?.focus();
   };
@@ -792,31 +821,11 @@ export function FolderTree({
                 describedBy={hintId}
                 menuContainer={menuContainer}
                 onCloseAutoFocus={onCloseAutoFocus}
-                onOpen={(held) => onNoteClick(note, held)}
-                onChoose={() => {
-                  const next = toggled(chosen, note.noteId);
-                  setChoice({ ids: next, anchor: note.noteId, base: next });
-                }}
-                onKeyDown={(event, renamable) => onRowKeyDown(event, row, renamable)}
                 editing={editingNote === note.noteId}
-                onRename={(value) => renameNote(note.noteId, value)}
-                onRenamed={(byKeyboard) => {
-                  if (byKeyboard) refocus.current = rowKey(row);
-                  setEditingNote(null);
-                }}
-                onRenameInDialog={(title) => openDialog(() => setRenamingNote({ noteId: note.noteId, title }))}
                 moveLabel={
                   chosen.has(note.noteId) && chosen.size > 1 ? `${chosen.size} 件のメモを移動` : t.action.move
                 }
-                onMove={() => openDialog(() => setMovingNotes(notesTaken(note.noteId)))}
-                onToggleLock={(title, returnFocus) =>
-                  new Promise<void>((done) =>
-                    openDialog(() => void toggleNoteLock(note, title, returnFocus).finally(done)),
-                  )
-                }
-                onTrashed={() => {
-                  if (selectedNoteId === note.noteId) onOpenNote(null);
-                }}
+                actions={noteRowActions}
               />
             );
           }
@@ -1235,6 +1244,23 @@ function allNodes(nodes: FolderNode[]): FolderNode[] {
   return nodes.flatMap((node) => [node, ...allNodes(node.children)]);
 }
 
+/** What every note row of the tree does, given the note it is done for. */
+type TreeNoteActions = {
+  /** A click, with the keys held: opens it, or chooses it. */
+  open: (note: Note, held: { meta: boolean; ctrl: boolean; shift: boolean }) => void;
+  /** Chooses it, or not, from its menu (a phone has no ⌘ to hold). */
+  choose: (noteId: string) => void;
+  keyDown: (event: KeyboardEvent<HTMLButtonElement>, noteId: string, renamable: boolean) => void;
+  /** Renamed in place, or the rename left. */
+  renamed: (noteId: string, byKeyboard: boolean) => void;
+  renameInDialog: (noteId: string, title: string) => void;
+  /** Its menu's move item: this one, or those chosen with it. */
+  move: (noteId: string) => void;
+  /** Asks for the vault and locks the note, or takes its lock off; done when it has. */
+  toggleLock: (note: Note, title: string | null, returnFocus: HTMLElement | null) => Promise<void>;
+  trashed: (noteId: string) => void;
+};
+
 /**
  * A note of the tree: kept in the sidebar, at the top level, or shown in its
  * folder. Opened by a click (Space from the keys), renamed in place by Enter
@@ -1243,8 +1269,14 @@ function allNodes(nodes: FolderNode[]): FolderNode[] {
  * own title is. Not while its title cannot be read (a locked note, the vault
  * closed). At the top level, locked, or its lock taken off, from its menu, as
  * from the note's own: it is in no folder, so its lock is its own.
+ *
+ * Memoized: the tree is drawn again with every write to the notes (a note
+ * typed in is written every flush), and only a row whose note or place
+ * changed is to be drawn again with it. Its note stays the same object while
+ * it does not change (lib/hooks/data), and its handlers are the same
+ * functions (useStableActions).
  */
-function TreeNoteRow({
+const TreeNoteRow = memo(function TreeNoteRow({
   owner,
   note,
   depth,
@@ -1256,17 +1288,9 @@ function TreeNoteRow({
   describedBy,
   menuContainer,
   onCloseAutoFocus,
-  onOpen,
-  onKeyDown,
   editing,
-  onRename,
-  onRenamed,
-  onRenameInDialog,
-  onChoose,
   moveLabel,
-  onMove,
-  onToggleLock,
-  onTrashed,
+  actions,
 }: {
   owner: string;
   note: Note;
@@ -1283,21 +1307,10 @@ function TreeNoteRow({
   describedBy: string;
   menuContainer?: HTMLElement | null;
   onCloseAutoFocus: (event: Event) => void;
-  /** A click, with the keys held: opens it, or chooses it. */
-  onOpen: (held: { meta: boolean; ctrl: boolean; shift: boolean }) => void;
-  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>, renamable: boolean) => void;
   editing: boolean;
-  onRename: (value: string) => Promise<void> | void;
-  onRenamed: (byKeyboard: boolean) => void;
-  onRenameInDialog: (title: string) => void;
-  /** Chooses it, or not, from its menu (a phone has no ⌘ to hold). */
-  onChoose: () => void;
   /** Its menu's move item: this one, or those chosen with it. */
   moveLabel: string;
-  onMove: () => void;
-  /** Asks for the vault and locks the note, or takes its lock off; done when it has. */
-  onToggleLock: (title: string | null, returnFocus: HTMLElement | null) => Promise<void>;
-  onTrashed: () => void;
+  actions: TreeNoteActions;
 }) {
   const [locking, setLocking] = useState(false);
   const button = useRef<HTMLDivElement>(null);
@@ -1330,8 +1343,8 @@ function TreeNoteRow({
               initialValue={current}
               label="メモの名前"
               className="h-6"
-              onSubmit={onRename}
-              onDone={onRenamed}
+              onSubmit={(value) => renameNote(note.noteId, value)}
+              onDone={(byKeyboard) => actions.renamed(note.noteId, byKeyboard)}
             />
           </div>
         ) : (
@@ -1339,8 +1352,8 @@ function TreeNoteRow({
             owner={owner}
             noteId={note.noteId}
             disabled={!canDrag}
-            onClick={onOpen}
-            onKeyDown={(event) => onKeyDown(event, renamable)}
+            onClick={(held) => actions.open(note, held)}
+            onKeyDown={(event) => actions.keyDown(event, note.noteId, renamable)}
             describedBy={describedBy}
             className="flex min-w-0 flex-1 items-center gap-2 py-1.5 text-left outline-none"
           >
@@ -1376,16 +1389,16 @@ function TreeNoteRow({
               {note.pinned ? t.action.unpin : t.action.pin}
             </DropdownMenuItem>
             {renamable ? (
-              <DropdownMenuItem onSelect={() => onRenameInDialog(current)}>
+              <DropdownMenuItem onSelect={() => actions.renameInDialog(note.noteId, current)}>
                 <Pencil className="size-4" aria-hidden />
                 名前を変更
               </DropdownMenuItem>
             ) : null}
-            <DropdownMenuItem onSelect={onMove}>
+            <DropdownMenuItem onSelect={() => actions.move(note.noteId)}>
               <FolderInput className="size-4" aria-hidden />
               {moveLabel}
             </DropdownMenuItem>
-            <DropdownMenuItem onSelect={onChoose}>
+            <DropdownMenuItem onSelect={() => actions.choose(note.noteId)}>
               <ListChecks className="size-4" aria-hidden />
               {chosen ? "選択を外す" : "選択"}
             </DropdownMenuItem>
@@ -1399,7 +1412,8 @@ function TreeNoteRow({
               <DropdownMenuItem
                 onSelect={() => {
                   setLocking(true);
-                  void onToggleLock(
+                  void actions.toggleLock(
+                    note,
                     // The title is only known while it is readable.
                     renamable ? name.text : null,
                     button.current?.querySelector<HTMLElement>("[data-tree-note]") ?? null,
@@ -1415,7 +1429,7 @@ function TreeNoteRow({
               variant="destructive"
               onSelect={async () => {
                 await setNoteTrashed(note.noteId, true);
-                onTrashed();
+                actions.trashed(note.noteId);
                 toast("ゴミ箱に移動しました", {
                   action: { label: "元に戻す", onClick: () => void setNoteTrashed(note.noteId, false) },
                 });
@@ -1429,7 +1443,7 @@ function TreeNoteRow({
       </div>
     </NoteRowDropZone>
   );
-}
+});
 
 /** The note row's icon while its lock is being put on or taken off. */
 function Loader2Note({ className }: { className?: string }) {
