@@ -14,7 +14,13 @@ import { type PullBatch, applyBatch } from "./apply";
 import { loadClock, syncClock } from "./clock";
 import { onOutboxChanged } from "./signal";
 import { tellPeers } from "./peers";
-import { applyRemote, migrateOpenDoc, reloadDoc, withDetachedDoc } from "./docs";
+import {
+  applyRemote,
+  migrateOpenDoc,
+  reloadDoc,
+  withDetachedDoc,
+  withDocFromStorage,
+} from "./docs";
 import { sameStatus } from "./status-store";
 import { extractText, firstLine } from "./ydoc";
 import { linkTargets } from "@/lib/note-links";
@@ -59,6 +65,7 @@ export class SyncEngine {
   private releaseLock: (() => void) | null = null;
   private unwatch: (() => void) | null = null;
   private unwatchOutbox: (() => void) | null = null;
+  private unwatchVault: (() => void) | null = null;
   private lastRefsPass = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private interval = IDLE_INTERVAL_MS;
@@ -135,6 +142,11 @@ export class SyncEngine {
     this.claimLeadership();
     this.attachWindowHooks();
     this.unwatchOutbox = onOutboxChanged(() => this.kick(250));
+    // Edits of a locked note refused while the vault was closed go once it
+    // opens (rebaseRefused), not at the next round.
+    this.unwatchVault = vault.subscribe((unlocked) => {
+      if (unlocked) this.kick(0);
+    });
   }
 
   stop(): void {
@@ -145,6 +157,8 @@ export class SyncEngine {
     this.timer = null;
     this.unwatchOutbox?.();
     this.unwatchOutbox = null;
+    this.unwatchVault?.();
+    this.unwatchVault = null;
     this.releaseLock?.();
     this.releaseLock = null;
     this.leader = false;
@@ -520,6 +534,7 @@ export class SyncEngine {
       // before the block that references it is compacted.
       const { flushUploads } = await import("@/lib/media/attachments");
       await flushUploads(this.client).catch(() => {});
+      await this.rebaseRefused();
       for (;;) {
         const now = Date.now();
         const entries = await database.outbox
@@ -564,7 +579,7 @@ export class SyncEngine {
           if (result.status === "ok") {
             await database.outbox.delete(entry.opId);
           } else {
-            await this.handleRejection(entry.opId, entry.kind, entry.entityId, result.reason);
+            await this.handleRejection(entry.opId, entry.kind, result.reason);
           }
         }
 
@@ -601,19 +616,14 @@ export class SyncEngine {
    * A rejected operation is dropped rather than retried forever. The two that
    * matter are a stale clock, which the client has already corrected, and a
    * stale key epoch, which means the note was locked or unlocked elsewhere and
-   * the local edit has to be re-derived against the new epoch.
+   * the local edit has to be re-derived against the new epoch (rebaseNote).
    *
    * An edit to a note's text refused because the account is full is the
    * exception: it is kept, and sent again from time to time until there is
    * room. Dropped, it would be gone from this device too once the note was
    * closed, and what came after it would wait on other devices for it.
    */
-  private async handleRejection(
-    opId: string,
-    kind: string,
-    entityId: string,
-    reason?: string,
-  ): Promise<void> {
+  private async handleRejection(opId: string, kind: string, reason?: string): Promise<void> {
     const database = db();
     if (reason === "quotaExceeded" && kind === "update") {
       await database.outbox.update(opId, { retryAt: Date.now() + QUOTA_RETRY_MS });
@@ -628,36 +638,84 @@ export class SyncEngine {
       }
     }
     await database.outbox.delete(opId);
-    if (kind === "update") {
-      await database.updates.where("opId").equals(opId).delete();
-      if (reason === "epochMismatch") await this.rebaseNote(entityId);
+    if (kind !== "update") return;
+    if (reason === "epochMismatch") {
+      // The stored edit is kept: in a note not open here it is the only copy
+      // of what was typed. The push that follows at once sends it again
+      // under the note's new epoch (rebaseRefused).
+      this.again = true;
+      return;
+    }
+    await database.updates.where("opId").equals(opId).delete();
+  }
+
+  /**
+   * The edits refused for their key epoch, sent again: at once after the
+   * refusal, or, when that could not be done then, with a later push. Until
+   * the pull brings the note's new epoch this device does not know what to
+   * send them under, and a locked note's are sealed only with the vault open,
+   * as files are (flushUploads).
+   */
+  private async rebaseRefused(): Promise<void> {
+    // The notes with edits not sent, read from the index alone. Dexie's types
+    // do not describe a compound key.
+    const keys = await db().updates.orderBy("[noteId+pushed]").uniqueKeys();
+    for (const [noteId, pushed] of keys as unknown as [string, 0 | 1][]) {
+      // One that cannot be done now is tried again by the next push.
+      if (pushed === 0) await this.rebaseNote(noteId).catch(() => {});
     }
   }
 
   /**
-   * Re-sends a note's local edits under the epoch the server now expects.
+   * Re-sends a note's refused edits under the epoch the server now expects.
    *
-   * The device's document still holds the work; what changed is how it must be
-   * encrypted. Taking a Yjs diff against the server's state vector keeps the
-   * edit and drops nothing.
+   * What changed is how they must be encrypted, so they are re-derived as a
+   * Yjs diff: the note as stored here, against the note as the server has it
+   * once its new body is in, which is storage without them. Both are read
+   * from storage, never from the document open here: the editor's document
+   * takes in that body too, and so already holds everything, which left
+   * nothing to send; and what it has not stored yet is stored and sent on
+   * its own.
    */
   private async rebaseNote(noteId: string): Promise<void> {
     const database = db();
     const note = await database.notes.get(noteId);
     if (!note) return;
+    // Refused: not sent, no longer queued, and under an epoch the note has
+    // since left. One under the epoch this device still has waits for the
+    // pull to bring the new one.
+    const stale = (
+      await database.updates.where("[noteId+pushed]").equals([noteId, 0]).toArray()
+    ).filter((update) => update.keyEpoch !== note.keyEpoch);
+    const queued = await database.outbox.bulkGet(stale.map((update) => update.opId));
+    const refused = stale.filter((_, at) => !queued[at]);
+    // One sealed under the key the note has left cannot be read with the one
+    // it has now (hydrate fails on it), and goes.
+    const sealed = refused.filter((update) => update.iv).map((update) => update.localId!);
+    if (sealed.length > 0) await database.updates.bulkDelete(sealed);
+    const plain = new Set(refused.filter((update) => !update.iv).map((update) => update.localId!));
+    if (plain.size === 0) return;
+    if (note.locked && (!note.wrappedKey || !vault.isUnlocked)) return; // Retried after unlock.
 
-    const local = await withDetachedDoc(noteId, (doc) => Y.encodeStateAsUpdate(doc));
     await this.fetchBodies([noteId]);
-    const server = await withDetachedDoc(noteId, (doc) => Y.encodeStateVector(doc));
-
-    const merged = new Y.Doc();
-    Y.applyUpdate(merged, local);
-    const diff = Y.encodeStateAsUpdate(merged, server);
-    merged.destroy();
-    if (diff.byteLength === 0) return;
+    const local = await withDocFromStorage(noteId, (doc) => Y.encodeStateAsUpdate(doc));
+    const [server, has] = await withDocFromStorage(
+      noteId,
+      (doc) => [Y.encodeStateVector(doc), Y.snapshot(doc)] as const,
+      (update) => plain.has(update.localId!),
+    );
 
     const fresh = await database.notes.get(noteId);
-    if (!fresh) return;
+    // Locked or unlocked again meanwhile: done again under that epoch.
+    if (!fresh || fresh.keyEpoch !== note.keyEpoch) return;
+    // Nothing the server lacks (taken in before the epoch moved on, or sent
+    // again with others already): they go. Asked of what the server has, not
+    // of the diff's length: a diff with nothing in it still has bytes.
+    if (Y.snapshotContainsUpdate(has, local)) {
+      await database.updates.bulkDelete([...plain]);
+      return;
+    }
+    const diff = Y.diffUpdate(local, server);
 
     let data = diff;
     let iv: Uint8Array | undefined;
@@ -670,29 +728,34 @@ export class SyncEngine {
     }
 
     const { uuidv7 } = await import("uuidv7");
-    const opId = uuidv7();
-    await database.updates.add({
-      noteId,
-      seq: null,
-      opId,
-      keyEpoch: fresh.keyEpoch,
-      data,
-      iv,
-      pushed: 0,
-      createdAt: Date.now(),
-    });
     const { enqueue } = await import("./outbox");
-    await enqueue({
-      opId,
-      kind: "update",
-      entityId: noteId,
-      payload: {
-        kind: "update",
+    const opId = uuidv7();
+    // In their place in one go, as write() stores and queues: a note read
+    // in between would lack what was typed.
+    await database.transaction("rw", [database.updates, database.outbox], async () => {
+      await database.updates.bulkDelete([...plain]);
+      await database.updates.add({
         noteId,
+        seq: null,
+        opId,
         keyEpoch: fresh.keyEpoch,
-        payload: toArrayBuffer(data),
-        ...(iv ? { iv: toArrayBuffer(iv) } : {}),
-      },
+        data,
+        iv,
+        pushed: 0,
+        createdAt: Date.now(),
+      });
+      await enqueue({
+        opId,
+        kind: "update",
+        entityId: noteId,
+        payload: {
+          kind: "update",
+          noteId,
+          keyEpoch: fresh.keyEpoch,
+          payload: toArrayBuffer(data),
+          ...(iv ? { iv: toArrayBuffer(iv) } : {}),
+        },
+      });
     });
   }
 

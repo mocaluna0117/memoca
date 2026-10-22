@@ -3,7 +3,7 @@
 import { uuidv7 } from "uuidv7";
 import * as Y from "yjs";
 import { toArrayBuffer, toBytes } from "@/lib/bytes";
-import { type BodyState, db } from "@/lib/db";
+import { type BodyState, type LocalUpdate, db } from "@/lib/db";
 import { vault } from "@/lib/crypto/vault";
 import { migrateOldQuickBody } from "@/lib/quick/body";
 import type { Note } from "@/lib/types";
@@ -70,12 +70,12 @@ async function hydrate(
   noteId: string,
   note: Note | undefined,
   doc: Y.Doc,
-  { sentOnly = false }: { sentOnly?: boolean } = {},
+  { skip }: { skip?: (update: LocalUpdate) => boolean } = {},
 ): Promise<void> {
   const database = db();
   const snapshot = await database.snapshots.get(noteId);
   const updates = (await database.updates.where("noteId").equals(noteId).toArray()).filter(
-    (update) => !sentOnly || update.pushed === 1,
+    (update) => !skip?.(update),
   );
   updates.sort((a, b) => (a.seq ?? Number.MAX_SAFE_INTEGER) - (b.seq ?? Number.MAX_SAFE_INTEGER));
 
@@ -566,10 +566,24 @@ export async function withSentDoc<T>(
   noteId: string,
   fn: (doc: Y.Doc) => Promise<T> | T,
 ): Promise<T> {
+  return withDocFromStorage(noteId, fn, (update) => update.pushed !== 1);
+}
+
+/**
+ * The note as storage holds it, without the stored edits `skip` picks, and
+ * never the document open here: what the editor has not stored yet is
+ * stored, and sent, on its own. For sending again the edits the server
+ * refused for their key epoch (lib/sync/engine).
+ */
+export async function withDocFromStorage<T>(
+  noteId: string,
+  fn: (doc: Y.Doc) => Promise<T> | T,
+  skip?: (update: LocalUpdate) => boolean,
+): Promise<T> {
   const doc = new Y.Doc();
   try {
     const note = await db().notes.get(noteId);
-    await hydrate(noteId, note, doc, { sentOnly: true });
+    await hydrate(noteId, note, doc, { skip });
     return await fn(doc);
   } finally {
     doc.destroy();
