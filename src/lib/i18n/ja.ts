@@ -60,6 +60,7 @@ export const ja = {
     pending: (n: number) => `未送信 ${n} 件`,
     catchingUp: "読み込み中",
     quotaFull: "容量がいっぱいで保存できていません",
+    heldForVault: "ロックしたメモに、金庫を開くと送る編集があります",
   },
   empty: {
     noNotes: "まだメモがありません",

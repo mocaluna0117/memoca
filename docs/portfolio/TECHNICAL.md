@@ -313,31 +313,47 @@ sequenceDiagram
 
 受け付けると `replaceBody` が差分と変更履歴をすべて消してスナップショットを入れ、`swapAttachments` が平文のファイルを暗号化したものに差し替え、メモの行を `locked: true`・新しい代・`title: null`・`preview: null` にする。
 
-拒否された端末 B は、その op を outbox から外すが、**`updates` の差分の行は消さずに残す**。メモを開いていなければ、この行が打った内容の唯一の写しだからである。送り直しは [`engine.ts`](https://github.com/mocaluna0117/memoca/blob/main/src/lib/sync/engine.ts) の `rebaseNote` が、毎回の送信の始め（`rebaseRefused`）で行う。拒否を受けたときは、次の送信をすぐに始める。対象は、未送信（`pushed: 0`）で outbox に無く、行の代が端末の知っているメモの代と違う行である。次の場合は何もせず、次の送信で確かめ直す。
+拒否された端末 B は、その op を outbox から外すが、**`updates` の差分の行は消さずに残す**。メモを開いていなければ、この行が打った内容の唯一の写しだからである。送り直しは [`engine.ts`](https://github.com/mocaluna0117/memoca/blob/main/src/lib/sync/engine.ts) の `rebaseNote` が、毎回の送信の始め（`rebaseRefused`）で行う。拒否を受けたときは、次の送信をすぐに始める。`rebaseRefused` は `pushed` のインデックスで未送信の行だけを読み、outbox に無いものをメモごとにまとめる。そのうち、行の代が端末の知っているメモの代と違うものが対象になる。次の場合は何もせず、次の送信で確かめ直す。
 
 - 行の代とメモの代が同じ：ロックを pull でまだ受け取っておらず、どの代で送ればよいかわからない
 - メモがロック中で金庫が閉じている：暗号化できない。金庫が開くと、エンジンはすぐ送信を始め直す
+- 本文を取り直したとき、サーバーが答えたメモの代が端末の知っている代と違う：別の端末でさらにロックやロックの解除があった。いまの代で暗号化して送っても拒否され、その代を pull で受け取ったときに読めない行として捨てることになるので、受け取るまで待つ
 
-送れるときは、本文を取り直してから、**端末に保存してある内容だけで**2つの文書を作り、その差分を取る。1つは残した行を含む（手元の状態）、もう1つは残した行を除く（サーバーが持っている状態）。開いているエディタの `Y.Doc` は使わない。エディタの文書は取り直した本文も取り込むので、それと比べると差分が空になるからである。エディタがまだ保存していない編集は、それ自体が新しい代で保存され、送られる。
+本文を取り直しても送れなかったメモは、次に取り直すまで5秒待ち、うまくいかないたびに待ちを倍にする（最大5分）。メモの代が変われば、待たずにすぐ取り直す。送信のたびにサーバーへ問い合わせないためである。
+
+送れるときは、**端末に保存してある内容だけで**2つの文書を作り、その差分を取る。1つは残した行を含む（手元の状態）、もう1つは残した行を除く（サーバーが持っている状態）。どちらからも、ほかの未送信の行（新しい代で書いて outbox に入っているものなど）は除く。両方から除くので、それらは差分に入らず、自分の op として1回だけ送られる。開いているエディタの `Y.Doc` は使わない。エディタの文書は取り直した本文も取り込むので、それと比べると差分が空になるからである。エディタがまだ保存していない編集は、それ自体が新しい代で保存され、送られる。
 
 ```ts
 // src/lib/sync/engine.ts — rebaseNote（抜粋）
-await this.fetchBodies([noteId]);
-const local = await withDocFromStorage(noteId, (doc) => Y.encodeStateAsUpdate(doc));
+const epochs = await this.pullBodies([noteId]); // 本文を取り直し、サーバーのいまの代を知る
+if (epochs.get(noteId) !== note.keyEpoch) return false;
+const local = await withDocFromStorage(
+  noteId,
+  (doc) => Y.encodeStateAsUpdate(doc),
+  (update) => update.pushed === 0 && !plain.has(update.localId!), // 残した行のほかの未送信を除く
+);
 const [server, has] = await withDocFromStorage(
   noteId,
   (doc) => [Y.encodeStateVector(doc), Y.snapshot(doc)] as const,
-  (update) => plain.has(update.localId!), // 残した行を除く
+  (update) => update.pushed === 0, // 未送信をすべて除く
 );
 if (Y.snapshotContainsUpdate(has, local)) { /* サーバーがすべて持っている：残した行を消して終わる */ }
 const diff = Y.diffUpdate(local, server);
 ```
 
-空かどうかは、差分のバイト数ではなく「サーバーの状態がすでに含んでいるか」（`Y.snapshotContainsUpdate`）で決める。中身の無い Yjs の差分も2バイトあるためである。差分は新しい代の鍵で暗号化し、残した行の削除、新しい行の保存、outbox への追加を1つのトランザクションで行う。1回の送信で同じメモの差分が何件拒否されても、送り直す差分は1件にまとまる。古い代の平文がロック後のサーバーに載ることはない（サーバーが代で拒否し、端末は新しい代の鍵で暗号化してからしか送らない）。ただし金庫が閉じている間は、拒否された平文の行が端末の IndexedDB に残る。ロックの前に、この端末にすでに平文で書かれていたものである。
+空かどうかは、差分のバイト数ではなく「サーバーの状態がすでに含んでいるか」（`Y.snapshotContainsUpdate`）で決める。中身の無い Yjs の差分も2バイトあるためである。差分は新しい代の鍵で暗号化し、残した行の削除、新しい行の保存、outbox への追加を1つのトランザクションで行う。エンジンが止まっていれば（ログアウトなど）、何も書かない。1回の送信で同じメモの差分が何件拒否されても、送り直す差分は1件にまとまる。
 
-以前は、拒否された行を先に消してから手元の文書を作っていた。そのためメモを開いていなければ打った内容が差分に入らず、端末からも消えていた。開いていても、比べる相手がエディタの文書だったため差分が空になり、送られなかった。金庫が閉じていたときの「開いたあとに送り直す」も、行が消えていて実際には行われなかった。この3つと、ロックを受け取る前に拒否された場合を [`tests/rebase-epoch.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/rebase-epoch.test.ts) で固定している。
+ロック後のサーバーに古い代の平文が**保存される**ことはない。B が最初に送った差分は平文のまま届くが、サーバーが代で拒否する。送り直す差分は、新しい代の鍵で暗号化してから送る。ただし金庫が閉じている間は、拒否された平文の行が端末の IndexedDB に残る。ロックの前に、この端末にすでに平文で書かれていたものである。
 
-逆向き（ロック中に暗号文で書いた編集が、別の端末でロックを外されて拒否された場合）は直していない。古い代の鍵で暗号化された行は、メモのいまの鍵では読めないので、従来どおり捨てる。
+残した行は outbox に無いので、送信の件数（「未送信 N 件」）には数えない。金庫を開くのを待っている間は、同期の表示を「ロックしたメモに、金庫を開くと送る編集があります」にする（`SyncStatus.heldForVault`）。金庫は既定で5分操作しないと閉じるので、この待ちは何時間も続きうる。ログアウトの前の確認（`unsentOnDevice`）は、残した行も「サーバーに送っていない変更」に数える。ログアウトは端末のデータを消すので、数えなければ黙って失われる。
+
+以前は、拒否された行を先に消してから手元の文書を作っていた。そのためメモを開いていなければ打った内容が差分に入らず、端末からも消えていた。開いていても、比べる相手がエディタの文書だったため差分が空になり、送られなかった。金庫が閉じていたときの「開いたあとに送り直す」も、行が消えていて実際には行われなかった。これらと、ロックを受け取る前に拒否された場合、サーバーの代がさらに進んでいた場合、ロック後に打った編集が二重に送られないこと、待ちの表示とログアウト前の数えを [`tests/rebase-epoch.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/rebase-epoch.test.ts) などで固定している。
+
+残っている制限は次のとおりである。
+
+- 逆向き（ロック中に暗号文で書いた編集が、別の端末でロックを外されて拒否された場合）は直していない。古い代の鍵で暗号化された行は、メモのいまの鍵では読めないので、従来どおり捨てる。メモの代が1つ遅れている間に暗号文で書いた編集も同じである
+- 本文を取り直してから送るまでの間に、別の端末でさらにロックやロックの解除があると、送り直した差分は拒否され、読めない行として捨てられる
+- 同期するのは端末の中で代表のウィンドウ1つだけである。ロックしたメモの送り直しは、そのウィンドウで金庫が開くのを待つ。ほかのウィンドウで金庫を開いても送られず、待ちの表示も代表のウィンドウにだけ出る
 
 フォルダのロックでは、サーバーの `setFolderLock` は印付きで旗を切り替えるだけである。中のメモは鍵を持つ端末が1件ずつ `lockNote` する（[`cascade.ts`](https://github.com/mocaluna0117/memoca/blob/main/src/lib/vault/cascade.ts)）。ロックしたフォルダの中に作るメモは、最初から代1で暗号化して作る（`createLockedNote`）。サーバーは平文のタイトルや不正な代での作成を拒否する。
 
@@ -486,7 +502,7 @@ return { keep: started, drop: now.id };
 | [`convex/vault.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/convex/vault.test.ts) | 2回目の作成は既存の金庫を置き換えない／2,000件を超える差分のロックは何も変えずに拒否／平文のファイルが残るロックは拒否 |
 | [`convex/attachments.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/convex/attachments.test.ts)・[`tests/attachment-refs.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/attachment-refs.test.ts)・[`tests/report-refs-stored.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/report-refs-stored.test.ts) | 最新でない報告は拒否／報告が欠けたメモが1つでもあれば何も消さない／別のメモにコピーしたファイルは使用中のまま／開けないロックしたメモを「何も使っていない」と報告しない／別のタブの書き込みを含めて報告する |
 | [`tests/quota-held-edits.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/quota-held-edits.test.ts) | 容量超過で拒否された本文は端末に残り、空きができたら送られる |
-| [`tests/rebase-epoch.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/rebase-epoch.test.ts) | 別の端末のロックで拒否された本文は、メモを開いていてもいなくても、新しい代の鍵で暗号化して1回だけ送り直され、端末にも残る／金庫が閉じていれば平文を送らずに残し、開いたら送る／ロックを受け取る前の拒否は、受け取るまで待つ |
+| [`tests/rebase-epoch.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/rebase-epoch.test.ts)・[`tests/unsent.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/unsent.test.ts)・[`tests/sync-badge.test.tsx`](https://github.com/mocaluna0117/memoca/blob/main/tests/sync-badge.test.tsx) | 別の端末のロックで拒否された本文は、メモを開いていてもいなくても、新しい代の鍵で暗号化して1回だけ送り直され、端末にも残る／金庫が閉じていれば送り直さずに残し、待っていると表示し、ログアウト前に数え、開いたら送る／ロックを受け取る前の拒否は、受け取るまで待つ／サーバーの代がさらに進んでいれば、それを受け取るまで待つ／取り直しても送れないメモは、サーバーに毎回は問い合わせない／ロック後に打った編集は送り直しに含めない／止まったエンジンは書かない |
 | [`tests/classify.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/classify.test.ts)・[`tests/search.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/search.test.ts)・[`tests/ime-commit.test.ts`](https://github.com/mocaluna0117/memoca/blob/main/tests/ime-commit.test.ts) | 画像の見分けと書き方／表記ゆれと読みでの検索／IME の迷子の行の判定 |
 
 ---

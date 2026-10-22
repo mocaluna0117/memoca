@@ -6,6 +6,7 @@ const FIELDS = [
   "lastSyncAt",
   "catchingUp",
   "quotaFull",
+  "heldForVault",
 ] as const satisfies readonly (keyof SyncStatus)[];
 
 /** Whether two statuses say the same, field by field. */

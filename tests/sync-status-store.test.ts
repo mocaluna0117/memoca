@@ -8,6 +8,7 @@ const idle: SyncStatus = {
   lastSyncAt: null,
   catchingUp: false,
   quotaFull: false,
+  heldForVault: false,
 };
 
 describe("the sync status store", () => {
@@ -51,6 +52,7 @@ describe("the sync status store", () => {
   test("statuses are the same by their fields, whatever object holds them", () => {
     expect(sameStatus(idle, { ...idle })).toBe(true);
     expect(sameStatus(idle, { ...idle, quotaFull: true })).toBe(false);
+    expect(sameStatus(idle, { ...idle, heldForVault: true })).toBe(false);
     expect(sameStatus(idle, { ...idle, catchingUp: true })).toBe(false);
   });
 });

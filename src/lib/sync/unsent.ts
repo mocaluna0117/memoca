@@ -3,20 +3,24 @@
 import { db } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { type QuickDraft, unsaved } from "@/lib/quick/draft";
+import { editsOutOfOutbox } from "./outbox";
 
 /**
  * What only this device has: changes not sent to the server yet, files not
- * uploaded yet, and quick notes written but not saved. Signing out (or
- * anything else that clears the device) would lose it for good: nowhere
- * else has it. While the server takes writes they are seconds old; while it
+ * uploaded yet, and quick notes written but not saved. The changes include
+ * edits refused for a lock made elsewhere, kept out of the outbox until they
+ * can be sent again: with the vault closed, for as long as it stays so.
+ * Signing out (or anything else that clears the device) would lose it for
+ * good: nowhere else has it. While the server takes writes they are seconds old; while it
  * does not (no network, or the Convex plan's limits reached), they pile up.
  */
 export type Unsent = { changes: number; files: number; quickNotes: number };
 
 export async function unsentOnDevice(): Promise<Unsent> {
   const database = db();
-  const [changes, files, drafts] = await Promise.all([
+  const [queued, kept, files, drafts] = await Promise.all([
     database.outbox.count(),
+    editsOutOfOutbox(),
     database.pendingUploads.count(),
     database.meta.where("key").startsWith(`${META.quickDraft}:`).toArray(),
   ]);
@@ -24,7 +28,7 @@ export async function unsentOnDevice(): Promise<Unsent> {
     const draft = row.value as QuickDraft | null;
     return draft && unsaved({ text: draft.text, images: draft.images ?? [], saved: draft.saved });
   }).length;
-  return { changes, files, quickNotes };
+  return { changes: queued + kept.length, files, quickNotes };
 }
 
 /** Whether anything would be lost. */

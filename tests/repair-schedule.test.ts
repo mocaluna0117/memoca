@@ -14,6 +14,7 @@ const status = (over: Partial<SyncStatus> = {}): SyncStatus => ({
   lastSyncAt: null,
   catchingUp: false,
   quotaFull: false,
+  heldForVault: false,
   ...over,
 });
 

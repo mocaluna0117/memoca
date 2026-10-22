@@ -1,7 +1,7 @@
 "use client";
 
 import { uuidv7 } from "uuidv7";
-import { db } from "@/lib/db";
+import { type LocalUpdate, db } from "@/lib/db";
 import { notifyOutboxChanged } from "./signal";
 
 export type QueuedOp = {
@@ -33,4 +33,20 @@ export async function enqueue(op: Omit<QueuedOp, "opId"> & { opId?: string }): P
 
 export async function pendingCount(): Promise<number> {
   return db().outbox.count();
+}
+
+/**
+ * Edits stored here, not sent, and not queued: refused for the key epoch
+ * they were made under, and kept until they are sent again under the note's
+ * new one (lib/sync/engine rebaseNote). For a moment also one the server has
+ * just taken, until it comes back from it.
+ */
+export async function editsOutOfOutbox(): Promise<LocalUpdate[]> {
+  const database = db();
+  const [unsent, queued] = await Promise.all([
+    database.updates.where("pushed").equals(0).toArray(),
+    database.outbox.toCollection().primaryKeys(),
+  ]);
+  const inOutbox = new Set(queued);
+  return unsent.filter((update) => !inOutbox.has(update.opId));
 }

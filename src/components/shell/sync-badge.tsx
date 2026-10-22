@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, CloudOff, Loader2, RefreshCw, TriangleAlert } from "lucide-react";
+import { Check, CloudOff, Loader2, Lock, RefreshCw, TriangleAlert } from "lucide-react";
 import { useSync, useSyncStatus } from "@/components/providers/sync-provider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOutboxCount } from "@/lib/hooks/data";
@@ -18,9 +18,11 @@ export function SyncBadge({ className }: { className?: string }) {
       ? CloudOff
       : status.state === "error" || status.quotaFull
         ? TriangleAlert
-        : busy
-          ? Loader2
-          : Check;
+        : status.heldForVault
+          ? Lock
+          : busy
+            ? Loader2
+            : Check;
 
   const label =
     status.state === "offline"
@@ -29,11 +31,13 @@ export function SyncBadge({ className }: { className?: string }) {
         ? t.sync.error
         : status.quotaFull
           ? t.sync.quotaFull
-          : pending > 0
-            ? t.sync.pending(pending)
-            : status.catchingUp
-              ? t.sync.catchingUp
-              : t.sync.idle;
+          : status.heldForVault
+            ? t.sync.heldForVault
+            : pending > 0
+              ? t.sync.pending(pending)
+              : status.catchingUp
+                ? t.sync.catchingUp
+                : t.sync.idle;
 
   return (
     <Tooltip>

@@ -17,6 +17,7 @@ import "@/lib/sync/mutations";
 import "@/lib/sync/versions";
 import { acquireDoc, flushDoc, openDoc, releaseDoc, withDetachedDoc } from "@/lib/sync/docs";
 import { SyncEngine } from "@/lib/sync/engine";
+import { unsentOnDevice } from "@/lib/sync/unsent";
 import type { Note, Sealed } from "@/lib/types";
 import { fakeConvex } from "./helpers/fake-convex";
 import { FAST_ARGON, zero } from "./helpers/seed";
@@ -29,6 +30,8 @@ const BEFORE = "元の文";
 const TYPED_FIRST = "、オフラインで";
 const TYPED_THEN = "書き足した文";
 const TYPED = TYPED_FIRST + TYPED_THEN;
+/** What B typed once it had heard of the lock. */
+const MORE = "。ロックの後に打った文";
 
 const textOf = (doc: Y.Doc) => doc.getText("t").toString();
 
@@ -95,6 +98,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const engine of engines.splice(0)) engine.stop();
   for (const noteId of opened.splice(0)) await releaseDoc(noteId);
   vault.lock();
@@ -135,18 +139,14 @@ async function hearOfLock(wrappedKey: Sealed): Promise<void> {
 }
 
 /**
- * Device A locks the note meanwhile: the server holds it as A had it, sealed
- * under key epoch 1, and refuses anything sent under epoch 0. Unless `heard`
- * is false, B learns of the lock (the note row as a pull brings it) before
- * its edits are sent.
+ * The server, holding the note at key epoch `epoch` as device A had it:
+ * sealed with `key` when it is locked there, readable when not. It refuses
+ * anything sent under another epoch, as convex/sync.ts does.
  */
-async function lockElsewhere({ heard = true }: { heard?: boolean } = {}) {
-  const { key, wrapped } = await vault.createNoteKey(NOTE, 1);
-  const snapshot = await seal(key, before, ctx.yjsSnapshot(NOTE, 1));
-  if (heard) await hearOfLock(wrapped);
-
+function serverAt(epoch: number, key?: CryptoKey) {
   const accepted: UpdateOp[] = [];
   const refused: UpdateOp[] = [];
+  let snapshot: { ct: Uint8Array; iv?: Uint8Array } = { ct: before };
   const server = fakeConvex({
     "sync:push": (args) => ({
       serverTime: Date.now(),
@@ -154,12 +154,15 @@ async function lockElsewhere({ heard = true }: { heard?: boolean } = {}) {
       shouldCompact: [],
       results: (args.ops as UpdateOp[]).map((op) => {
         if (op.kind !== "update") return { opId: op.opId, status: "ok" };
-        // As convex/sync.ts checks them: the epoch first, then the sealing.
-        if (op.keyEpoch !== 1) {
+        // The epoch first, then the sealing.
+        if (op.keyEpoch !== epoch) {
           refused.push(op);
           return { opId: op.opId, status: "rejected", reason: "epochMismatch" };
         }
-        if (!op.iv) return { opId: op.opId, status: "rejected", reason: "plaintextIntoLockedNote" };
+        if (key && !op.iv)
+          return { opId: op.opId, status: "rejected", reason: "plaintextIntoLockedNote" };
+        if (!key && op.iv)
+          return { opId: op.opId, status: "rejected", reason: "ciphertextIntoPlainNote" };
         accepted.push(op);
         return { opId: op.opId, status: "ok" };
       }),
@@ -167,7 +170,7 @@ async function lockElsewhere({ heard = true }: { heard?: boolean } = {}) {
     "notes:getBodies": (args) => ({
       bodies: (args.items as { noteId: string; haveThroughSeq: number }[]).map((item) => ({
         noteId: item.noteId,
-        keyEpoch: 1,
+        keyEpoch: epoch,
         lastUpdateSeq: 1,
         snapshot:
           item.haveThroughSeq < 1
@@ -175,7 +178,7 @@ async function lockElsewhere({ heard = true }: { heard?: boolean } = {}) {
                 coversThroughSeq: 1,
                 size: snapshot.ct.byteLength,
                 payload: toArrayBuffer(snapshot.ct),
-                iv: toArrayBuffer(snapshot.iv),
+                ...(snapshot.iv ? { iv: toArrayBuffer(snapshot.iv) } : {}),
               }
             : null,
         updates: [],
@@ -184,25 +187,80 @@ async function lockElsewhere({ heard = true }: { heard?: boolean } = {}) {
     }),
   });
 
-  /** The note as the server now has it, opened with the note's new key. */
-  const onServer = async () => {
+  /** What one edit taken by the server holds, read as the note's other devices would. */
+  const opened = async (op: UpdateOp) =>
+    key
+      ? await open(
+          key,
+          new Uint8Array(op.payload),
+          new Uint8Array(op.iv!),
+          ctx.yjsUpdate(NOTE, epoch),
+        )
+      : new Uint8Array(op.payload);
+
+  /** The note as the server now has it, opened with the note's key when it is locked. */
+  const onServer = async (ops = accepted) => {
     const doc = new Y.Doc();
     Y.applyUpdate(doc, before);
-    for (const op of accepted) {
-      Y.applyUpdate(
-        doc,
-        await open(key, new Uint8Array(op.payload), new Uint8Array(op.iv!), ctx.yjsUpdate(NOTE, 1)),
-      );
-    }
+    for (const op of ops) Y.applyUpdate(doc, await opened(op));
     const text = textOf(doc);
     doc.destroy();
     return text;
   };
 
-  return { client: server.client, wrapped, accepted, refused, onServer };
+  return {
+    client: server.client,
+    accepted,
+    refused,
+    onServer,
+    /** How many times the device asked for the note's body. */
+    bodiesAsked: () => server.callsTo("notes:getBodies").length,
+    seal: async () => {
+      if (!key) return;
+      const sealed = await seal(key, before, ctx.yjsSnapshot(NOTE, epoch));
+      snapshot = { ct: sealed.ct, iv: sealed.iv };
+    },
+  };
 }
 
-type Server = Awaited<ReturnType<typeof lockElsewhere>>;
+/**
+ * Device A locks the note meanwhile: the server holds it as A had it, sealed
+ * under key epoch 1, and refuses anything sent under epoch 0. Unless `heard`
+ * is false, B learns of the lock (the note row as a pull brings it) before
+ * its edits are sent.
+ */
+async function lockElsewhere({ heard = true }: { heard?: boolean } = {}) {
+  const { key, wrapped } = await vault.createNoteKey(NOTE, 1);
+  const server = serverAt(1, key);
+  await server.seal();
+  if (heard) await hearOfLock(wrapped);
+  return { ...server, wrapped };
+}
+
+/**
+ * Device A locks the note and unlocks it again: the server holds it readable
+ * under key epoch 2. B has heard of the lock (epoch 1) but not of the unlock.
+ */
+async function lockedAndUnlockedElsewhere() {
+  const { wrapped } = await vault.createNoteKey(NOTE, 1);
+  await hearOfLock(wrapped);
+  return serverAt(2);
+}
+
+/** The note row as a pull brings it once the note is unlocked again, at epoch 2. */
+async function hearOfUnlock(): Promise<void> {
+  await db().notes.update(NOTE, {
+    locked: false,
+    keyEpoch: 2,
+    wrappedKey: undefined,
+    lockOrigin: undefined,
+    title: "メモ",
+  });
+}
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+type Server = ReturnType<typeof serverAt>;
 
 async function startEngine(client: ConvexReactClient): Promise<SyncEngine> {
   const engine = new SyncEngine({
@@ -287,14 +345,19 @@ describe("edits refused because the note was locked on another device", () => {
     vault.lock();
     const engine = await startEngine(server.client);
     await refused(engine, server);
-    // Nothing could be sealed: nothing went, in plaintext or otherwise.
+    // Nothing could be sealed: nothing went again.
     expect(server.accepted).toHaveLength(0);
     expect(await keptUnderOldKey()).toBe(2);
+    // Said, and not as edits on their way: and signing out would warn of them.
+    await vi.waitFor(() => expect(engine.current.heldForVault).toBe(true), WAIT);
+    expect(engine.current.pending).toBe(0);
+    expect((await unsentOnDevice()).changes).toBe(2);
 
     // Opening the vault is enough: the engine sends them without being asked.
     await unlockWithPassword(record, PASSWORD);
     expect(await withDetachedDoc(NOTE, textOf)).toBe(BEFORE + TYPED);
     await resent(engine, server);
+    await vi.waitFor(() => expect(engine.current.heldForVault).toBe(false), WAIT);
 
     expect(await server.onServer()).toBe(BEFORE + TYPED);
     sentOnceSealed(server);
@@ -321,5 +384,92 @@ describe("edits refused because the note was locked on another device", () => {
     sentOnceSealed(server);
     expect(await withDetachedDoc(NOTE, textOf)).toBe(BEFORE + TYPED);
     await storedSealed();
+  });
+  test("what is typed under the new key meanwhile goes once, on its own, not again with them", async () => {
+    await typeOffline({ keepOpen: true });
+    const server = await lockElsewhere({ heard: false });
+    const engine = await startEngine(server.client);
+    await refused(engine, server);
+    await hearOfLock(server.wrapped);
+    // Typed on once the lock is known: stored sealed under epoch 1, and queued.
+    const doc = openDoc(NOTE)!;
+    doc.getText("t").insert(textOf(doc).length, MORE);
+    await flushDoc(NOTE);
+    engine.kick(0);
+    await resent(engine, server);
+
+    expect(await server.onServer()).toBe(BEFORE + TYPED + MORE);
+    expect(server.accepted).toHaveLength(2);
+    // Each read on its own, over what A had: the one sent again holds what
+    // was refused, and nothing of what was typed since.
+    const alone = await Promise.all(server.accepted.map((op) => server.onServer([op])));
+    expect(alone).toContain(BEFORE + TYPED);
+    expect(alone).not.toContain(BEFORE + TYPED + MORE);
+  });
+
+  test("when the server has moved on again (unlocked since): kept until this device hears of it, then sent as the server expects", async () => {
+    await typeOffline({ keepOpen: false });
+    const server = await lockedAndUnlockedElsewhere();
+    const engine = await startEngine(server.client);
+    await vi.waitFor(() => expect(server.bodiesAsked()).toBe(1), WAIT);
+    await refused(engine, server);
+    // Not sealed under the epoch this device knew, which the server has left.
+    expect(server.refused.every((op) => op.keyEpoch === 0 && op.iv === undefined)).toBe(true);
+    expect(await keptUnderOldKey()).toBe(2);
+
+    await hearOfUnlock();
+    engine.kick(0);
+    await resent(engine, server);
+
+    expect(await server.onServer()).toBe(BEFORE + TYPED);
+    expect(server.accepted).toHaveLength(1);
+    expect(server.accepted[0]!.keyEpoch).toBe(2);
+    expect(server.accepted[0]!.iv).toBeUndefined();
+    expect(await withDetachedDoc(NOTE, textOf)).toBe(BEFORE + TYPED);
+  });
+
+  test("one that does not go once the note's body is asked for: the server is asked again only after a while", async () => {
+    await typeOffline({ keepOpen: false });
+    const server = await lockedAndUnlockedElsewhere();
+    const engine = await startEngine(server.client);
+    await vi.waitFor(() => expect(server.bodiesAsked()).toBe(1), WAIT);
+    await refused(engine, server);
+
+    for (let round = 0; round < 3; round += 1) {
+      engine.kick(0);
+      await pause(200);
+    }
+    expect(server.bodiesAsked()).toBe(1);
+    expect(await keptUnderOldKey()).toBe(2);
+  });
+
+  test("not put in their place once the engine has stopped: the data may be another account's by then", async () => {
+    await typeOffline({ keepOpen: false });
+    const server = await lockElsewhere();
+    const database = db();
+    const transaction = database.transaction.bind(database) as (...args: unknown[]) => unknown;
+    let engine: SyncEngine | null = null;
+    let replacing = false;
+    vi.spyOn(database, "transaction").mockImplementation(((...args: unknown[]) => {
+      const tables = args[1];
+      // The edit sent again about to go in place of the refused ones: the
+      // engine stops first, as signing out stops it.
+      if (
+        Array.isArray(tables) &&
+        tables.length === 2 &&
+        tables.includes(database.updates) &&
+        tables.includes(database.outbox)
+      ) {
+        engine?.stop();
+        replacing = true;
+      }
+      return transaction(...args);
+    }) as never);
+    engine = await startEngine(server.client);
+    await vi.waitFor(() => expect(replacing).toBe(true), WAIT);
+    await pause(100);
+
+    expect(await database.outbox.count()).toBe(0);
+    expect(await keptUnderOldKey()).toBe(2);
   });
 });

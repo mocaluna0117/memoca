@@ -52,6 +52,7 @@ const IDLE: SyncStatus = {
   lastSyncAt: null,
   catchingUp: false,
   quotaFull: false,
+  heldForVault: false,
 };
 
 export function useSync(): SyncContextValue {

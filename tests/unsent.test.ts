@@ -38,3 +38,29 @@ test("changes not sent, files not uploaded and quick notes not saved, each count
     "保存していない即席メモ 1 件",
   ]);
 });
+
+test("edits refused for a lock made elsewhere, kept out of the outbox, counted with the changes", async () => {
+  const edit = (opId: string, pushed: 0 | 1) => ({
+    noteId: "n1",
+    seq: pushed ? 1 : null,
+    opId,
+    keyEpoch: 0,
+    data: new Uint8Array(1),
+    pushed,
+    createdAt: 0,
+  });
+  // Kept until it can be sent again; queued; and sent.
+  await db().updates.bulkAdd([edit("kept", 0), edit("queued", 0), edit("sent", 1)]);
+  await db().outbox.put({
+    opId: "queued",
+    kind: "update",
+    entityId: "n1",
+    payload: {},
+    createdAt: 0,
+    attempts: 0,
+  } as never);
+
+  const unsent = await unsentOnDevice();
+  expect(unsent).toEqual({ changes: 2, files: 0, quickNotes: 0 });
+  expect(unsentLines(unsent)).toEqual(["サーバーに送っていない変更 2 件"]);
+});
