@@ -1,8 +1,9 @@
 "use client";
 
 import { useLiveQuery } from "dexie-react-hooks";
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { db } from "@/lib/db";
+import { shareRow, shareRows } from "@/lib/hooks/share-rows";
 import {
   buildTree,
   sortNotes,
@@ -16,8 +17,47 @@ import { TEMPLATES_FOLDER_ID } from "@/lib/sync/mutations";
 
 const EMPTY: never[] = [];
 
+const noteKey = (note: Note) => note.noteId;
+const folderKey = (folder: Folder) => folder.folderId;
+
+/**
+ * useLiveQuery over rows, with the rows that did not change given back as the
+ * objects they were (see share-rows): a note typed in, written every flush,
+ * leaves every other row as it was, and a result with nothing changed in it
+ * does not render again at all.
+ */
+function useSharedRows<T>(
+  querier: () => Promise<T[]>,
+  deps: unknown[],
+  keyOf: (row: T) => string,
+): T[] {
+  const last = useRef<T[] | undefined>(undefined);
+  return useLiveQuery(
+    async () => {
+      const rows = shareRows(last.current, await querier(), keyOf);
+      last.current = rows;
+      return rows;
+    },
+    deps,
+    EMPTY as T[],
+  );
+}
+
+/** The same for one row: the object it was while nothing in it changed. */
+function useSharedRow<T>(querier: () => Promise<T>, deps: unknown[]): T | undefined {
+  const last = useRef<T | undefined>(undefined);
+  return useLiveQuery(
+    async () => {
+      const row = shareRow(last.current, await querier());
+      last.current = row;
+      return row;
+    },
+    deps,
+  );
+}
+
 export function useFolders(): Folder[] {
-  return useLiveQuery(() => db().folders.toArray(), [], EMPTY as Folder[]);
+  return useSharedRows(() => db().folders.toArray(), [], folderKey);
 }
 
 export function useFolderTree(): FolderNode[] {
@@ -34,7 +74,7 @@ export function useFolderTree(): FolderNode[] {
  * as the new folder's data.
  */
 export function useFolder(folderId: string | null): Folder | null | undefined {
-  const row = useLiveQuery(
+  const row = useSharedRow(
     async () => (folderId ? ((await db().folders.get(folderId)) ?? null) : null),
     [folderId],
   );
@@ -53,13 +93,13 @@ export function useNotes(scope: NoteScope): Note[] {
   const folders = useFolders();
   const trashed = useMemo(() => trashedFolderIds(folders), [folders]);
 
-  const notes = useLiveQuery(
+  const notes = useSharedRows(
     () =>
       scope.kind === "folder"
         ? db().notes.where("folderId").equals(scope.folderId).toArray()
         : db().notes.toArray(),
     [scope.kind, scope.kind === "folder" ? scope.folderId : ""],
-    EMPTY as Note[],
+    noteKey,
   );
 
   return useMemo(() => {
@@ -78,10 +118,10 @@ export function useNotes(scope: NoteScope): Note[] {
  * them with the folders).
  */
 export function useTopLevelNotes(): Note[] {
-  const notes = useLiveQuery(
+  const notes = useSharedRows(
     () => db().notes.filter((note) => note.folderId === null).toArray(),
     [],
-    EMPTY as Note[],
+    noteKey,
   );
   return useMemo(() => notes.filter((note) => !note.purged && note.deletedAt === null), [notes]);
 }
@@ -92,15 +132,15 @@ export function useTopLevelNotes(): Note[] {
  * `enabled` is not set, the tree showing none.
  */
 export function useNotesByFolder(enabled: boolean): ReadonlyMap<string, Note[]> {
-  const notes = useLiveQuery(
-    () =>
+  const notes = useSharedRows(
+    async () =>
       enabled
         ? db()
             .notes.filter((note) => note.folderId !== null && !note.purged && note.deletedAt === null)
             .toArray()
         : [],
     [enabled],
-    EMPTY as Note[],
+    noteKey,
   );
   return useMemo(() => {
     const byFolder = new Map<string, Note[]>();
@@ -115,10 +155,10 @@ export function useNotesByFolder(enabled: boolean): ReadonlyMap<string, Note[]> 
 
 /** The templates, by their titles: the readable notes of the folder of them. */
 export function useTemplates(): Note[] {
-  const notes = useLiveQuery(
+  const notes = useSharedRows(
     () => db().notes.where("folderId").equals(TEMPLATES_FOLDER_ID).toArray(),
     [],
-    EMPTY as Note[],
+    noteKey,
   );
   return useMemo(
     () =>
@@ -131,7 +171,7 @@ export function useTemplates(): Note[] {
 
 /** See {@link useFolder}: never return another note's row for this id. */
 export function useNote(noteId: string | null): Note | null | undefined {
-  const row = useLiveQuery(
+  const row = useSharedRow(
     async () => (noteId ? ((await db().notes.get(noteId)) ?? null) : null),
     [noteId],
   );
@@ -176,7 +216,7 @@ export type TrashEntry =
  */
 export function useTrash(): TrashEntry[] {
   const folders = useFolders();
-  const notes = useLiveQuery(() => db().notes.toArray(), [], EMPTY as Note[]);
+  const notes = useSharedRows(() => db().notes.toArray(), [], noteKey);
 
   return useMemo(() => {
     const byId = new Map(folders.map((f) => [f.folderId, f]));
