@@ -93,20 +93,8 @@ import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, fillFromTemplate } from 
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { useEscapeFromPage } from "@/lib/hooks/use-escape-from-page";
 import { useStableActions } from "@/lib/hooks/use-stable-actions";
+import { relativeDate } from "@/lib/relative-date";
 import { cn } from "@/lib/utils";
-
-function relativeDate(at: number): string {
-  const diff = Date.now() - at;
-  const minute = 60_000;
-  if (diff < minute) return "たった今";
-  if (diff < 60 * minute) return `${Math.floor(diff / minute)} 分前`;
-  const date = new Date(at);
-  const today = new Date();
-  if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString("ja-JP", { hour: "2-digit", minute: "2-digit" });
-  }
-  return date.toLocaleDateString("ja-JP", { month: "numeric", day: "numeric" });
-}
 
 const ROW_CLASS = "flex w-full flex-col gap-0.5 border-b px-4 py-3 text-left last:border-b-0";
 
