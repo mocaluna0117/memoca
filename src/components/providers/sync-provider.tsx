@@ -45,6 +45,14 @@ const SyncContext = createContext<SyncContextValue | null>(null);
  * context, each change would draw everything that reads anything of sync.
  */
 const SyncStatusContext = createContext<StatusStore | null>(null);
+/**
+ * The engine alone, by one function for the app's whole life, for those who
+ * need nothing else of sync. The value of SyncContext is made again whenever
+ * the account's row does, which every push does (the room it uses), and each
+ * of them would be drawn again with every flush of a note being typed in:
+ * the note list and the folder tree among them (useLockActions).
+ */
+const SyncEngineContext = createContext<(() => SyncEngine | null) | null>(null);
 
 const IDLE: SyncStatus = {
   state: "idle",
@@ -62,6 +70,13 @@ export function useSync(): SyncContextValue {
 }
 
 const serverStatus = () => IDLE;
+
+/** The running engine, if there is one, without what else sync holds (see SyncEngineContext). */
+export function useSyncEngine(): () => SyncEngine | null {
+  const engine = useContext(SyncEngineContext);
+  if (!engine) throw new Error("useSyncEngine must be used inside SyncProvider");
+  return engine;
+}
 
 /** Where syncing stands, drawn again only when it changes. */
 export function useSyncStatus(): SyncStatus {
@@ -228,7 +243,9 @@ export function SyncProvider({
 
   return (
     <SyncContext.Provider value={value}>
-      <SyncStatusContext.Provider value={store}>{children}</SyncStatusContext.Provider>
+      <SyncEngineContext.Provider value={engine}>
+        <SyncStatusContext.Provider value={store}>{children}</SyncStatusContext.Provider>
+      </SyncEngineContext.Provider>
     </SyncContext.Provider>
   );
 }

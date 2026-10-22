@@ -5,7 +5,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { useSync, useSyncStatus } from "@/components/providers/sync-provider";
+import { useSyncEngine, useSyncStatus } from "@/components/providers/sync-provider";
 import { vault } from "@/lib/crypto/vault";
 import type { SyncStatus } from "@/lib/sync/engine";
 import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
@@ -27,7 +27,7 @@ const REPAIR_AFTER_MS = 2_000;
  */
 export function LockRepairs() {
   const client = useConvex();
-  const { engine } = useSync();
+  const engine = useSyncEngine();
   const router = useRouter();
   const status = useSyncStatus();
   const sealedNames = useLiveQuery(async () => (await sealedNameFolders()).length, [], 0);

@@ -39,7 +39,7 @@ import { useFolders } from "@/lib/hooks/data";
 import { coveringFolderOf, lockCoverage, needsLock } from "@/lib/vault/model";
 import { type LockReport, changeNote } from "@/lib/vault/cascade";
 import { useConvex } from "convex/react";
-import { useSync } from "@/components/providers/sync-provider";
+import { useSyncEngine } from "@/components/providers/sync-provider";
 import { copiesLeftNotice, useLockActions } from "@/components/vault/use-lock-actions";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { VersionHistory } from "@/components/notes/version-history";
@@ -120,7 +120,7 @@ export function NotePane({
   const openLabel = useOpenVaultLabel();
   const { toggleNoteLock, moveNoteTo } = useLockActions();
   const client = useConvex();
-  const { engine } = useSync();
+  const engine = useSyncEngine();
   const folders = useFolders();
   const coverage = useMemo(() => lockCoverage(folders), [folders]);
   const menu = useMenuDialog();

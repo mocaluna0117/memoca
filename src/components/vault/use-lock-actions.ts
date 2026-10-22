@@ -8,7 +8,7 @@ import { createNote, moveFolder, moveNote } from "@/lib/sync/mutations";
 import { subtreeIds } from "@/lib/tree";
 import { lockCoverage, planFolderLock } from "@/lib/vault/model";
 import { toast } from "sonner";
-import { useSync } from "@/components/providers/sync-provider";
+import { useSyncEngine } from "@/components/providers/sync-provider";
 import { vault } from "@/lib/crypto/vault";
 import { requestVault } from "@/lib/store/vault-gate";
 import { useLockProgress } from "@/lib/store/lock-progress";
@@ -59,7 +59,7 @@ const moveFailure = (cause: unknown) =>
  */
 export function useLockActions() {
   const client = useConvex();
-  const { engine } = useSync();
+  const engine = useSyncEngine();
   const start = useLockProgress((s) => s.start);
   const end = useLockProgress((s) => s.end);
   // Known before any tap, so the prompt can be asked for inside it.
