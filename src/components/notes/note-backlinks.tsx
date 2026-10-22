@@ -3,6 +3,7 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { Link2 } from "lucide-react";
 import { db } from "@/lib/db";
+import { justAbove, justBelow } from "@/lib/key-range";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { noteName } from "@/lib/note-name";
 
@@ -15,9 +16,16 @@ export function NoteBacklinks({ noteId }: { noteId: string }) {
   const { openNote } = useWorkspace();
   const linking = useLiveQuery(async () => {
     const database = db();
-    const bodies = await database.bodies
-      .filter((body) => body.links?.includes(noteId) ?? false)
-      .toArray();
+    // Every note's body but this one's (its links to itself are not among
+    // those shown), as the keys before it and after it: this note's own body
+    // is written with every flush while it is typed in, twice with the
+    // server's echo, and the whole table, read so, was read again each time.
+    // See key-range for why not below() and above().
+    const [before, after] = await Promise.all([
+      database.bodies.where("noteId").belowOrEqual(justBelow(noteId)).toArray(),
+      database.bodies.where("noteId").aboveOrEqual(justAbove(noteId)).toArray(),
+    ]);
+    const bodies = [...before, ...after].filter((body) => body.links?.includes(noteId) ?? false);
     const notes = await database.notes.bulkGet(bodies.map((body) => body.noteId));
     return notes
       .filter(
