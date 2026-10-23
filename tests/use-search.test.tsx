@@ -57,6 +57,22 @@ const settle = async () => {
   }
 };
 
+/**
+ * Settles until `done` holds, for what is expected to happen. A fixed number
+ * of rounds is enough on one Node and not on another: from Node 24.21, as
+ * CI runs, fake-indexeddb's reads and Dexie's live query can take more turns
+ * of the event loop than settle() gives them. Bounded, so a read that never
+ * comes still fails the test rather than hanging it.
+ */
+const settleUntil = async (done: () => boolean) => {
+  for (let round = 0; round < 50 && !done(); round += 1) {
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
+    });
+  }
+};
+
 async function render(query: string, enabled: boolean) {
   await act(async () =>
     root.render(<Probe query={query} enabled={enabled} found={(hits) => seen.push(hits)} />),
@@ -106,6 +122,7 @@ describe("the search index, built from the device's notes", () => {
   test("is built once it is open, and finds a note", async () => {
     const read = bodiesRead();
     await render("会議", true);
+    await settleUntil(() => seen.at(-1)?.length === 1);
     expect(read).toHaveBeenCalled();
     expect(seen.at(-1)?.map((hit) => hit.noteId)).toEqual(["n1"]);
   });
