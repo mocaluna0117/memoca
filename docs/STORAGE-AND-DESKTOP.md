@@ -391,6 +391,16 @@ Q4〜D0 と、1 回目のレビューで直したもの（Opus 3 人：安全、
 - しなかったこと：一覧の行の `React.memo`、NoteBacklinks の索引、デコードの worker 化は、Profiler で保存ごとの再描画が残るときに。
 - 確かめ：`tests/use-search.test.tsx`・`sync-status-store`・`repair-schedule`・`docs`・`ime-trace`・`quick-capture`・`upload-preview`・`webp-encoder`。実機は Zoom 中に長いメモで日本語入力、スクリーンショットの貼り付け、即席メモで貼って即 ⌘Enter。
 
+### ⌘⇧M で出した Memoca 全体のウィンドウが、前に開いていたデスクトップに切り替わってから出る（2026-10-24、0.4.8）
+
+オーナーの Mac（デスクトップ＝Space が複数。`settings.json` は `"shortcut": "CmdOrCtrl+M"` で `appShortcut` なし、なので ⌘⇧M は全体のウィンドウ）で、デスクトップ B で ⌘⇧M を押すと、前回ウィンドウを開いていたデスクトップ A に切り替わってから出る。今いるデスクトップで出てほしい、と言われた。
+
+- 原因：全体のウィンドウは、閉じても隠すだけ（0.4.3 から。`put_away` → tao の `orderOut`）。隠したウィンドウも、`collectionBehavior` が既定のままなら、最後に出ていたデスクトップのものとして残る（`isOnActiveSpace` の説明どおり、隠れていても「出すとどのデスクトップに出るか」を持っている）。`bring_out` の `show`（`makeKeyAndOrderFront`）でそのデスクトップ A に出て、アプリをアクティブにすると macOS が A に切り替える。ほかのデスクトップで開いたままのときも同じ（0.4.7 では「隠さずにそこへ切り替わる」と docs に書いていた）。即席メモの窓は `visible_on_all_workspaces(true)`（tao が `CanJoinAllSpaces` を付ける）で全部のデスクトップにあるので、起きない。
+- 直し方（`activation.rs` の `to_the_desktop_in_use`）：`bring_out` の主スレッドの 1 ターンで、`show` と頼む（`ask_active`）より前に、`collectionBehavior` に `MoveToActiveSpace` を足す。今あるビットは残す。全画面について何も言っていなければ `FullScreenPrimary` も足す（何も言わないウィンドウの全画面は AppKit の推定で、ビットを足したあともそう推定されるとは限らないため。緑のボタンで全画面にできるまま）。`CanJoinAllSpaces` のウィンドウ（即席メモ）は変えない。全画面のウィンドウは自分の全画面にあるので `MoveToActiveSpace` を外し、これまでどおりそこへ切り替わる。ほかのデスクトップで出たままのウィンドウは、先に `orderOut` してから出す（隠したものと同じ道で今のデスクトップに出す。出ているウィンドウはアプリがアクティブになったときに移る仕組みで、アクティブ化は断られることがあるため）。0.4.7 の見直し（`look`）で前に出し直すときも同じ。何をどう変えるかは `on_the_desktop_in_use`（Mac だけの `cargo test`）。`Memoca: window out` のログの行に、変えたあとの `NSWindowCollectionBehavior` を出す。
+- 確かめ：`cargo test`・`cargo clippy --all-targets -- -D warnings`・Mac のビルド。実機のデスクトップの切り替えは、オーナーの画面を動かすので自動ではしていない。代わりに、透明でクリックも受けないウィンドウを 1 枚だけ出す小さなプログラム（アクティブにならない。確かめるときだけ、非公開の `CGSMoveWindowsToManagedSpace` でそのウィンドウを B に置く）で、隠して出し直した：既定のままでは B に出る（今いるのは A。これが不具合）、`MoveToActiveSpace|FullScreenPrimary` では A に出る、B に出たままのものを `orderOut` → `orderFront` しても A に出る。そのあいだ、今いるデスクトップは一度も変わらなかった。直したビルドも、識別子を変え（`TAURI_CONFIG` で `io.github.mocaluna0117.memoca.spacecheck`。入っている Memoca と別の 1 つとして動き、ホットキーもぶつからないものにした）、`--hidden` で起動して `--app` を 2 回送り、`Memoca: window out` の行で、collectionBehavior が 130（`0x82` ＝ `MoveToActiveSpace|FullScreenPrimary`）、`on_active_space: true` になったのを見た（シェルから起動したのでアクティブ化はシステムに断られ、0.4.7 の `orderFrontRegardless` で前に出た。これは前と同じ）。
+- 0.4.7 はタグを付けておらず、リリースしていない（入っているのは 0.4.6）。0.4.8 に 0.4.7 の直しも入る。10月19日のお知らせの「0.4.7」は、0.4.8 のお知らせで補った。
+- 決めなかったこと：⌘Tab や Dock のアイコンで Memoca に切り替えたときも、`MoveToActiveSpace` のウィンドウは今のデスクトップに移ってくるはず（AppKit の説明：アクティブにしてもデスクトップは切り替わらず、ウィンドウが今のデスクトップに移る）だが、実機では確かめていない（Dock のアイコンは、そのあと `Reopen` → `bring_out` も通る）。ほかのアプリの全画面から ⌘⇧M を押したときは、全体のウィンドウは全画面に入れない（`FullScreenAuxiliary` ではない）ので、全画面の外のデスクトップに出る（どこに出るかは実機で見る）。即席メモの `window::show` は変えていない。
+
 ### ホットキーで出した Memoca 全体のウィンドウが前に出ない・最初のクリックが効かない・即席メモを隠すと Memoca が Dock に残る（2026-10-19、0.4.7）
 
 オーナーの Mac（macOS 26.5）で、Zoom や Meet の最中に ⌘⇧M（オーナーの設定では全体のウィンドウのホットキー）を押しても出ない（何回か押すと出る）、出た直後にフォルダを押しても 2 回押さないと開かない、即席メモを隠したあと Dock と ⌘Tab に Memoca が残り、選ぶと全体のウィンドウが戻ってくる、と言われた。
