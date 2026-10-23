@@ -12,6 +12,10 @@
 //! A bringing out or putting away of either window begins a generation:
 //! the looks of an older one do nothing, so a window put away stays away,
 //! and the quick note brought out meanwhile keeps the keyboard.
+//!
+//! The window comes out on the desktop (Space) in use, wherever it was
+//! last: a window put away is still the desktop's it was on, and the
+//! system, showing it and making the app active, went there first.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -123,11 +127,63 @@ mod mac {
     use super::{begin, follow_up, is_current, Seen, LOOKS};
     use objc2::rc::Retained;
     use objc2::MainThreadMarker;
-    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSWindow};
+    use objc2_app_kit::{
+        NSApplication, NSApplicationActivationPolicy, NSWindow, NSWindowCollectionBehavior,
+        NSWindowStyleMask,
+    };
     use objc2_foundation::{NSOperatingSystemVersion, NSProcessInfo};
     use std::sync::{mpsc, OnceLock};
     use std::time::Duration;
     use tauri::{ActivationPolicy, Manager, WebviewWindow};
+
+    /// What the window's collection behavior is made as it comes out, from
+    /// what it is and whether the window fills the screen: moved to the
+    /// desktop in use (MoveToActiveSpace), rather than the system going to
+    /// the one it was last on. Said to be full-screen capable, unless it
+    /// says otherwise already: a window that says nothing is left to
+    /// AppKit's inference, which is not to be counted on once it says this
+    /// much (the green button still makes it full screen). One on every
+    /// desktop already (CanJoinAllSpaces: the quick note's) needs no moving;
+    /// one in full screen is on a desktop of its own, gone to as before.
+    fn on_the_desktop_in_use(
+        behavior: NSWindowCollectionBehavior,
+        full_screen: bool,
+    ) -> NSWindowCollectionBehavior {
+        if behavior.contains(NSWindowCollectionBehavior::CanJoinAllSpaces) {
+            return behavior;
+        }
+        if full_screen {
+            return behavior - NSWindowCollectionBehavior::MoveToActiveSpace;
+        }
+        let full_screen_said = NSWindowCollectionBehavior::FullScreenPrimary
+            | NSWindowCollectionBehavior::FullScreenAuxiliary
+            | NSWindowCollectionBehavior::FullScreenNone;
+        let mut wanted = behavior | NSWindowCollectionBehavior::MoveToActiveSpace;
+        if !wanted.intersects(full_screen_said) {
+            wanted |= NSWindowCollectionBehavior::FullScreenPrimary;
+        }
+        wanted
+    }
+
+    /// Makes the window come out on the desktop in use: the hotkey pressed
+    /// on desktop B shows it on B, though it was last out on A. Done before
+    /// it is shown and the app asked to be made active, either of which
+    /// would otherwise take the person to A. One still out on another
+    /// desktop is taken in first, to come out here as one put away does
+    /// (rather than counted on to move when the app is made active, which
+    /// may be refused). What the behavior is now, for the log.
+    fn to_the_desktop_in_use(w: &NSWindow) -> NSWindowCollectionBehavior {
+        let full_screen = w.styleMask().contains(NSWindowStyleMask::FullScreen);
+        let behavior = w.collectionBehavior();
+        let wanted = on_the_desktop_in_use(behavior, full_screen);
+        if wanted != behavior {
+            w.setCollectionBehavior(wanted);
+        }
+        if !full_screen && w.isVisible() && !w.isOnActiveSpace() {
+            w.orderOut(None);
+        }
+        wanted
+    }
 
     /// macOS 14 or later, where `activate` is: on 11 to 13 (the least the
     /// app runs on, tauri.conf.json) the message is unknown, and would
@@ -203,11 +259,16 @@ mod mac {
             if ns_app.isHidden() {
                 ns_app.unhideWithoutActivation();
             }
+            let behavior = ns_window(&shown, mtm).map(|w| to_the_desktop_in_use(&w));
             let _ = shown.unminimize();
             let _ = shown.show();
             ask_active(&ns_app);
+            let desktops = behavior.map_or("unknown".into(), |b| {
+                let moves = b.contains(NSWindowCollectionBehavior::MoveToActiveSpace);
+                format!("{:#x}, MoveToActiveSpace: {moves}", b.0)
+            });
             eprintln!(
-                "Memoca: window out (in the Dock before: {in_dock}): {:?}",
+                "Memoca: window out (in the Dock before: {in_dock}; collectionBehavior {desktops}): {:?}",
                 seen(&shown)
             );
         });
@@ -269,6 +330,8 @@ mod mac {
             ns_app.unhideWithoutActivation();
         }
         if plan.order_front {
+            // Still on another desktop (moved there meanwhile, say): brought here.
+            to_the_desktop_in_use(&w);
             w.makeKeyAndOrderFront(None);
         }
         if plan.activate {
@@ -285,6 +348,53 @@ mod mac {
             }
         } else {
             Looked::Done
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::on_the_desktop_in_use;
+        use objc2_app_kit::NSWindowCollectionBehavior as B;
+
+        #[test]
+        fn moves_to_the_desktop_in_use_and_can_still_fill_the_screen() {
+            let wanted = B::MoveToActiveSpace | B::FullScreenPrimary;
+            assert_eq!(on_the_desktop_in_use(B::Default, false), wanted);
+            // Once is enough.
+            assert_eq!(on_the_desktop_in_use(wanted, false), wanted);
+        }
+
+        #[test]
+        fn what_it_says_already_is_kept() {
+            let auxiliary = B::FullScreenAuxiliary | B::Managed;
+            assert_eq!(
+                on_the_desktop_in_use(auxiliary, false),
+                auxiliary | B::MoveToActiveSpace
+            );
+            let never_full = B::FullScreenNone;
+            assert_eq!(
+                on_the_desktop_in_use(never_full, false),
+                never_full | B::MoveToActiveSpace
+            );
+        }
+
+        #[test]
+        fn one_on_every_desktop_is_left_as_it_is() {
+            let quick = B::CanJoinAllSpaces | B::FullScreenAuxiliary;
+            assert_eq!(on_the_desktop_in_use(quick, false), quick);
+            assert_eq!(
+                on_the_desktop_in_use(B::CanJoinAllSpaces, true),
+                B::CanJoinAllSpaces
+            );
+        }
+
+        #[test]
+        fn one_in_full_screen_is_gone_to_as_before() {
+            let moved = B::MoveToActiveSpace | B::FullScreenPrimary;
+            assert_eq!(on_the_desktop_in_use(moved, true), B::FullScreenPrimary);
+            assert_eq!(on_the_desktop_in_use(B::Default, true), B::Default);
+            // Out of full screen again: moved once more.
+            assert_eq!(on_the_desktop_in_use(B::FullScreenPrimary, false), moved);
         }
     }
 }
