@@ -271,7 +271,10 @@ export function NotePane({
 
   const hidden = note.locked && !unlocked;
 
-  /** Saves the note as a PDF, as it looks (see noteToPdf), under its name. */
+  /**
+   * Saves the note as a PDF, as it looks (see noteToPdf), under its name,
+   * saying how far it has come as it is made.
+   */
   const exportPdf = async () => {
     const editor = body.current?.querySelector<HTMLElement>(".memoca-editor");
     if (!editor || exporting) return;
@@ -282,7 +285,9 @@ export function NotePane({
       const url = URL.createObjectURL(pdf);
       await downloadBlockFile({}, url, `${name.text}.pdf`);
       setTimeout(() => URL.revokeObjectURL(url), 60_000);
-    } catch {
+    } catch (error) {
+      // Cancelled from its cover: nothing went wrong.
+      if ((error as { name?: unknown } | null)?.name === "AbortError") return;
       toast.error(t.exportPdf.failed);
     } finally {
       setExporting(false);

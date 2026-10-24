@@ -1,8 +1,47 @@
-import { expect, test } from "@playwright/test";
+import { type Page, expect, test } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { inflateSync } from "node:zlib";
 import { createNote, editor, openApp, signUp, waitForSynced } from "./helpers";
 import { pasteImage, uploadsDrained } from "./image-helpers";
+
+/**
+ * Records every percent the export's cover shows on its bar, from when it is
+ * put up to when it is taken away.
+ */
+async function watchProgress(page: Page) {
+  await page.evaluate(() => {
+    const seen: number[] = [];
+    // Each change's value as it was before it, and the last as it is: a
+    // change soon followed by another in the same task is kept too.
+    let last: Element | null = null;
+    new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.oldValue !== null) seen.push(Number(record.oldValue));
+        last = record.target as Element;
+      }
+    }).observe(document.body, {
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["aria-valuenow"],
+      attributeOldValue: true,
+    });
+    (window as unknown as { pdfProgress: () => number[] }).pdfProgress = () =>
+      last ? [...seen, Number(last.getAttribute("aria-valuenow"))] : seen;
+  });
+  return () => page.evaluate(() => (window as unknown as { pdfProgress: () => number[] }).pdfProgress());
+}
+
+/** A note of `lines` lines under a heading, more than a sheet long. */
+async function longNote(page: Page, title: string, lines: number) {
+  await createNote(page, title);
+  await editor(page).click();
+  await page.keyboard.type("# 見出し");
+  await page.keyboard.press("Enter");
+  for (let line = 1; line <= lines; line += 1) {
+    await page.keyboard.type(`${line} 行目`);
+    await page.keyboard.press("Enter");
+  }
+}
 
 /** Each page's picture in a PDF Memoca wrote: its size and its RGB pixels (lossless ones only). */
 function pictures(pdf: Buffer) {
@@ -28,23 +67,20 @@ test("a note is saved as a PDF that looks as it does, light whatever the theme, 
   await page.emulateMedia({ colorScheme: "dark" });
   await signUp(page);
   await openApp(page);
-  await createNote(page, "書き出すメモ");
-  await editor(page).click();
-  await page.keyboard.type("# 見出し");
-  await page.keyboard.press("Enter");
-  for (let line = 1; line <= 50; line += 1) {
-    await page.keyboard.type(`${line} 行目`);
-    await page.keyboard.press("Enter");
-  }
+  await longNote(page, "書き出すメモ", 50);
   await pasteImage(page, { name: "絵.png" });
   await uploadsDrained(page);
   await waitForSynced(page);
   await expect(page.locator("html")).toHaveClass(/dark/);
   const width = await editor(page).evaluate((element) => element.closest(".memoca-editor")!.clientWidth);
 
+  const progress = await watchProgress(page);
   const saving = page.waitForEvent("download", { timeout: 60_000 });
   await page.getByRole("button", { name: "メモの操作" }).filter({ visible: true }).click();
   await page.getByRole("menuitem", { name: "PDF で書き出す" }).click();
+  // How far it has come, as it is made.
+  await expect(page.getByRole("progressbar", { name: "PDF の書き出し" })).toBeVisible();
+  await expect(page.locator(".memoca-export-cover")).toContainText(/PDF を書き出しています… \d+%/);
   const saved = await saving;
   expect(saved.suggestedFilename()).toBe("書き出すメモ.pdf");
   const path = testInfo.outputPath("note.pdf");
@@ -69,8 +105,53 @@ test("a note is saved as a PDF that looks as it does, light whatever the theme, 
   });
   expect(red).toBe(true);
 
+  // Counted up from 0 as it was made, never back, with 100 only as the file was done.
+  const percents = await progress();
+  expect(percents[0]).toBe(0);
+  expect(percents.at(-1)).toBe(100);
+  expect(percents.filter((percent) => percent === 100)).toHaveLength(1);
+  expect(percents).toEqual([...percents].sort((a, b) => a - b));
+  expect(new Set(percents.filter((percent) => percent > 0 && percent < 100)).size).toBeGreaterThanOrEqual(3);
+
   // And the app is as it was: dark, its note at its own width, nothing over it.
   await expect(page.locator(".memoca-export-cover")).toHaveCount(0);
   await expect(page.locator("html")).toHaveClass(/dark/);
   expect(await editor(page).evaluate((element) => element.closest(".memoca-editor")!.clientWidth)).toBe(width);
+});
+
+test("a PDF being made can be cancelled from its cover: nothing is saved, the app is as it was, and it can be made again", async ({
+  page,
+}) => {
+  test.slow();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await signUp(page);
+  await openApp(page);
+  await longNote(page, "やめるメモ", 100);
+  await waitForSynced(page);
+  const width = await editor(page).evaluate((element) => element.closest(".memoca-editor")!.clientWidth);
+
+  let downloads = 0;
+  page.on("download", () => (downloads += 1));
+  await page.getByRole("button", { name: "メモの操作" }).filter({ visible: true }).click();
+  await page.getByRole("menuitem", { name: "PDF で書き出す" }).click();
+  const cancel = page.locator(".memoca-export-cover").getByRole("button", { name: "キャンセル" });
+  await expect(cancel).toBeVisible();
+  // Given the focus, for the keyboard.
+  await expect(cancel).toBeFocused();
+  await cancel.click();
+
+  await expect(page.locator(".memoca-export-cover")).toHaveCount(0);
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  expect(await editor(page).evaluate((element) => element.closest(".memoca-editor")!.clientWidth)).toBe(width);
+  // Not a failure: nothing said.
+  await page.waitForTimeout(1_000);
+  await expect(page.getByText("PDF を作れませんでした")).toHaveCount(0);
+  expect(downloads).toBe(0);
+
+  // And made again, to the end.
+  const saving = page.waitForEvent("download", { timeout: 60_000 });
+  await page.getByRole("button", { name: "メモの操作" }).filter({ visible: true }).click();
+  await page.getByRole("menuitem", { name: "PDF で書き出す" }).click();
+  expect((await saving).suggestedFilename()).toBe("やめるメモ.pdf");
+  await expect(page.locator(".memoca-export-cover")).toHaveCount(0);
 });

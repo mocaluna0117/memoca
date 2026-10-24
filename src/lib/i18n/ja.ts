@@ -190,6 +190,12 @@ export const ja = {
   exportPdf: {
     action: "PDF で書き出す",
     failed: "PDF を作れませんでした。もう一度お試しください。",
+    /** On the cover while it is made, how far it has come after it. */
+    progress: "PDF を書き出しています…",
+    /** The bar, as a screen reader names it. */
+    progressLabel: "PDF の書き出し",
+    percent: (percent: number) => `${percent}%`,
+    cancelling: "中止しています…",
   },
   pdf: {
     pages: (count: number) => `${count} ページ`,

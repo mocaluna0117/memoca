@@ -1,6 +1,8 @@
 "use client";
 
+import { showExportCover } from "./export-cover";
 import { A4, type PageImage, writePdf } from "./pdf-writer";
+import { type ProgressPart, trackProgress } from "./progress";
 
 /** The margin round each sheet, in points: about 14 mm. */
 const MARGIN = 40;
@@ -30,6 +32,15 @@ const SETTLE_MS = 10_000;
 /** Asked of every PDF in the note before it is drawn: to draw its first page now. */
 export const EXPORT_EVENT = "memoca:export";
 
+/**
+ * How the percent shown is shared out between the steps of making a PDF,
+ * by about how long each takes: waiting for the note's images and PDFs,
+ * loading what draws it, drawing its pages, and writing the file. A
+ * page is drawn, then encoded, in about these shares of its time.
+ */
+const STEPS = { waiting: 10, starting: 4, pages: 84, writing: 2 } as const;
+const PAGE_STEPS = { drawing: 6, encoding: 4 } as const;
+
 /** Classes that show what is selected or being edited, not the note. */
 const TRANSIENT = ["ProseMirror-selectednode", "memoca-selected-media", "ProseMirror-focused"];
 /** What is drawn over a note but is not of it. */
@@ -47,6 +58,11 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * two; only a block taller than a sheet is. In the light theme, whichever is on: a sheet of paper is white.
  * Its text is a picture: it reads exactly as the note does, but cannot be
  * selected.
+ *
+ * Made under a cover that says how far it has come, from the steps done
+ * ({@link STEPS}): 100% once the file is made, before it is saved. Cancelled
+ * from the cover, it stops once the page under way is drawn, and throws an
+ * AbortError.
  */
 export async function noteToPdf({
   body,
@@ -59,32 +75,42 @@ export async function noteToPdf({
   titleField: HTMLElement | null;
   title: string;
 }): Promise<Blob> {
-  const restore = prepare(body);
+  const cancel = new AbortController();
+  const { signal } = cancel;
+  const cover = showExportCover({ onCancel: () => cancel.abort() });
+  const progress = trackProgress((percent) => cover.set(percent));
+  const [waiting, starting, pages, writing] = progress.whole.split(
+    STEPS.waiting,
+    STEPS.starting,
+    STEPS.pages,
+    STEPS.writing,
+  );
+  let restore: (() => void) | null = null;
   try {
+    restore = prepare(body);
     (document.activeElement as HTMLElement | null)?.blur?.();
     getSelection()?.removeAllRanges();
     window.dispatchEvent(new Event(EXPORT_EVENT));
-    await settle(body);
+    await settle(body, waiting, signal);
     await frame();
     await frame();
-    return await draw(body, titleField, title);
+    starting.to(0.25);
+    const pdf = await draw(body, titleField, title, { starting, pages, writing }, signal);
+    progress.finish();
+    return pdf;
   } finally {
-    restore();
+    progress.stop();
+    restore?.();
+    cover.remove();
   }
 }
 
 /**
- * Lays the note out as it is drawn until put back, under a cover that says
- * what is happening: at the width of a sheet, in the light theme (the
- * colours of what is drawn are read from the screen).
+ * Lays the note out as it is drawn until put back, under the cover: at the
+ * width of a sheet, in the light theme (the colours of what is drawn are
+ * read from the screen).
  */
 function prepare(body: HTMLElement): () => void {
-  const cover = document.createElement("div");
-  cover.setAttribute("role", "status");
-  cover.className =
-    "memoca-export-cover fixed inset-0 z-[1000] flex items-center justify-center bg-white text-sm text-neutral-600";
-  cover.textContent = "PDF を作っています…";
-  document.body.append(cover);
   const scrolled = [window.scrollX, window.scrollY] as const;
   const scroller = body.closest<HTMLElement>("[data-scroll]");
   const scrollerTop = scroller?.scrollTop ?? 0;
@@ -100,7 +126,6 @@ function prepare(body: HTMLElement): () => void {
     body.style.minWidth = minWidth;
     if (scroller) scroller.scrollTop = scrollerTop;
     window.scrollTo(...scrolled);
-    cover.remove();
   };
 }
 
@@ -121,17 +146,25 @@ function asLight(body: HTMLElement): () => void {
   };
 }
 
-/** Waits, up to {@link SETTLE_MS}, for the note's images to load and its PDFs to be drawn. */
-async function settle(body: HTMLElement): Promise<void> {
+/**
+ * Waits, up to {@link SETTLE_MS}, for the note's images to load and its
+ * PDFs to be drawn, saying how many of them are.
+ */
+async function settle(body: HTMLElement, progress: ProgressPart, signal: AbortSignal): Promise<void> {
   const until = Date.now() + SETTLE_MS;
   while (Date.now() < until) {
-    const images = [...body.querySelectorAll("img")].every((image) => image.complete);
-    const pdfs = [...body.querySelectorAll<HTMLElement>(".memoca-pdf")].every(
+    signal.throwIfAborted();
+    const images = [...body.querySelectorAll("img")].map((image) => image.complete);
+    const pdfs = [...body.querySelectorAll<HTMLElement>(".memoca-pdf")].map(
       (card) => card.dataset.drawn === "true",
     );
-    if (images && pdfs) return;
+    const ready = [...images, ...pdfs];
+    const done = ready.filter(Boolean).length;
+    progress.to(ready.length > 0 ? done / ready.length : 1);
+    if (done === ready.length) return;
     await sleep(100);
   }
+  progress.to(1);
 }
 
 /** Where a sheet may end: the foot of every block, in pixels from the top of the note. */
@@ -219,8 +252,16 @@ function titleHeight(title: string, field: HTMLElement | null, width: number): n
   return drawTitle(ctx, title, field, width);
 }
 
-async function draw(body: HTMLElement, field: HTMLElement | null, title: string): Promise<Blob> {
+async function draw(
+  body: HTMLElement,
+  field: HTMLElement | null,
+  title: string,
+  progress: { starting: ProgressPart; pages: ProgressPart; writing: ProgressPart },
+  signal: AbortSignal,
+): Promise<Blob> {
   const { createContext, destroyContext, domToCanvas } = await import("modern-screenshot");
+  signal.throwIfAborted();
+  progress.starting.to(0.5);
   const width = Math.round(body.getBoundingClientRect().width);
   const scale = Math.min(SCALE, MAX_WIDTH / width);
   const contentWidth = A4.width - MARGIN * 2;
@@ -230,6 +271,7 @@ async function draw(body: HTMLElement, field: HTMLElement | null, title: string)
 
   const { breaks, end } = breaksOf(body);
   const slices = paginate(breaks, end, { first: sheet - heading, rest: sheet });
+  progress.starting.to(0.75);
 
   const context = await createContext(body, {
     scale,
@@ -247,15 +289,23 @@ async function draw(body: HTMLElement, field: HTMLElement | null, title: string)
     },
     timeout: 30_000,
   });
+  progress.starting.to(1);
+  // A page each, as long as one another: each draws the whole note again.
+  const sheets = progress.pages.split(...slices.map(() => 1));
   const pages: PageImage[] = [];
   let paper: [number, number, number] | null = null;
   try {
     for (const [index, [from, to]] of slices.entries()) {
+      signal.throwIfAborted();
+      const [drawing, encoding] = sheets[index].split(PAGE_STEPS.drawing, PAGE_STEPS.encoding);
       const top = index === 0 ? heading : 0;
       const height = Math.max(1, to - from);
       context.height = height;
       context.style = { transform: `translateY(${-from}px)`, margin: "0" } as Partial<CSSStyleDeclaration>;
+      // Its fonts and images taken in (the first page's fetched), then the whole drawn.
+      context.progress = (done, total) => drawing.to(total > 0 ? (done / total) / 2 : 0);
       const slice = await domToCanvas(context);
+      drawing.to(1);
       paper ??= paperOf(slice);
 
       const page = document.createElement("canvas");
@@ -267,14 +317,16 @@ async function draw(body: HTMLElement, field: HTMLElement | null, title: string)
       ctx.scale(scale, scale);
       if (index === 0) drawTitle(ctx, title, field, width);
       ctx.drawImage(slice, 0, top, width, height);
-      pages.push(await encode(page, (top + height) / pixelsPerPoint));
+      pages.push(await encode(page, (top + height) / pixelsPerPoint, encoding));
       slice.width = 0;
       page.width = 0;
     }
   } finally {
     destroyContext(context);
   }
-  return writePdf(pages, { title, paper: paper ?? [255, 255, 255] });
+  const pdf = writePdf(pages, { title, paper: paper ?? [255, 255, 255] });
+  progress.writing.to(1);
+  return pdf;
 }
 
 /**
@@ -292,7 +344,7 @@ function paperOf(slice: HTMLCanvasElement): [number, number, number] {
  * A page's picture as the PDF keeps it: lossless, unless a JPEG is much
  * smaller (a page that is mostly a photo).
  */
-async function encode(canvas: HTMLCanvasElement, heightPt: number): Promise<PageImage> {
+async function encode(canvas: HTMLCanvasElement, heightPt: number, progress: ProgressPart): Promise<PageImage> {
   const { width, height } = canvas;
   const place = { x: MARGIN, y: MARGIN, width: A4.width - MARGIN * 2, height: heightPt };
   const rgba = canvas.getContext("2d")!.getImageData(0, 0, width, height).data;
@@ -302,8 +354,11 @@ async function encode(canvas: HTMLCanvasElement, heightPt: number): Promise<Page
     rgb[to + 1] = rgba[from + 1]!;
     rgb[to + 2] = rgba[from + 2]!;
   }
+  progress.to(0.2);
   const lossless = await deflate(rgb);
+  progress.to(0.7);
   const jpeg = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.92));
+  progress.to(1);
   if (jpeg && jpeg.size < lossless.length * JPEG_GAIN) {
     return { width, height, encoding: "jpeg", data: new Uint8Array(await jpeg.arrayBuffer()), place };
   }
