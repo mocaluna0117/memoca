@@ -23,7 +23,10 @@ function Workspace() {
     : selection.pinned
       ? t.nav.pinned
       : t.nav.allNotes;
-  usePhoneScroll(selection.noteId);
+  usePhoneScroll(
+    selection.noteId,
+    selection.folderId ?? (selection.pinned ? "@pinned" : "@all"),
+  );
   const [listWidth] = usePaneWidth(NOTE_LIST);
   // With each folder's notes in the sidebar, the list beside it is for those
   // of no one folder: all notes, and the pinned. Not for a note kept in the
@@ -84,11 +87,14 @@ const isPhone = () => window.matchMedia("(max-width: 767px)").matches;
 /**
  * On a phone the list and the note take turns on one page that scrolls as a
  * whole. A note opens at its top, not wherever the list had been scrolled
- * to, and going back finds the list where it was left.
+ * to, and going back finds the list where it was left. Another list (another
+ * folder's, `listKey`) shows from its top, as the note list does on a wider
+ * screen.
  */
-function usePhoneScroll(noteId: string | null) {
+function usePhoneScroll(noteId: string | null, listKey: string) {
   const listY = useRef(0);
   const shown = useRef(noteId);
+  const listed = useRef(listKey);
 
   useEffect(() => {
     if (noteId !== null) return;
@@ -102,10 +108,14 @@ function usePhoneScroll(noteId: string | null) {
 
   useLayoutEffect(() => {
     const before = shown.current;
+    const listedBefore = listed.current;
     shown.current = noteId;
-    if (before === noteId || !isPhone()) return;
+    listed.current = listKey;
+    // Where the last list was left is not where this one is to be.
+    if (listedBefore !== listKey) listY.current = 0;
+    if ((before === noteId && listedBefore === listKey) || !isPhone()) return;
     window.scrollTo(0, noteId === null ? listY.current : 0);
-  }, [noteId]);
+  }, [noteId, listKey]);
 }
 
 export default function AppPage() {

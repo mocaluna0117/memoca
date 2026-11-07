@@ -120,6 +120,42 @@ test.describe("folders' notes in the sidebar", () => {
     ).toBe(true);
   });
 
+  test("a folder opened shows its notes from the first, wherever the sidebar was scrolled to", async ({
+    page,
+  }) => {
+    test.skip(test.info().project.name !== "desktop", "the sidebar beside the note");
+    await page.setViewportSize({ width: 1280, height: 520 });
+    const panel = await folderPanel(page);
+    const notes = page.locator("[data-tree-note]").filter({ visible: true });
+    for (const name of ["前のフォルダ", "次のフォルダ"]) {
+      await newFolder(page, name);
+      const add = panel.getByRole("button", { name: `${name} に新しいメモ` });
+      for (let i = 1; i <= 20; i += 1) {
+        await add.click();
+        await expect(notes).toHaveCount(i);
+      }
+    }
+
+    const viewport = panel.locator("[data-slot=scroll-area-viewport]").first();
+    const frame = (await viewport.boundingBox())!;
+    // The first, open, scrolled to its end, the next folder's row under it.
+    await folderRow(page, "前のフォルダ").click();
+    await expect(notes).toHaveCount(20);
+    await viewport.evaluate((element) => (element.scrollTop = element.scrollHeight));
+    const next = folderRow(page, "次のフォルダ");
+    await expect(next).toBeInViewport();
+
+    // The next opened (the first closing): its row at the top, its first
+    // note right under it, not scrolled past.
+    await next.click();
+    await expect(notes).toHaveCount(20);
+    await expect.poll(async () => Math.round((await next.boundingBox())!.y - frame.y)).toBe(0);
+    const first = (await notes.first().boundingBox())!;
+    const row = (await next.boundingBox())!;
+    expect(first.y).toBeGreaterThanOrEqual(row.y + row.height - 1);
+    expect(first.y + first.height).toBeLessThanOrEqual(frame.y + frame.height);
+  });
+
   test("one folder open at a time: another opened, the one open closes", async ({ page }) => {
     test.skip(test.info().project.name !== "desktop", "the sidebar beside the note");
     await newFolder(page, "仕事");

@@ -63,6 +63,34 @@ test.describe("side by side, each pane scrolls on its own", () => {
     await expect(title).toHaveValue("動かない行");
     await expect.poll(async () => (await scrollState(page, NOTE)).top).toBe(0);
   });
+
+  test("another folder's list shows from its first note, not where the last list was scrolled to", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 520 });
+    await signUp(page);
+    await openApp(page);
+    const pane = page.locator("#note-list-pane");
+    const rows = pane.locator("[data-note-row]");
+    for (let i = 1; i <= 20; i += 1) {
+      await pane.getByRole("button", { name: "新しいメモ" }).first().click();
+      await expect(rows).toHaveCount(i);
+    }
+
+    // All notes scrolled to the end; then Inbox, where they all are.
+    await page.locator(LIST).evaluate((element) => (element.scrollTop = element.scrollHeight));
+    await expect.poll(async () => (await scrollState(page, LIST)).top).toBeGreaterThan(0);
+    await page.locator("aside [data-folder-row]").filter({ hasText: "Inbox" }).click();
+    await expect(pane.getByRole("heading", { name: "Inbox" })).toBeVisible();
+    await expect.poll(async () => (await scrollState(page, LIST)).top).toBe(0);
+    await expect(rows.first()).toBeInViewport();
+
+    // A note opened from it leaves it where it is.
+    await page.locator(LIST).evaluate((element) => (element.scrollTop = element.scrollHeight));
+    const scrolled = (await scrollState(page, LIST)).top;
+    await rows.last().click();
+    await expect.poll(async () => (await scrollState(page, LIST)).top).toBe(scrolled);
+  });
 });
 
 test.describe("on a phone", () => {

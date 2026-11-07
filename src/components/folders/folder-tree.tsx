@@ -35,6 +35,7 @@ import {
   memo,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -74,6 +75,7 @@ import { useLockActions } from "@/components/vault/use-lock-actions";
 import { between } from "@/lib/sortkey";
 import { canMoveFolder, findNode, flattenTree, siblingsOf } from "@/lib/tree";
 import { db } from "@/lib/db";
+import { folderRevealTop } from "@/lib/folder-reveal";
 import {
   createFolder,
   moveFolder,
@@ -222,9 +224,18 @@ export function FolderTree({
     const path = pathTo(folderId);
     only(path.length > 0 ? path : [folderId]);
   };
+  // A folder opened by whoever uses the tree, here (its row, its chevron, →),
+  // to scroll to once it shows what is inside it (see below). Not one opened
+  // for them: the folder of a note opened from elsewhere, or made here.
+  const reveal = useRef<string | null>(null);
+  /** Opens a folder closed, as whoever uses the tree asked to, and shows what is inside it. */
+  const revealFolder = (folderId: string) => {
+    if (explorer) reveal.current = folderId;
+    openFolder(folderId);
+  };
   /** Its row clicked, or its chevron: closed if open, else opened. */
   const toggleRow = (folderId: string) =>
-    expanded.has(folderId) ? toggle(folderId) : openFolder(folderId);
+    expanded.has(folderId) ? toggle(folderId) : revealFolder(folderId);
   const [renaming, setRenaming] = useState<FolderNode | null>(null);
   const [moving, setMoving] = useState<FolderNode | null>(null);
   const [dragging, setDragging] = useState<string | null>(null);
@@ -253,6 +264,34 @@ export function FolderTree({
     refocus.current = null;
     row.focus();
   }, [tree, topNotes, editing, editingNote]);
+
+  // The folder just opened, scrolled to before it is drawn: its notes in
+  // sight from the first, rather than wherever the tree was scrolled to (in
+  // the notes of another folder, say, closed as this one opened). By its
+  // group, where its row naturally is: the row itself may be kept at the top.
+  useLayoutEffect(() => {
+    const folderId = reveal.current;
+    reveal.current = null;
+    if (!folderId) return;
+    const group = list.current?.querySelector<HTMLElement>(
+      `[data-folder-group="${CSS.escape(folderId)}"]`,
+    );
+    const row = group?.firstElementChild;
+    const scroller = list.current?.closest<HTMLElement>("[data-slot=scroll-area-viewport]");
+    // Nothing shown inside it (a locked folder's notes, say), or no scrolling.
+    if (!group || !(row instanceof HTMLElement) || !scroller) return;
+    const from = scroller.scrollTop - scroller.getBoundingClientRect().top;
+    const box = group.getBoundingClientRect();
+    const next = folderRevealTop({
+      current: scroller.scrollTop,
+      groupTop: box.top + from,
+      groupBottom: box.bottom + from,
+      // Where its row is kept, under those of the folders it is in.
+      stickyTop: parseFloat(getComputedStyle(row).top) || 0,
+      viewHeight: scroller.clientHeight,
+    });
+    if (Math.abs(next - scroller.scrollTop) >= 1) scroller.scrollTop = next;
+  }, [expanded]);
 
   const { openDialog, onCloseAutoFocus } = useMenuDialog();
 
@@ -718,7 +757,7 @@ export function FolderTree({
     const isOpen = expanded.has(node.folderId);
     switch (key) {
       case "ArrowRight":
-        if (hasChildren && !isOpen) openFolder(node.folderId);
+        if (hasChildren && !isOpen) revealFolder(node.folderId);
         // The first of what is inside: the row after it.
         else if (hasChildren) focusKey(rows[index + 1]);
         return true;
@@ -1187,7 +1226,7 @@ function nested(rows: Row[], render: (row: Row, index: number) => ReactNode): Re
       }
       const { depth, folderId } = row.node;
       out.push(
-        <div key={`inside/${folderId}`} className="flex flex-col gap-0.5">
+        <div key={`inside/${folderId}`} data-folder-group={folderId} className="flex flex-col gap-0.5">
           <div
             className="sticky bg-(--tree-bg,var(--background))"
             style={{

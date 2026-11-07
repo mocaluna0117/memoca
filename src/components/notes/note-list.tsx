@@ -30,6 +30,7 @@ import {
   memo,
   useEffect,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -622,6 +623,14 @@ export function NoteList({
     refocus.current = null;
     list.current?.querySelector<HTMLElement>(`[data-note-row="${noteId}"]`)?.focus();
   }, [editing]);
+
+  // Another folder opened (or the pinned, or all): its notes from the first,
+  // not scrolled to wherever the last one's were. On a phone, where the page
+  // scrolls instead, see usePhoneScroll.
+  useLayoutEffect(() => {
+    const scroller = list.current?.closest<HTMLElement>("[data-slot=scroll-area-viewport]");
+    if (scroller) scroller.scrollTop = 0;
+  }, [listKey]);
 
   // A row moved by its keys keeps focus: the list is drawn again in its new
   // order, which the browser takes as the focused row going away.
