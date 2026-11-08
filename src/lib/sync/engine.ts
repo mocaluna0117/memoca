@@ -108,10 +108,10 @@ export class SyncEngine {
   private stopped = true;
   private leader = false;
   private releaseLock: (() => void) | null = null;
-  /** Which ask for the sync lock is this window's own now: an older one let go is ignored. */
+  /** Which ask for the sync lock is this window's own now: an older one, granted later, is let go at once. */
   private claim = 0;
-  /** Takes back an ask still waiting in line, one made again or the engine stopped. */
-  private stopWaiting: AbortController | null = null;
+  /** The page is going away (pagehide): the lock let go, and not asked for again until it comes back. */
+  private leaving = false;
   private unwatch: (() => void) | null = null;
   private unwatchOutbox: (() => void) | null = null;
   private unwatchVault: (() => void) | null = null;
@@ -230,8 +230,6 @@ export class SyncEngine {
     this.unwatchAlerts = null;
     this.rebaseWaits.clear();
     this.claim += 1;
-    this.stopWaiting?.abort();
-    this.stopWaiting = null;
     this.releaseLock?.();
     this.releaseLock = null;
     this.leader = false;
@@ -259,19 +257,14 @@ export class SyncEngine {
       void this.run();
       return;
     }
+    // An ask already in line, if one is, is not taken back (no `signal`:
+    // WebKit could hang a reload of a page holding a lock asked for with
+    // one): granted later, it is let go at once, being an older claim.
     const claim = ++this.claim;
-    // An ask already in line goes: this one replaces it.
-    this.stopWaiting?.abort();
-    // Stealing cannot be taken back, nor waited for with a signal.
-    const waiting = take ? null : new AbortController();
-    this.stopWaiting = waiting;
-    const options: LockOptions = waiting
-      ? { mode: "exclusive", signal: waiting.signal }
-      : { mode: "exclusive", steal: true };
+    const options: LockOptions = take ? { mode: "exclusive", steal: true } : { mode: "exclusive" };
     locks
       .request(LOCK_NAME, options, () => {
-        if (this.stopped || claim !== this.claim) return Promise.resolve();
-        if (this.stopWaiting === waiting) this.stopWaiting = null;
+        if (this.stopped || this.leaving || claim !== this.claim) return Promise.resolve();
         this.leader = true;
         void this.run();
         return new Promise<void>((resolve) => {
@@ -279,12 +272,24 @@ export class SyncEngine {
         });
       })
       .catch(() => {
-        // Taken back by this window (asked again, or stopped): nothing to do.
-        if (this.stopped || claim !== this.claim) return;
+        // An older claim, the engine stopped, or the page going away: nothing to do.
+        if (this.stopped || this.leaving || claim !== this.claim) return;
         // Taken by another window that came into view: it syncs now.
         this.stepDown();
         this.claimLeadership();
       });
+  }
+
+  /**
+   * The page is going away (a reload, another page, the window closed): the
+   * lock let go now, while it still can be, and not asked for again. Held
+   * through the unload, or asked for again as another window took it, it
+   * hung the reload in WebKit (Safari, the Mac app's window), every time.
+   */
+  private letGo(): void {
+    this.leaving = true;
+    this.claim += 1;
+    this.stepDown();
   }
 
   /** No longer the window that syncs: what it was doing as that stops. */
@@ -304,10 +309,23 @@ export class SyncEngine {
   private onOnline = () => this.kick(0);
   private onVisibility = () => {
     if (document.visibilityState === "hidden") void this.sendBeforeHidden();
-    else if (!this.leader && !this.stopped) this.claimLeadership(true);
+    else if (!this.leader && !this.stopped && !this.leaving) this.claimLeadership(true);
     else this.kick(0);
   };
-  private onPageHide = () => void this.sendBeforeHidden();
+  private onPageHide = () => {
+    const leading = this.leader;
+    // Let go at once, before anything is awaited (see letGo); what was just
+    // typed is still sent, by this page as it goes, if it was the one that
+    // syncs. Sent twice (the next page sends it too) is the same as once.
+    this.letGo();
+    void this.sendBeforeHidden(leading);
+  };
+  /** Back from the back-forward cache: syncs again, as a page opened. */
+  private onPageShow = (event: PageTransitionEvent) => {
+    if (!event.persisted || this.stopped) return;
+    this.leaving = false;
+    if (!this.leader) this.claimLeadership(inView());
+  };
 
   /**
    * What is typed, written and sent at once as the app is put away: a phone
@@ -315,8 +333,14 @@ export class SyncEngine {
    * opened again. Written first: sent alongside, the push could look at the
    * outbox before the last words were in it.
    */
-  private async sendBeforeHidden(): Promise<void> {
+  private async sendBeforeHidden(leaving = false): Promise<void> {
     await flushAll().catch(() => {});
+    // Going away, the lock let go already: sent all the same, by the page
+    // that was syncing, once.
+    if (leaving) {
+      if (!this.stopped) await this.drain(true);
+      return;
+    }
     if (!this.leader || this.stopped) return;
     if (this.draining) {
       this.again = true;
@@ -331,6 +355,7 @@ export class SyncEngine {
     if (typeof window === "undefined") return;
     window.addEventListener("online", this.onOnline);
     window.addEventListener("pagehide", this.onPageHide);
+    window.addEventListener("pageshow", this.onPageShow);
     document.addEventListener("visibilitychange", this.onVisibility);
   }
 
@@ -338,6 +363,7 @@ export class SyncEngine {
     if (typeof window === "undefined") return;
     window.removeEventListener("online", this.onOnline);
     window.removeEventListener("pagehide", this.onPageHide);
+    window.removeEventListener("pageshow", this.onPageShow);
     document.removeEventListener("visibilitychange", this.onVisibility);
   }
 
@@ -674,8 +700,9 @@ export class SyncEngine {
 
   /* --------------------------------------------------------------- pushing */
 
-  private async drain(): Promise<void> {
-    if (!this.leader || this.stopped || this.draining) return;
+  /** `final`: the last push of a page going away, sent though the lock has been let go (see letGo). */
+  private async drain(final = false): Promise<void> {
+    if ((!this.leader && !final) || this.stopped || this.draining) return;
     this.draining = true;
     try {
       const database = db();
@@ -781,7 +808,8 @@ export class SyncEngine {
       this.draining = false;
       const again = this.again;
       this.again = false;
-      if (!this.stopped) {
+      // The next round, while this window is the one that syncs.
+      if (!this.stopped && this.leader) {
         if (this.timer) clearTimeout(this.timer);
         this.timer = setTimeout(() => void this.drain(), again ? 0 : this.interval);
       }

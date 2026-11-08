@@ -47,6 +47,7 @@ function fakeLocks() {
   };
   let held: Ask | null = null;
   const line: Ask[] = [];
+  let asked = 0;
   const grant = (ask: Ask) => {
     held = ask;
     void Promise.resolve(ask.callback()).then((value) => {
@@ -58,7 +59,10 @@ function fakeLocks() {
     });
   };
   return {
+    /** Whether anyone holds the lock, and how many asks have been made. */
+    state: () => ({ held: held !== null, waiting: line.length, asked }),
     request(_name: string, options: LockOptions, callback: () => unknown) {
+      asked += 1;
       return new Promise((resolve, reject) => {
         const ask: Ask = { callback, resolve, reject };
         if (options.steal) {
@@ -82,6 +86,7 @@ function fakeLocks() {
   };
 }
 
+let locks: ReturnType<typeof fakeLocks>;
 let visibility: DocumentVisibilityState = "hidden";
 const setVisibility = (state: DocumentVisibilityState) => {
   visibility = state;
@@ -135,7 +140,8 @@ beforeEach(async () => {
   await db().notes.put(note("n1"));
   visibility = "hidden";
   vi.spyOn(document, "visibilityState", "get").mockImplementation(() => visibility);
-  Object.defineProperty(navigator, "locks", { value: fakeLocks(), configurable: true });
+  locks = fakeLocks();
+  Object.defineProperty(navigator, "locks", { value: locks, configurable: true });
 });
 
 afterEach(() => {
@@ -218,6 +224,59 @@ describe("the window that syncs", () => {
     } finally {
       await releaseDoc("n1");
       phone.engine.stop();
+    }
+  });
+
+  test("a page going away lets the lock go at once, asks for it no more, and still sends what was just typed", async () => {
+    const page = window_();
+    visibility = "visible";
+    await page.engine.start("me");
+    const doc = await acquireDoc("n1");
+    try {
+      await vi.waitFor(() => expect(page.watching()).toBe(true));
+      await vi.waitFor(async () => expect(await db().outbox.count()).toBe(0));
+      const asked = locks.state().asked;
+      doc.getText("t").insert(0, "離れる直前に");
+      // A reload, say: in WebKit, a lock held through it, or asked for
+      // again as it went, hung the reload.
+      window.dispatchEvent(new Event("pagehide"));
+      expect(page.watching()).toBe(false);
+      // Let go as soon as the browser takes the release in, before anything is sent.
+      await vi.waitFor(() => expect(locks.state().held).toBe(false), { timeout: 100 });
+      await vi.waitFor(() => expect(page.server.callsTo("sync:push").length).toBeGreaterThan(0));
+      const sent = new Y.Doc();
+      for (const call of page.server.callsTo("sync:push")) {
+        for (const each of call.args.ops as { kind: string; payload?: ArrayBuffer }[]) {
+          if (each.kind === "update") Y.applyUpdate(sent, new Uint8Array(each.payload!));
+        }
+      }
+      expect(sent.getText("t").toString()).toBe("離れる直前に");
+      // Seen again (a tab coming into view meanwhile, say): not asked for, the page going.
+      setVisibility("visible");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(locks.state().asked).toBe(asked);
+      expect(locks.state().held).toBe(false);
+    } finally {
+      await releaseDoc("n1");
+      page.engine.stop();
+    }
+  });
+
+  test("back from the back-forward cache, it syncs again", async () => {
+    const page = window_();
+    visibility = "visible";
+    await page.engine.start("me");
+    try {
+      await vi.waitFor(() => expect(page.watching()).toBe(true));
+      window.dispatchEvent(new Event("pagehide"));
+      expect(page.watching()).toBe(false);
+      const shown = new Event("pageshow");
+      Object.defineProperty(shown, "persisted", { value: true });
+      window.dispatchEvent(shown);
+      await vi.waitFor(() => expect(page.watching()).toBe(true));
+      expect(locks.state().held).toBe(true);
+    } finally {
+      page.engine.stop();
     }
   });
 });
