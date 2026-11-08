@@ -217,10 +217,13 @@ export async function renameFolder(folderId: string, name: string): Promise<void
   // Always in plaintext, locked folder or not: only the notes inside a locked
   // folder are encrypted, and the plaintext name also replaces a name that an
   // earlier version sealed.
+  // Its own stamp only (by key path): written with the whole `ts` as read
+  // before, a write landing beside this one (a move, say) would put this
+  // stamp back as it was. So everywhere below.
   await database.folders.update(folderId, {
     name,
     nameSealed: undefined,
-    ts: { ...folder.ts, name: ts },
+    "ts.name": ts,
   });
   await enqueue({
     kind: "folder",
@@ -247,7 +250,7 @@ export async function moveFolder(
   await database.folders.update(folderId, {
     parentId,
     sortKey: key,
-    ts: { ...folder.ts, place: ts },
+    "ts.place": ts,
   });
   await enqueue({
     kind: "folder",
@@ -268,7 +271,7 @@ export async function setFolderTrashed(
 
   await database.folders.update(folderId, {
     deletedAt,
-    ts: { ...folder.ts, trash: ts },
+    "ts.trash": ts,
   });
   await enqueue({
     kind: "folder",
@@ -569,7 +572,7 @@ async function writeTitle(noteId: string, title: string): Promise<void> {
     const sealed = { ct: toArrayBuffer(out.ct), iv: toArrayBuffer(out.iv) };
     await database.notes.update(noteId, {
       titleSealed: sealed,
-      ts: { ...note.ts, title: ts },
+      "ts.title": ts,
     });
     await enqueue({
       kind: "note",
@@ -583,7 +586,7 @@ async function writeTitle(noteId: string, title: string): Promise<void> {
     return;
   }
 
-  await database.notes.update(noteId, { title, ts: { ...note.ts, title: ts } });
+  await database.notes.update(noteId, { title, "ts.title": ts });
   // The stored reading covers the title too, so it is now stale. Clearing it
   // is enough: the background pass recomputes anything missing.
   await database.bodies.update(noteId, { reading: undefined });
@@ -616,7 +619,7 @@ export async function moveNote(
   await database.notes.update(noteId, {
     folderId: target,
     sortKey: key,
-    ts: { ...note.ts, place: ts },
+    "ts.place": ts,
   });
   await enqueue({
     kind: "note",
@@ -639,13 +642,8 @@ async function writePin(
   if (!note) return;
   const { ts } = await now();
   await db().notes.update(noteId, {
-    ...(change.pinned === undefined ? {} : { pinned: change.pinned }),
-    ...(change.key === undefined ? {} : { pinKey: change.key }),
-    ts: {
-      ...note.ts,
-      ...(change.pinned === undefined ? {} : { pin: ts }),
-      ...(change.key === undefined ? {} : { pinPlace: ts }),
-    },
+    ...(change.pinned === undefined ? {} : { pinned: change.pinned, "ts.pin": ts }),
+    ...(change.key === undefined ? {} : { pinKey: change.key, "ts.pinPlace": ts }),
   });
   await enqueue({
     kind: "note",
@@ -742,7 +740,7 @@ export async function setNoteTrashed(noteId: string, trashed: boolean): Promise<
   const { ts } = await now();
   const deletedAt = trashed ? Date.now() : null;
 
-  await database.notes.update(noteId, { deletedAt, ts: { ...note.ts, trash: ts } });
+  await database.notes.update(noteId, { deletedAt, "ts.trash": ts });
   await enqueue({
     kind: "note",
     entityId: noteId,

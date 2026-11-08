@@ -277,15 +277,23 @@ async function write(handle: Handle, merged: Uint8Array): Promise<"stored" | "ke
   );
 
   // The searchable text and the list preview both come from the document, and
-  // are kept in plaintext only when the note itself is not locked.
+  // are kept in plaintext only when the note itself is not locked. Changed in
+  // place: how far the stored body reaches (throughSeq) is the pull's to
+  // write (sync/apply), and read here and written back whole, a save could
+  // put it back to before an advance the pull made meanwhile. The reading
+  // (search/yomi) covered the text as it was: taken again when missing.
   const text = extractText(handle.doc);
-  await database.bodies.put({
-    noteId: handle.noteId,
-    throughSeq: (await database.bodies.get(handle.noteId))?.throughSeq ?? 0,
+  const body = {
     keyEpoch: note.keyEpoch,
     text: note.locked ? null : text,
     links: note.locked ? [] : linkTargets(handle.doc),
+    reading: undefined,
     updatedAt: Date.now(),
+  };
+  await database.transaction("rw", database.bodies, async () => {
+    if ((await database.bodies.update(handle.noteId, body)) === 0) {
+      await database.bodies.put({ noteId: handle.noteId, throughSeq: 0, ...body });
+    }
   });
 
   if (!note.locked) {
@@ -298,10 +306,12 @@ async function write(handle: Handle, merged: Uint8Array): Promise<"stored" | "ke
       const { stamp: clockStamp } = await import("./clock");
       const { deviceId } = await import("@/lib/db/meta");
       const ts = clockStamp(await deviceId());
+      // Its own stamp only: `note` was read before the flush, and the whole
+      // `ts` written from it would put back a rename's stamp made since.
       await database.notes.update(handle.noteId, {
         preview,
         updatedAt: now,
-        ts: { ...note.ts, preview: ts },
+        "ts.preview": ts,
       });
       // Stamped with it: a write due for the edits before has nothing to add.
       if (handle.stampTimer) clearTimeout(handle.stampTimer);

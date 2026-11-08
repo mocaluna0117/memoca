@@ -160,6 +160,24 @@ describe("reloading an open note from storage", () => {
   });
 });
 
+describe("how far the stored body reaches", () => {
+  test("is not written back by a save, which a pull may have moved on meanwhile", async () => {
+    // Caught up to the server's fifth update, as the pull records it.
+    await db().bodies.put({ noteId: "n1", throughSeq: 5, keyEpoch: 0, text: "", updatedAt: 0 });
+    const doc = await acquireDoc("n1");
+    appendParagraphs(doc, ["本文"]);
+    const put = vi.spyOn(db().bodies, "put");
+    await flushDoc("n1");
+    // Changed in place, the reach left to the pull: read before and written
+    // back whole, a save could put it back to where it was before the pull.
+    expect(put.mock.calls.some(([row]) => "throughSeq" in row)).toBe(false);
+    const body = (await db().bodies.get("n1"))!;
+    expect(body.throughSeq).toBe(5);
+    expect(body.text).toBe("本文");
+    await releaseDoc("n1");
+  });
+});
+
 describe("an edit larger than the server takes in one piece", () => {
   test("is stored and queued in pieces, each under the limit, that together hold it all", async () => {
     const doc = await acquireDoc("n1");
