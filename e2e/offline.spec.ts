@@ -8,6 +8,8 @@ import {
   signIn,
   signUp,
   waitForSynced,
+  quickField,
+  writeQuick,
 } from "./helpers";
 import { natural, noteImages, pasteImage, uploadsDrained } from "./image-helpers";
 import { readTable } from "./local-db";
@@ -113,8 +115,8 @@ test.describe("offline", () => {
     // Another address of it, from the one copy kept, and written into as ever.
     await context.setOffline(true);
     await page.goto("/quick?window=1");
-    const field = page.getByLabel("即席メモ");
-    await field.fill("圏外で書いた即席メモ");
+    const field = quickField(page);
+    await writeQuick(field, "圏外で書いた即席メモ");
     await field.press("Control+Enter");
     await expect(page.getByRole("status").filter({ hasText: "保存しました" })).toBeVisible();
 

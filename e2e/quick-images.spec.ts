@@ -1,10 +1,10 @@
 import { expect, type Page, test } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
-import { editor, signUp } from "./helpers";
+import { editor, quickField, signUp, writeQuick } from "./helpers";
 import { natural, noteImages, uploadsDrained } from "./image-helpers";
 import { readTable } from "./local-db";
 
-const field = (page: Page) => page.getByLabel("即席メモ");
+const field = (page: Page) => quickField(page);
 const thumbnails = (page: Page) => page.getByRole("list", { name: "追加した画像" }).getByRole("img");
 
 /** Pastes into the quick note's field a made-up picture (a PNG of four colours), or another file. */
@@ -36,7 +36,7 @@ test.describe("images in the quick note", () => {
   test("pasted, shown under the field, and saved into the note under its lines", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick");
-    await field(page).fill("写真のメモ");
+    await writeQuick(field(page), "写真のメモ");
     await pasteInto(page, { name: "景色.png" });
     await expect(thumbnails(page)).toHaveCount(1);
     await expect(thumbnails(page).first()).toHaveAttribute("alt", "景色.png");

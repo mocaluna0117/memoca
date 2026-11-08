@@ -23,6 +23,34 @@ import type { FolderNode } from "@/lib/types";
 import { t } from "@/lib/i18n/ja";
 
 /**
+ * The folders to list, each with whether it may be picked: all of them, or
+ * those `canPick` takes and those with one inside them, which are listed
+ * (greyed) only so those inside are seen where they are.
+ */
+function withPickable(
+  flat: FolderNode[],
+  canPick: ((node: FolderNode) => boolean) | undefined,
+): (FolderNode & { pickable: boolean })[] {
+  if (!canPick) return flat.map((node) => ({ ...node, pickable: true }));
+  const pickable = flat.map((node) => canPick(node));
+  // In tree order, each folder's own after it, deeper: a folder holds one
+  // that may be picked if any of those before the next at its depth may be.
+  const holds = flat.map(() => false);
+  for (let at = flat.length - 1; at >= 0; at -= 1) {
+    const depth = flat[at]!.depth;
+    for (let next = at + 1; next < flat.length && flat[next]!.depth > depth; next += 1) {
+      if (pickable[next]) {
+        holds[at] = true;
+        break;
+      }
+    }
+  }
+  return flat
+    .map((node, at) => ({ ...node, pickable: pickable[at]! }))
+    .filter((node, at) => node.pickable || holds[at]);
+}
+
+/**
  * Picks a destination folder.
  *
  * The whole tree is flattened and searchable, because on a phone drilling
@@ -41,6 +69,8 @@ export function FolderPicker({
    */
   rootLabel,
   title = t.action.move,
+  description = "移動先のフォルダを選んでください。",
+  canPick,
   onCloseAutoFocus,
 }: {
   open: boolean;
@@ -49,6 +79,13 @@ export function FolderPicker({
   excludeSubtreeOf?: string;
   rootLabel?: string;
   title?: string;
+  description?: string;
+  /**
+   * Which folders may be picked: the others are left out, but for one
+   * holding some that may be, shown greyed so that those are seen where
+   * they are.
+   */
+  canPick?: (node: FolderNode) => boolean;
   /** Where focus goes once it closes, if not back to what opened it. */
   onCloseAutoFocus?: (event: Event) => void;
 }) {
@@ -60,7 +97,7 @@ export function FolderPicker({
       all.add(node.folderId),
     );
     const expanded = new Set(all);
-    const flat = flattenTree(tree, expanded);
+    const flat = withPickable(flattenTree(tree, expanded), canPick);
     if (!excludeSubtreeOf) return flat;
 
     const blocked = new Set<string>();
@@ -79,14 +116,14 @@ export function FolderPicker({
     const root = find(tree);
     if (root) mark(root);
     return flat.filter((node) => !blocked.has(node.folderId));
-  }, [tree, excludeSubtreeOf]);
+  }, [tree, excludeSubtreeOf, canPick]);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="overflow-hidden p-0 sm:max-w-md" onCloseAutoFocus={onCloseAutoFocus}>
         <DialogHeader className="px-4 pt-4">
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>移動先のフォルダを選んでください。</DialogDescription>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <Command>
           <CommandInput placeholder="フォルダ名で絞り込む" />
@@ -109,6 +146,7 @@ export function FolderPicker({
                 <CommandItem
                   key={node.folderId}
                   value={`${node.folderId} ${node.name ?? ""}`}
+                  disabled={!node.pickable}
                   onSelect={() => {
                     onPick(node.folderId);
                     onOpenChange(false);

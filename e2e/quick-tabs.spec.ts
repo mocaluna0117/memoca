@@ -1,17 +1,17 @@
 import { expect, type Page, test } from "@playwright/test";
-import { openApp, signUp } from "./helpers";
+import { expectQuickText, openApp, quickField, signUp, writeQuick } from "./helpers";
 
 const WINDOW = "popup,width=380,height=460";
 
-const field = (page: Page) => page.getByLabel("即席メモ", { exact: true });
+const field = quickField;
 const tabs = (page: Page) => page.getByRole("tab");
 const tab = (page: Page, name: string) => page.getByRole("tab", { name, exact: true });
 
 /** Opens a tab with + and writes in it. */
 async function newTab(page: Page, text: string) {
   await page.getByRole("button", { name: "新しいタブ" }).click();
-  await expect(field(page)).toHaveValue("");
-  await field(page).fill(text);
+  await expectQuickText(field(page), "");
+  await writeQuick(field(page), text);
 }
 
 test.describe("the quick note's tabs, in a window of its own", () => {
@@ -28,14 +28,14 @@ test.describe("the quick note's tabs, in a window of its own", () => {
     const opened = context.waitForEvent("page");
     await page.evaluate((features) => window.open("/quick?window=1", "memoca-quick", features), WINDOW);
     const quick = await opened;
-    await field(quick).fill("買い物\n牛乳");
+    await writeQuick(field(quick), "買い物\n牛乳");
     await expect(tab(quick, "買い物")).toHaveAttribute("aria-selected", "true");
     await newTab(quick, "電話する");
     await newTab(quick, "アイデア");
     await expect(tabs(quick)).toHaveText(["買い物", "電話する", "アイデア"]);
 
     await tab(quick, "買い物").click();
-    await expect(field(quick)).toHaveValue("買い物\n牛乳");
+    await expectQuickText(field(quick), "買い物\n牛乳");
 
     // Put away and opened again: every tab back.
     // The window may be gone before the key is done with.
@@ -45,7 +45,7 @@ test.describe("the quick note's tabs, in a window of its own", () => {
     const reopened = await again;
     await expect(tabs(reopened)).toHaveText(["買い物", "電話する", "アイデア"]);
     await tab(reopened, "アイデア").click();
-    await expect(field(reopened)).toHaveValue("アイデア");
+    await expectQuickText(field(reopened), "アイデア");
 
     // Fits the window: the tabs scroll, the page does not.
     expect(
@@ -56,15 +56,15 @@ test.describe("the quick note's tabs, in a window of its own", () => {
   test("a tab saved stays as it is; saved again after more is written, the same note is", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick?window=1");
-    await field(page).fill("一つ目");
+    await writeQuick(field(page), "一つ目");
     await newTab(page, "二つ目");
     await field(page).press("ControlOrMeta+Enter");
     await expect(page.getByRole("status")).toContainText("保存しました");
     await expect(tabs(page)).toHaveText(["一つ目", "二つ目"]);
-    await expect(field(page)).toHaveValue("二つ目");
+    await expectQuickText(field(page), "二つ目");
     await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
 
-    await field(page).fill("二つ目\n書き足し");
+    await writeQuick(field(page), "二つ目\n書き足し");
     await field(page).press("ControlOrMeta+Enter");
     await expect(page.getByRole("status")).toContainText("保存しました");
     // Closed now, with all of it saved: nothing asked.
@@ -84,7 +84,7 @@ test.describe("the quick note's tabs, in a window of its own", () => {
   test("closed with something in it, asked first: kept, let go of, or saved", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick?window=1");
-    await field(page).fill("一つ目");
+    await writeQuick(field(page), "一つ目");
     await newTab(page, "二つ目");
     const dialog = page.getByRole("alertdialog");
 
@@ -121,7 +121,7 @@ test.describe("the quick note's tabs, on a phone", () => {
   test("tabs as on a computer; saved, the note opens, the tabs kept", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick");
-    await field(page).fill("一つ目");
+    await writeQuick(field(page), "一つ目");
     await newTab(page, "二つ目");
     await expect(tabs(page)).toHaveText(["一つ目", "二つ目"]);
     await page.getByRole("button", { name: "保存" }).click();
@@ -130,17 +130,17 @@ test.describe("the quick note's tabs, on a phone", () => {
     // Back: the tabs as they were, the one saved as it was.
     await page.goto("/quick");
     await expect(tabs(page)).toHaveText(["一つ目", "二つ目"]);
-    await expect(field(page)).toHaveValue("二つ目");
+    await expectQuickText(field(page), "二つ目");
   });
 
   test("what is shared goes into a tab of its own, the draft left as it is", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick");
-    await field(page).fill("書きかけ");
+    await writeQuick(field(page), "書きかけ");
     // Written before the share arrives.
     await page.waitForTimeout(800);
     await page.goto(`/quick?${new URLSearchParams({ text: "共有された文" })}`);
-    await expect(field(page)).toHaveValue("共有された文");
+    await expectQuickText(field(page), "共有された文");
     await expect(tabs(page)).toHaveText(["書きかけ", "共有された文"]);
   });
 });

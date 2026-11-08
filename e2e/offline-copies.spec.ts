@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { offlineReady, openApp, signUp } from "./helpers";
+import { expectQuickText, offlineReady, openApp, quickField, signUp } from "./helpers";
 
 /** The service worker's one copy each of /app and /quick. */
 const SHELL = "memoca-shell";
@@ -173,7 +173,7 @@ test.describe("what the device keeps for offline use", () => {
     await context.setOffline(true);
     const text = "圏外で共有した文章";
     await page.goto(`/quick?${new URLSearchParams({ text })}`);
-    await expect(page.getByLabel("即席メモ")).toHaveValue(text);
+    await expectQuickText(quickField(page), text);
   });
 
   test("a text shared into the quick note is kept nowhere on the device", async ({ page }) => {
@@ -184,7 +184,7 @@ test.describe("what the device keeps for offline use", () => {
     const secret = unique();
     const text = `あとで読む ${secret}`;
     await page.goto(`/quick?${new URLSearchParams({ text })}`);
-    await expect(page.getByLabel("即席メモ")).toHaveValue(text);
+    await expectQuickText(quickField(page), text);
     // Whatever the worker would have kept of the load, it has by now.
     await page.waitForTimeout(1_000);
     expect(await holding(page, secret)).toEqual([]);

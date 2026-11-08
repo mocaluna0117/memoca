@@ -91,7 +91,13 @@ export const ja = {
   },
   quick: {
     field: "即席メモ",
-    placeholder: "思いついたことをそのまま書いてください。Inbox に入ります。",
+    placeholder: "思いついたことをそのまま書いてください。「- 」で箇条書き、「/」でほかの記法も使えます。",
+    folder: (name: string) => `保存先: ${name}`,
+    // Not 保存先: a button named for 保存 would be taken for the save button.
+    folderLabel: (name: string) => `フォルダを選ぶ（いまは ${name}）`,
+    folderTitle: "保存先のフォルダ",
+    folderDescription: "即席メモを保存するフォルダを選んでください。次からもここに保存します。",
+    savedIn: (name: string) => `${name} に保存しました`,
     back: "戻る",
     saved: "保存しました",
     openNote: "メモを開く",

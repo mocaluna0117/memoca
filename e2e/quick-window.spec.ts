@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { editor, openApp, signUp } from "./helpers";
+import { editor, expectQuickText, openApp, quickField, signUp, writeQuick } from "./helpers";
 import { onScreen } from "./image-helpers";
 import { readTable } from "./local-db";
 
@@ -13,9 +13,10 @@ test.describe("the quick note in a window of its own", () => {
   test("however much is written, the header and its save button stay in view", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick?window=1");
-    await page
-      .getByLabel("即席メモ")
-      .fill(Array.from({ length: 60 }, (_, line) => `${line + 1} 行目`).join("\n"));
+    await writeQuick(
+      quickField(page),
+      Array.from({ length: 60 }, (_, line) => `${line + 1} 行目`).join("\n"),
+    );
     const save = page.getByRole("button", { name: "保存" });
     expect(onScreen(page, (await save.boundingBox())!)).toBe(true);
     // What is written scrolls inside the field; the window itself does not.
@@ -31,13 +32,13 @@ test.describe("the quick note in a window of its own", () => {
     await signUp(page);
     await page.goto("/quick?window=1");
     await expect(page.getByText("Ctrl + Enter で保存 ・ Esc で閉じる")).toBeVisible();
-    const field = page.getByLabel("即席メモ");
-    await field.fill("窓から保存\n本文");
+    const field = quickField(page);
+    await writeQuick(field, "窓から保存\n本文");
     // Kept as a draft while it is being written...
     await expect.poll(() => hasDraft(page)).toBe(true);
     await field.press("Control+Enter");
     await expect(page.getByRole("status").filter({ hasText: "保存しました" })).toBeVisible();
-    await expect(field).toHaveValue("窓から保存\n本文");
+    await expectQuickText(field, "窓から保存\n本文");
     await expect(page).toHaveURL(/\/quick\?window=1$/);
     // ...and still, saved: the tab stays as it is, nothing new to save.
     await expect.poll(() => hasDraft(page)).toBe(true);
@@ -66,8 +67,8 @@ test.describe("the quick note in a window of its own", () => {
       WINDOW,
     );
     const popup = await opened;
-    const field = popup.getByLabel("即席メモ");
-    await field.fill("閉じる前の下書き");
+    const field = quickField(popup);
+    await writeQuick(field, "閉じる前の下書き");
     const closed = popup.waitForEvent("close");
     await field.press("Escape");
     await closed;
@@ -77,7 +78,7 @@ test.describe("the quick note in a window of its own", () => {
       (features) => window.open("/quick?window=1", "memoca-quick", features),
       WINDOW,
     );
-    await expect((await again).getByLabel("即席メモ")).toHaveValue("閉じる前の下書き");
+    await expectQuickText(quickField(await again), "閉じる前の下書き");
   });
 });
 

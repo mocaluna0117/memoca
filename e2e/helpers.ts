@@ -217,3 +217,34 @@ export async function offlineReady(page: Page): Promise<void> {
   }
   await expect.poll(shellCached, { timeout: 30_000 }).toBe(true);
 }
+
+/* ------------------------------------------------------------ quick note */
+
+/** The quick note's editor, in a page or a window of its own. */
+export const quickField = (page: Page) => page.getByLabel("即席メモ", { exact: true });
+
+/** What the quick note holds: a line for each of its blocks. */
+export function quickText(field: Locator): Promise<string> {
+  return field.evaluate((element) =>
+    Array.from(element.querySelectorAll(".bn-inline-content"), (line) => line.textContent ?? "").join(
+      "\n",
+    ),
+  );
+}
+
+/** Waits for the quick note to hold just this, a line for each block. */
+export async function expectQuickText(field: Locator, text: string): Promise<void> {
+  await expect.poll(() => quickText(field)).toBe(text);
+}
+
+/** Writes this in the quick note, over what it held: a block for each line, as typed. */
+export async function writeQuick(field: Locator, text: string): Promise<void> {
+  const keyboard = field.page().keyboard;
+  await field.click();
+  await keyboard.press("ControlOrMeta+a");
+  await keyboard.press("Backspace");
+  for (const [at, line] of text.split("\n").entries()) {
+    if (at > 0) await keyboard.press("Enter");
+    if (line) await keyboard.insertText(line);
+  }
+}

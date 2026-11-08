@@ -78,10 +78,22 @@ export function MobileBlockToolbar() {
   return <KeyboardBlockBar inset={inset} />;
 }
 
+/**
+ * The same bar, for a page already kept to what the keyboard leaves of the
+ * screen (the quick note's on a phone): in its place in the page, at its
+ * foot, rather than fixed over the keyboard, and with no room made for it.
+ * Shown, as that one is, only with the keyboard up.
+ */
+export function InlineBlockBar() {
+  const inset = useKeyboardInset();
+  if (inset === 0) return null;
+  return <KeyboardBlockBar inset={0} inline />;
+}
+
 /** Room for the bar itself over the keyboard, with a little to spare. */
 const BAR_ROOM_PX = 64;
 
-function KeyboardBlockBar({ inset }: { inset: number }) {
+function KeyboardBlockBar({ inset, inline = false }: { inset: number; inline?: boolean }) {
   const editor = useBlockNoteEditor();
   const selected = useSelectedBlocks(editor);
   const openCrop = useOpenCrop();
@@ -277,8 +289,11 @@ function KeyboardBlockBar({ inset }: { inset: number }) {
   // placed against, so the bar would leave the keyboard.
   return (
     <div
-      className="fixed inset-x-0 z-40 border-t bg-background/95 backdrop-blur in-data-[drawer]:hidden supports-[backdrop-filter]:bg-background/80 md:hidden"
-      style={{ bottom: inset }}
+      className={cn(
+        "border-t bg-background/95 backdrop-blur in-data-[drawer]:hidden supports-[backdrop-filter]:bg-background/80 md:hidden",
+        inline ? "shrink-0" : "fixed inset-x-0 z-40",
+      )}
+      style={inline ? undefined : { bottom: inset }}
       role="toolbar"
       aria-label="ブロックの操作"
       data-keyboard-bar=""

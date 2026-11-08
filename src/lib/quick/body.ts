@@ -80,12 +80,95 @@ export function appendBlocks(doc: Y.Doc, parts: QuickPart[]): void {
   });
 }
 
+/**
+ * What a quick note's body says, to tell whether it has changed since it was
+ * saved: its blocks as XML, their kinds, marks and ids with them. A list
+ * made of a line changes it, which the plain text would not show.
+ */
+export function quickKey(doc: Y.Doc): string {
+  return bodyFragment(doc).toString();
+}
+
+/** Whether a block holds nothing: a paragraph with no text, or only spaces, and no lines inside it. */
+function blank(container: Y.XmlElement): boolean {
+  const children = container.toArray();
+  if (children.length !== 1) return false;
+  const content = children[0];
+  if (!(content instanceof Y.XmlElement) || content.nodeName !== "paragraph") return false;
+  return content
+    .toArray()
+    .every((part) => part instanceof Y.XmlText && part.toString().trim() === "");
+}
+
+/**
+ * Writes a quick note's body into a note's, the note's emptied first (saved
+ * again, it is written over): each of its blocks as it is, lists, toggles,
+ * headings and marks with them, and blank lines at either end left out (an
+ * editor's body always ends in one). Then `extra` after them: its images.
+ * All in one change to the note.
+ */
+export function copyQuickBody(from: Y.Doc, into: Y.Doc, extra: QuickPart[]): void {
+  const source = bodyFragment(from);
+  const target = bodyFragment(into);
+  into.transact(() => {
+    if (target.length > 0) target.delete(0, target.length);
+    target.insert(
+      0,
+      source.toArray().map((node) => (node as Y.XmlElement | Y.XmlText).clone()),
+    );
+    const group = target
+      .toArray()
+      .find(
+        (node): node is Y.XmlElement =>
+          node instanceof Y.XmlElement && node.nodeName === "blockGroup",
+      );
+    if (group) {
+      const at = (index: number) => group.get(index) as unknown;
+      while (group.length > 0 && at(0) instanceof Y.XmlElement && blank(at(0) as Y.XmlElement)) {
+        group.delete(0, 1);
+      }
+      while (
+        group.length > 0 &&
+        at(group.length - 1) instanceof Y.XmlElement &&
+        blank(at(group.length - 1) as Y.XmlElement)
+      ) {
+        group.delete(group.length - 1, 1);
+      }
+    }
+    appendBlocks(into, extra);
+  });
+}
+
 /** Adds a paragraph for each line at the end of a note's body (see {@link appendBlocks}). */
 export function appendParagraphs(doc: Y.Doc, lines: string[]): void {
   appendBlocks(
     doc,
     lines.map((text) => ({ kind: "line", text })),
   );
+}
+
+/**
+ * A paragraph for each line at the start of a body, before what it holds, in
+ * its one block group (see {@link appendBlocks}): what was shared, put above
+ * a draft.
+ */
+export function prependParagraphs(doc: Y.Doc, lines: string[]): void {
+  const group = bodyFragment(doc)
+    .toArray()
+    .find(
+      (node): node is Y.XmlElement => node instanceof Y.XmlElement && node.nodeName === "blockGroup",
+    );
+  if (!group) return appendParagraphs(doc, lines);
+  const scratch = new Y.Doc();
+  appendParagraphs(scratch, lines);
+  const made = (bodyFragment(scratch).get(0) as Y.XmlElement | undefined)?.toArray() ?? [];
+  if (made.length === 0) return;
+  doc.transact(() => {
+    group.insert(
+      0,
+      made.map((node) => (node as Y.XmlElement).clone()),
+    );
+  });
 }
 
 /**

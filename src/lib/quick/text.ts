@@ -42,3 +42,12 @@ export function quickLines(text: string): string[] {
   while (blank(lines.at(-1))) lines.pop();
   return lines;
 }
+
+/**
+ * Whether a tab's text holds what was shared already: read from its body,
+ * the blank lines between its lines are not there, so they are not looked for.
+ */
+export function holdsShared(text: string, shared: string): boolean {
+  const lines = (value: string) => quickLines(value).filter((line) => line.trim() !== "").join("\n");
+  return lines(text).includes(lines(shared));
+}

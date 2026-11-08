@@ -12,7 +12,16 @@ import { copiedBlob } from "@/lib/media/blob-copy";
  * signed in on the same device is never shown it.
  */
 export type QuickDraft = {
+  /** Its text, a line per block: for its tab's name, and to tell it is empty. */
   text: string;
+  /**
+   * What it holds, lists, toggles and marks with it: its editor's document,
+   * as one Yjs update. Missing on drafts from before the quick note had an
+   * editor, which held the text alone.
+   */
+  body?: Uint8Array;
+  /** What its body says, to tell it changed since it was saved (lib/quick/body quickKey). */
+  key?: string;
   /** The images added to it, made ready (compressed) already. Missing on drafts from before. */
   images?: DraftImage[];
   updatedAt: number;
@@ -25,6 +34,14 @@ export type QuickDraft = {
 export type SavedAs = {
   noteId: string;
   text: string;
+  /** What its body said then; missing on what was saved before the quick note had an editor. */
+  key?: string;
+  /**
+   * The folder it was saved into, as chosen then: saved again into another
+   * chosen since, the note goes there too. Missing on what was saved before
+   * a folder could be chosen.
+   */
+  folderId?: string | null;
   /** Its images, by their keys. */
   images: string[];
 };
@@ -48,18 +65,25 @@ export type DraftImage = {
  */
 export function unsaved(tab: {
   text: string;
+  /** What its body says (lib/quick/body quickKey): a list made of a line is a change its text does not show. */
+  key?: string;
   images: readonly { key: string }[];
   saved?: SavedAs | null;
 }): boolean {
   if (tab.text.trim() === "" && tab.images.length === 0) return false;
   const { saved } = tab;
   if (!saved) return true;
+  const same =
+    tab.key !== undefined && saved.key !== undefined ? saved.key === tab.key : saved.text === tab.text;
   return (
-    saved.text !== tab.text ||
+    !same ||
     saved.images.length !== tab.images.length ||
     tab.images.some((image, index) => saved.images[index] !== image.key)
   );
 }
+
+/** What a tab holds of text: its text, and (from its editor) its body and what that says. */
+export type DraftContent = { text: string; body?: Uint8Array; key?: string };
 
 /** How long typing has to pause before the draft is written. */
 export const DRAFT_DELAY_MS = 300;
@@ -109,16 +133,16 @@ export function clearDraft(userKey: string, tabId: string): Promise<void> {
  * once there is nothing in it.
  */
 async function writeDraft(
-  text: string,
+  content: DraftContent,
   images: DraftImage[],
   userKey: string,
   tabId: string,
 ): Promise<void> {
-  if (text.trim() === "" && images.length === 0) return clearDraft(userKey, tabId);
+  if (content.text.trim() === "" && images.length === 0) return clearDraft(userKey, tabId);
   // Only what it was saved as is wanted of it: not its images, copied.
   const kept = await readDraft(userKey, tabId);
   await setMeta(draftKey(tabId), {
-    text,
+    ...contentOf(content),
     images,
     updatedAt: Date.now(),
     userKey,
@@ -126,20 +150,35 @@ async function writeDraft(
   } satisfies QuickDraft);
 }
 
+/** A draft's text, and its body and what that says where it has them. */
+const contentOf = ({ text, body, key }: DraftContent) => ({
+  text,
+  ...(body ? { body } : {}),
+  ...(key !== undefined ? { key } : {}),
+});
+
 /** A tab saved as a note: what it held then, kept as its draft, and the note it went into. */
 export function markSaved(
   userKey: string,
   tabId: string,
   noteId: string,
-  text: string,
+  content: string | DraftContent,
   images: DraftImage[],
+  folderId?: string | null,
 ): Promise<void> {
+  const held = typeof content === "string" ? { text: content } : content;
   return setMeta(draftKey(tabId), {
-    text,
+    ...contentOf(held),
     images,
     updatedAt: Date.now(),
     userKey,
-    saved: { noteId, text, images: images.map((image) => image.key) },
+    saved: {
+      noteId,
+      text: held.text,
+      ...(held.key !== undefined ? { key: held.key } : {}),
+      ...(folderId !== undefined ? { folderId } : {}),
+      images: images.map((image) => image.key),
+    },
   } satisfies QuickDraft);
 }
 
@@ -156,7 +195,12 @@ export function keepDraft(
   userKey: string,
   tabId: string,
 ): {
-  update(text: string): void;
+  /**
+   * What it holds now: its text, or (from its editor) its text, body and
+   * what that says, or how to read them, read only as it is written (not on
+   * every key).
+   */
+  update(content: string | DraftContent | (() => DraftContent)): void;
   /** The images added, as they now are. */
   images(images: DraftImage[]): void;
   /** The draft on the device has been read: writing may start. */
@@ -168,13 +212,17 @@ export function keepDraft(
   dispose(): void;
 } {
   let held = true;
-  /** What the field holds, as last told; null once it has been saved. */
-  let latest: string | null = null;
+  /** What it holds, as last told, or how to read it; null once it has been saved. */
+  let latest: DraftContent | (() => DraftContent) | null = null;
+  const read = (told: DraftContent | (() => DraftContent)) =>
+    typeof told === "function" ? told() : told;
   /** The images, as last told. */
   let pictures: DraftImage[] = [];
   /** What this window last wrote. */
-  let written: string | null = null;
+  let written: DraftContent | null = null;
   let writtenPictures: DraftImage[] = [];
+  const same = (a: DraftContent | null, b: DraftContent | null) =>
+    a !== null && b !== null && a.text === b.text && a.key === b.key;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const stop = () => {
     if (timer) clearTimeout(timer);
@@ -182,12 +230,12 @@ export function keepDraft(
   };
   const flush = async (always = false) => {
     stop();
-    if (held || latest === null || (!always && latest === written && pictures === writtenPictures))
-      return;
-    const text = latest;
-    written = text;
+    if (held || latest === null) return;
+    const content = read(latest);
+    if (!always && same(content, written) && pictures === writtenPictures) return;
+    written = content;
     writtenPictures = pictures;
-    await writeDraft(text, pictures, userKey, tabId);
+    await writeDraft(content, pictures, userKey, tabId);
   };
   const schedule = () => {
     stop();
@@ -200,19 +248,19 @@ export function keepDraft(
   document.addEventListener("visibilitychange", onHidden);
   window.addEventListener("pagehide", onLeave);
   return {
-    update(text) {
-      latest = text;
+    update(content) {
+      latest = typeof content === "string" ? { text: content } : content;
       schedule();
     },
     images(images) {
       pictures = images;
       // Images alone are a draft too.
-      latest ??= "";
+      latest ??= { text: "" };
       schedule();
     },
     release() {
       held = false;
-      if (latest !== null && (latest !== written || pictures !== writtenPictures)) schedule();
+      if (latest !== null && (!same(read(latest), written) || pictures !== writtenPictures)) schedule();
     },
     flush,
     cancel() {

@@ -47,6 +47,8 @@ export const META = {
    * version with no tabs, taken into the first tab (lib/quick/draft.ts).
    */
   quickDraft: "quickDraft",
+  /** The folder the quick note saves into, as last chosen on this device: under `quickFolder:<account>`. */
+  quickFolder: "quickFolder",
   /** The quick note's tabs, in order, and the one shown: under `quickTabs:<account>`. */
   quickTabs: "quickTabs",
   /** Images written again as WebP whose replacement the server has yet to hear of. */

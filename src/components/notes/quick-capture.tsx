@@ -1,6 +1,16 @@
 "use client";
 
-import { AppWindow, ArrowLeft, Check, ImagePlus, Loader2, X } from "lucide-react";
+import {
+  AppWindow,
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  FolderIcon,
+  ImagePlus,
+  Inbox,
+  Loader2,
+  X,
+} from "lucide-react";
 import { uuidv7 } from "uuidv7";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
@@ -14,11 +24,18 @@ import {
   useRef,
   useState,
 } from "react";
+import * as Y from "yjs";
+import { FolderPicker } from "@/components/folders/folder-picker";
+import {
+  QuickEditor,
+  type QuickEditorHandle,
+  SAVE_KEYS,
+} from "@/components/notes/quick-editor";
 import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import { newBuildOut } from "@/lib/build";
-import { startImeTrace, traceIme } from "@/lib/debug/ime-trace";
+import { startImeTrace } from "@/lib/debug/ime-trace";
+import { useFolders } from "@/lib/hooks/data";
 import { toast } from "sonner";
 import { t } from "@/lib/i18n/ja";
 import { useClientValue } from "@/lib/hooks/use-client-value";
@@ -26,8 +43,15 @@ import { useVisibleArea } from "@/lib/hooks/use-visible-area";
 import { useModKeyLabel } from "@/lib/platform";
 import { type Allowance, prepareUpload, stageUpload } from "@/lib/media/attachments";
 import { uploadRefusal } from "@/lib/media/refusal";
-import { type QuickPart, appendBlocks } from "@/lib/quick/body";
 import {
+  type QuickPart,
+  appendParagraphs,
+  copyQuickBody,
+  prependParagraphs,
+  quickKey,
+} from "@/lib/quick/body";
+import {
+  type DraftContent,
   type DraftImage,
   MAX_TABS,
   type SavedAs,
@@ -49,18 +73,24 @@ import {
   holds,
   tabName,
 } from "@/components/notes/quick-tabs";
+import {
+  quickFolderOf,
+  quickPickable,
+  rememberQuickFolder,
+  rememberedQuickFolder,
+} from "@/lib/quick/folder";
 import { useQuickMode } from "@/lib/quick/mode";
-import { attachFieldWatchdog } from "@/lib/quick/field-watchdog";
 import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
-import { SHARED, joinShared, quickLines } from "@/lib/quick/text";
+import { SHARED, holdsShared, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
-import { createNote } from "@/lib/sync/mutations";
-import { bodyFragment } from "@/lib/sync/ydoc";
+import { createNote, moveNote } from "@/lib/sync/mutations";
+import { extractText } from "@/lib/sync/ydoc";
+import type { Folder } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 /** What the status line says: how the last save went, or why a file was turned away. */
 type Status =
-  | { kind: "saved"; noteId: string }
+  | { kind: "saved"; noteId: string; folder: string }
   | { kind: "failed" }
   /** A file turned away, and why. */
   | { kind: "refused"; message: string }
@@ -72,7 +102,24 @@ type CaptureHandle = {
   save: () => Promise<string | null>;
   /** Lets go of what is written, its draft not written again as it goes. */
   discard: () => void;
+  /** Into its editor, the caret where it was. */
+  focus: () => void;
 };
+
+/** The folder a quick note is saved into: its id (none, the top level), its name, and whether it is Inbox. */
+type QuickFolder = { id: string | null; name: string; inbox: boolean };
+
+/** A folder's name as the chip says it: Inbox's, whatever it holds. */
+const folderName = (folder: Folder | undefined) =>
+  folder?.system === "inbox" || !folder ? t.nav.inbox : (folder.name ?? t.nav.inbox);
+
+/** What a tab holds of text now: its text, and what its body says (lib/quick/body quickKey). */
+const textOf = (doc: Y.Doc) => ({ text: extractText(doc), key: quickKey(doc) });
+/** As {@link textOf}, with the body itself, for the draft. */
+const contentOf = (doc: Y.Doc): DraftContent => ({
+  ...textOf(doc),
+  body: Y.encodeStateAsUpdate(doc),
+});
 
 /** An image added, with a URL of this tab's to show it by. */
 type QuickImage = DraftImage & {
@@ -114,9 +161,6 @@ async function allReady(jobs: Map<string, Promise<void>>): Promise<void> {
   while (jobs.size > 0) await Promise.all(jobs.values());
 }
 
-/** Both keys the save is on, for whatever keyboard: ⌘ on a Mac, Ctrl elsewhere. */
-const SAVE_KEYS = "Meta+Enter Control+Enter";
-
 /** An input method still choosing a word: its keys are its own, Safari's too. */
 const composing = (event: { isComposing: boolean; keyCode: number }) =>
   event.isComposing || event.keyCode === 229;
@@ -124,10 +168,11 @@ const composing = (event: { isComposing: boolean; keyCode: number }) =>
 /**
  * Write first, organise later.
  *
- * No folder to pick and no title to invent: whatever is typed lands in Inbox as
- * a normal note, so it can be moved, locked or edited in the full editor
- * afterwards. Android's share sheet and the home-screen shortcut both arrive
- * here with the text prefilled.
+ * No title to invent: whatever is typed lands, as a normal note, in the folder
+ * last chosen for it on this device (Inbox at first), so it can be moved,
+ * locked or edited in the full editor afterwards. It is written as a note is,
+ * lists, checks, toggles and headings and all. Android's share sheet and the
+ * home-screen shortcut both arrive here with the text prefilled.
  *
  * As a page (a phone), a save opens the note. As a window of its own (the
  * desktop shell, or a window the web app opens), it stays, emptied for the
@@ -201,14 +246,36 @@ function Tabbed({
   // read by that tab's quick note as it starts, never again.
   const [share, setShare] = useState<{ tab: string; text: string } | null>(null);
   const [ready, setReady] = useState(false);
+  // The folder chosen to save into, on this device, for every tab; and the
+  // folders as first read, until they are followed (so that the chip does
+  // not say Inbox for a moment before it says the folder chosen).
+  const [chosen, setChosen] = useState<string | null>(null);
+  const [firstFolders, setFirstFolders] = useState<Folder[]>([]);
+  const [picking, setPicking] = useState(false);
+  const followed = useFolders();
+  const folders = followed.length > 0 ? followed : firstFolders;
+  const folderId = quickFolderOf(chosen, inbox, folders);
+  const folder: QuickFolder = {
+    id: folderId,
+    name: folderName(folders.find((each) => each.folderId === folderId)),
+    inbox: folderId === inbox,
+  };
   useEffect(() => {
     let current = true;
     void (async () => {
-      const tabs = await loadTabs(userKey);
+      const [tabs, remembered, all] = await Promise.all([
+        loadTabs(userKey),
+        rememberedQuickFolder(userKey).catch(() => null),
+        db().folders.toArray(),
+      ]);
+      if (current) {
+        setChosen(remembered);
+        setFirstFolders(all);
+      }
       if (shared) {
         const there = await loadDraft(userKey, tabs.active);
         // Into the tab shown if it is empty (or holds it already).
-        const busy = there && there.text.trim() !== "" && !there.text.includes(shared);
+        const busy = there && there.text.trim() !== "" && !holdsShared(there.text, shared);
         const tab = busy ? ((await openTab(userKey)) ?? tabs.active) : tabs.active;
         if (current) setShare({ tab, text: shared });
       }
@@ -237,7 +304,7 @@ function Tabbed({
       id,
       text: draft?.text ?? "",
       images: images.length,
-      unsaved: unsaved({ text: draft?.text ?? "", images, saved: draft?.saved }),
+      unsaved: unsaved({ text: draft?.text ?? "", key: draft?.key, images, saved: draft?.saved }),
     };
   });
 
@@ -308,11 +375,12 @@ function Tabbed({
         handle={capture}
         tabId={active}
         userKey={userKey}
-        inbox={inbox}
+        folder={folder}
+        onPickFolder={() => setPicking(true)}
         allowance={allowance}
         shared={share?.tab === active ? share.text : ""}
         initialStatus={notice}
-        escapeEnabled={closing === null}
+        escapeEnabled={closing === null && !picking}
         onText={(text, images, changed) => setTyped({ id: active, text, images, unsaved: changed })}
         strip={
           <QuickTabs
@@ -337,7 +405,7 @@ function Tabbed({
           const noteId = id ? await capture.current?.save() : null;
           if (!id || !noteId) return;
           moving();
-          setNotice({ kind: "saved", noteId });
+          setNotice({ kind: "saved", noteId, folder: folder.name });
           capture.current?.discard();
           await closeTab(userKey, id);
         }}
@@ -350,6 +418,23 @@ function Tabbed({
           void closeTab(userKey, id);
         }}
       />
+      <FolderPicker
+        open={picking}
+        onOpenChange={setPicking}
+        title={t.quick.folderTitle}
+        description={t.quick.folderDescription}
+        canPick={quickPickable}
+        onPick={(id) => {
+          if (!id) return;
+          setChosen(id);
+          void rememberQuickFolder(userKey, id).catch(() => undefined);
+        }}
+        // Back to writing, where it was.
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          capture.current?.focus();
+        }}
+      />
     </>
   );
 }
@@ -358,7 +443,8 @@ function Capture({
   handle,
   tabId,
   userKey,
-  inbox,
+  folder,
+  onPickFolder,
   allowance,
   shared,
   initialStatus,
@@ -370,7 +456,10 @@ function Capture({
   /** The tab this is: whose draft it keeps. */
   tabId: string;
   userKey: string;
-  inbox: string | null;
+  /** The folder it is saved into, as chosen for every tab. */
+  folder: QuickFolder;
+  /** Another folder to be chosen. */
+  onPickFolder: () => void;
   /** The account's figures, for an image to be checked against before it is added. */
   allowance: Allowance | null;
   shared: string;
@@ -390,13 +479,30 @@ function Capture({
   const canShowApp = useClientValue(() => typeof window.memocaShell?.showApp === "function", false);
   const modKey = useModKeyLabel();
   const area = useVisibleArea();
-  const [text, setText] = useState(shared);
-  const textRef = useRef(shared);
+  // What is written, as a note's body is: the tab's own document, edited by
+  // its editor, kept in its draft, and copied into the note as it is saved.
+  const [doc] = useState(() => new Y.Doc());
+  /** The draft read into it: the editor is shown on it once it is, not before (see the effect). */
+  const [loaded, setLoaded] = useState(false);
+  const editor = useRef<QuickEditorHandle>(null);
+  /** Where the bar of block actions goes on a phone: the page's foot, above the keyboard. */
+  const [barSlot, setBarSlot] = useState<HTMLDivElement | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState<Status>(initialStatus);
+  const statusRef = useRef<Status>(initialStatus);
+  const say = (next: Status) => {
+    statusRef.current = next;
+    setStatus(next);
+  };
+  // Whether any of it is not saved: what the save button follows.
+  const [changed, setChanged] = useState(false);
   // What the tab was last saved as: saved again, that note is written over.
-  const [saved, setSaved] = useState<SavedAs | null>(null);
   const savedRef = useRef<SavedAs | null>(null);
+  /** The folder it is saved into, as it is when a save starts. */
+  const folderRef = useRef(folder);
+  useLayoutEffect(() => {
+    folderRef.current = folder;
+  });
   /** Where each image saved into that note went up, by its key: not sent again. */
   const uploaded = useRef(new Map<string, string>());
   /** An image as the draft keeps it, with where it went up, if it did. */
@@ -412,31 +518,38 @@ function Capture({
    * them all again.
    */
   const report = () => {
-    const text = textRef.current;
+    const { text, key } = textOf(doc);
     const images = imagesRef.current.length;
-    const changed = unsaved({ text, images: imagesRef.current, saved: savedRef.current });
-    const now = { name: tabName({ text, images }), images, changed };
+    const now = {
+      name: tabName({ text, images }),
+      images,
+      changed: unsaved({ text, key, images: imagesRef.current, saved: savedRef.current }),
+    };
+    setChanged(now.changed);
     const last = reported.current;
-    if (last && last.name === now.name && last.images === images && last.changed === changed) {
-      return;
+    if (last && last.name === now.name && last.images === images && last.changed === now.changed) {
+      return now;
     }
     reported.current = now;
-    onText(text, images, changed);
+    onText(text, images, now.changed);
+    return now;
   };
-  const field = useRef<HTMLTextAreaElement>(null);
+  /** Its text as last seen: what is said goes once it is written in. */
+  const lastText = useRef("");
+  const scroller = useRef<HTMLDivElement>(null);
   // iOS pans what is seen down to the caret as its keyboard comes up, and the
   // page, kept to what is seen, takes back just as much, the caret's line
-  // going with it, under the keyboard: the field is scrolled by the same, so
-  // the line tapped on stays where iOS put it. The pan back as the keyboard
-  // goes is not followed: the text stays where it is on the screen.
+  // going with it, under the keyboard: what is written is scrolled by the
+  // same, so the line tapped on stays where iOS put it. The pan back as the
+  // keyboard goes is not followed: the text stays where it is on the screen.
   const lastTop = useRef(0);
   useLayoutEffect(() => {
     // Zoomed in (no area), the page is left where it is, and so is this.
     if (windowed || !area) return;
     const moved = area.top - lastTop.current;
     lastTop.current = area.top;
-    const element = field.current;
-    if (moved > 0 && element && document.activeElement === element) element.scrollTop += moved;
+    const element = scroller.current;
+    if (moved > 0 && element?.contains(document.activeElement)) element.scrollTop += moved;
   }, [windowed, area]);
   // With a keyboard up the home indicator is under it: nothing to clear. (The
   // root's height is the layout viewport's, which neither iOS's keyboard nor
@@ -448,24 +561,6 @@ function Capture({
   const inFlight = useRef<Promise<void> | null>(null);
   /** The note a save made and could not finish, for the next save to finish. */
   const unfinished = useRef<string | null>(null);
-
-  const show = (next: string) => {
-    textRef.current = next;
-    // Into the field, where it is not there already (typed there, it is):
-    // the caret kept where it was, for text put under what is typed.
-    const element = field.current;
-    if (element && element.value !== next) {
-      const { selectionStart, selectionEnd } = element;
-      element.value = next;
-      try {
-        element.setSelectionRange(selectionStart, selectionEnd);
-      } catch {
-        // Not focused, or no selection to keep.
-      }
-    }
-    setText(next);
-    report();
-  };
 
   // Images added, each with a URL of this tab's to show it by, let go of
   // once it is gone (removed, saved, or the page left).
@@ -506,36 +601,40 @@ function Capture({
     const kept = keepDraft(userKey, tabId);
     draft.current = kept;
     mounted.current = true;
-    // What was shared is part of the draft from the start.
-    if (shared) kept.update(shared);
-    // The tab's draft: in the empty field, or under what is there already
-    // (typed while it was being read), so the first line is still the new one's.
+    // The tab's draft, then what was shared above it (where the draft does
+    // not hold it already), before the editor is shown on the document: an
+    // editor shown on it first writes its own empty line into it, which the
+    // draft's would then be merged with.
     let current = true;
     void loadDraft(userKey, tabId)
       .then((left) => {
         if (!current) return;
         if (left?.saved) {
           savedRef.current = left.saved;
-          setSaved(left.saved);
           for (const image of left.images ?? []) {
             if (image.ref) uploaded.current.set(image.key, image.ref);
           }
         }
-        const now = textRef.current;
-        // Its images, under any added meanwhile.
+        if (left?.body) Y.applyUpdate(doc, left.body);
+        // A draft from before the quick note had an editor: its lines.
+        else if (left && left.text.trim() !== "") appendParagraphs(doc, quickLines(left.text));
+        if (shared && !holdsShared(extractText(doc), shared)) {
+          prependParagraphs(doc, [...quickLines(shared), ...(extractText(doc) ? [""] : [])]);
+        }
         const pictures = (left?.images ?? []).map(shown);
         if (pictures.length > 0) {
-          showImages([...imagesRef.current, ...pictures]);
+          showImages(pictures);
           kept.images(imagesRef.current.filter(ready).map(keep));
         }
-        if (!left || left.text.trim() === "" || now.includes(left.text)) return;
-        show(now.trim() === "" ? left.text : `${now}\n\n${left.text}`);
       })
       .catch(() => undefined)
       .finally(() => {
         if (!current) return;
-        kept.update(textRef.current);
+        kept.update(() => contentOf(doc));
         kept.release();
+        report();
+        lastText.current = textOf(doc).text;
+        setLoaded(true);
       });
     // The images being made ready: the one map all along, read as the tab goes.
     const jobs = preparing.current;
@@ -559,39 +658,40 @@ function Capture({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [userKey, tabId]);
 
+  // Every change to what is written: into the draft (read as it is written,
+  // not on every key), and to the tabs and the save button as they show it.
+  // What was said goes once something is written: not as the editor writes
+  // its first, empty line into an empty tab, which would take away that
+  // the tab before it was saved.
+  const onEdit = useEffectEvent(() => {
+    draft.current?.update(() => contentOf(doc));
+    const wasChanged = reported.current?.changed ?? false;
+    const { changed: nowChanged } = report();
+    const { text } = textOf(doc);
+    const written = text !== lastText.current || (nowChanged && !wasChanged);
+    lastText.current = text;
+    if (written && statusRef.current) say(null);
+  });
   useEffect(() => {
-    field.current?.focus();
+    if (!loaded) return;
+    const listener = () => onEdit();
+    doc.on("update", listener);
+    return () => doc.off("update", listener);
+  }, [doc, loaded]);
+
+  useEffect(() => {
+    if (!loaded) return;
+    editor.current?.focus(true);
     if (!windowed) return;
     // Shown again by the shell, or brought forward: ready to type into.
-    const refocus = () => field.current?.focus();
+    const refocus = () => editor.current?.focus();
     window.addEventListener("focus", refocus);
     return () => window.removeEventListener("focus", refocus);
-  }, [windowed]);
-
-  const edit = (next: string) => {
-    // The draft first: whatever drawing it may throw, what was typed is kept.
-    draft.current?.update(next);
-    show(next);
-    setStatus(null);
-  };
-  const latestEdit = useRef(edit);
-  useLayoutEffect(() => {
-    latestEdit.current = edit;
-  });
-  // Over the field, for what it has been seen to do under a load (lib/quick/field-watchdog).
-  useEffect(() => {
-    const element = field.current;
-    if (!element) return;
-    return attachFieldWatchdog(element, {
-      told: () => textRef.current,
-      resync: (value) => latestEdit.current(value),
-      trace: traceIme,
-    });
-  }, []);
+  }, [loaded, windowed]);
 
   const editImages = (next: QuickImage[]) => {
     showImages(next);
-    setStatus(null);
+    say(null);
     draft.current?.images(next.filter(ready).map(keep));
   };
 
@@ -608,14 +708,14 @@ function Capture({
     const kept = draft.current;
     // What was said before is over. What this batch says stays said while
     // its images are made ready: that does not go through editImages.
-    setStatus(null);
+    say(null);
     for (const file of files) {
       if (!isImage(file)) {
-        setStatus({ kind: "refused", message: t.quick.imagesOnly });
+        say({ kind: "refused", message: t.quick.imagesOnly });
         continue;
       }
       if (imagesRef.current.length >= MAX_IMAGES) {
-        setStatus({ kind: "refused", message: t.quick.tooManyImages(MAX_IMAGES) });
+        say({ kind: "refused", message: t.quick.tooManyImages(MAX_IMAGES) });
         return;
       }
       const key = uuidv7();
@@ -665,7 +765,7 @@ function Capture({
             }
             showImages(next);
             refusals.current += 1;
-            setStatus({ kind: "refused", message: uploadRefusal(error) });
+            say({ kind: "refused", message: uploadRefusal(error) });
           },
         )
         .finally(() => preparing.current.delete(key));
@@ -684,7 +784,7 @@ function Capture({
     if (!window.memocaShell) await allReady(preparing.current);
     await draft.current?.flush(true);
     // Shown again by the shell, the window should not still say saved.
-    setStatus(stillSaid);
+    say(stillSaid(statusRef.current));
     closeQuickWindow();
   }, []);
 
@@ -694,7 +794,7 @@ function Capture({
     // The shell's alone: an image still being made ready is waited for as
     // it puts the window away.
     await draft.current?.flush(true);
-    setStatus(stillSaid);
+    say(stillSaid(statusRef.current));
     window.memocaShell?.showApp?.();
   }, []);
 
@@ -707,7 +807,7 @@ function Capture({
       await inFlight.current;
       await allReady(preparing.current);
       await draft.current?.flush(true);
-      setStatus(stillSaid);
+      say(stillSaid(statusRef.current));
       // Out again by the time the server says (and maybe being typed in):
       // left for the next time it is put away.
       if ((await newBuildOut()) && !document.hasFocus()) window.location.reload();
@@ -739,16 +839,19 @@ function Capture({
       const refused = refusals.current;
       await allReady(preparing.current);
       if (refusals.current !== refused) return;
-      // What is saved: the text as it is now. Typed on while the save runs,
-      // the field holds more, which is not saved, and is not marked so.
-      const snapshot = textRef.current;
-      const body = quickLines(snapshot);
+      // What is saved: what is written as it is now, in a document of its
+      // own. Typed on while the save runs, the editor holds more, which is
+      // not saved, and is not marked so.
+      const snapshot = new Y.Doc();
+      Y.applyUpdate(snapshot, Y.encodeStateAsUpdate(doc));
+      const { text, key } = textOf(snapshot);
       const pictures = imagesRef.current;
-      if (body.length === 0 && pictures.length === 0) return;
+      if (text.trim() === "" && pictures.length === 0) return;
       // Saved already, as it is: nothing to write again.
-      if (!unsaved({ text: snapshot, images: pictures, saved: savedRef.current })) return;
+      if (!unsaved({ text, key, images: pictures, saved: savedRef.current })) return;
+      const target = folderRef.current;
       setSaving(true);
-      setStatus(null);
+      say(null);
       try {
         // Into the note it was saved as before, while that is still there, as
         // a text editor saves a document again; or a new one, with no title:
@@ -758,15 +861,21 @@ function Capture({
         const noteId =
           unfinished.current ??
           again ??
-          (await createNote({ folderId: inbox, title: "", kind: "quick" }));
+          (await createNote({ folderId: target.id, title: "", kind: "quick" }));
         unfinished.current = noteId;
+        // Saved again with another folder chosen since: there too. Not moved
+        // back where it was saved, if it has been moved since.
+        const chosenThen = savedRef.current?.folderId;
+        if (noteId === again && chosenThen !== undefined && chosenThen !== target.id) {
+          await moveNote(noteId, target.id);
+        }
 
         // All of it goes straight into the note's document, so the full editor
-        // opens on exactly what was typed here, over whatever a save that did
-        // not finish may have written.
-        // Its images under its lines, each staged to go up as one added to a
-        // note is (offline too), into the note made for them.
-        const parts: QuickPart[] = body.map((text) => ({ kind: "line", text }));
+        // opens on exactly what was written here, over whatever a save that
+        // did not finish may have written.
+        // Its images under what is written, each staged to go up as one added
+        // to a note is (offline too), into the note made for them.
+        const parts: QuickPart[] = [];
         const refs = new Map<string, string>();
         for (const image of pictures) {
           // One saved into this note before is there already.
@@ -788,11 +897,9 @@ function Capture({
           parts.push({ kind: "image", url: ref, name: image.name });
           refs.set(image.key, ref);
         }
-        const doc = await acquireDoc(noteId);
+        const note = await acquireDoc(noteId);
         try {
-          const fragment = bodyFragment(doc);
-          if (fragment.length > 0) doc.transact(() => fragment.delete(0, fragment.length));
-          appendBlocks(doc, parts);
+          copyQuickBody(snapshot, note, parts);
         } finally {
           await releaseDoc(noteId);
         }
@@ -802,34 +909,40 @@ function Capture({
         // Kept as it is, as what it was saved as: the tab stays.
         const now: SavedAs = {
           noteId,
-          text: snapshot,
+          text,
+          key,
+          folderId: target.id,
           images: pictures.map((image) => image.key),
         };
         savedRef.current = now;
-        setSaved(now);
         uploaded.current = refs;
         draft.current?.images(pictures.map(keep));
         await draft.current?.flush(true);
-        await markSaved(userKey, tabId, noteId, snapshot, pictures.map(keep)).catch(
-          () => undefined,
-        );
-        // Typed on meanwhile: the draft holds that, over what was saved
+        await markSaved(
+          userKey,
+          tabId,
+          noteId,
+          { text, key, body: Y.encodeStateAsUpdate(snapshot) },
+          pictures.map(keep),
+          target.id,
+        ).catch(() => undefined);
+        // Written on meanwhile: the draft holds that, over what was saved
         // (written again whatever it last wrote: markSaved wrote in between).
-        if (textRef.current !== snapshot) {
-          draft.current?.update(textRef.current);
+        if (quickKey(doc) !== key) {
+          draft.current?.update(() => contentOf(doc));
           await draft.current?.flush(true);
         }
         report();
         if (!windowed) {
           router.replace(`/app?${new URLSearchParams({ n: noteId })}`);
         } else {
-          setStatus({ kind: "saved", noteId });
-          field.current?.focus();
+          say({ kind: "saved", noteId, folder: target.name });
+          editor.current?.focus();
         }
       } catch {
         // Kept as it is, draft and all, to be saved again: into the note
         // already made, if one was.
-        setStatus({ kind: "failed" });
+        say({ kind: "failed" });
       } finally {
         setSaving(false);
       }
@@ -843,7 +956,7 @@ function Capture({
     save: async () => {
       await save();
       const all = !unsaved({
-        text: textRef.current,
+        ...textOf(doc),
         images: imagesRef.current,
         saved: savedRef.current,
       });
@@ -853,13 +966,14 @@ function Capture({
       discarded.current = true;
       draft.current?.cancel();
     },
+    focus: () => editor.current?.focus(),
   }));
 
   const link = "text-foreground underline underline-offset-2";
   const said =
     status?.kind === "saved" ? (
       <>
-        {t.quick.saved} ・{" "}
+        {t.quick.savedIn(status.folder)} ・{" "}
         <button type="button" className={link} onClick={() => openNoteInApp(status.noteId)}>
           {t.quick.openNote}
         </button>
@@ -876,10 +990,11 @@ function Capture({
       {said ? <span className={cn("block", !windowed && "px-4 py-1.5")}>{said}</span> : null}
     </p>
   );
+  const FolderMark = folder.inbox ? Inbox : FolderIcon;
 
   return (
     <main
-      // What is written scrolls inside the field, and the header, its save
+      // What is written scrolls inside its pane, and the header, its save
       // button with it, stays in sight. A page is kept to what can be seen
       // of it: on a phone, what the keyboard leaves, wherever iOS has panned
       // to show the caret, which would otherwise take the header out of sight.
@@ -894,7 +1009,7 @@ function Capture({
       <div className="border-b bg-background">
         {/* The desktop shell's window has no title bar: it is moved by this. */}
         <header
-          className="flex items-center gap-2 px-2 py-2"
+          className="flex items-center gap-1.5 px-2 py-2"
           data-tauri-drag-region={windowed || undefined}
         >
           {windowed ? null : (
@@ -908,7 +1023,7 @@ function Capture({
             </Button>
           )}
           <h1
-            className={cn("flex-1 text-sm font-medium", windowed && "pl-2 select-none")}
+            className={cn("min-w-0 flex-1 truncate text-sm font-medium", windowed && "pl-2 select-none")}
             data-tauri-drag-region={windowed || undefined}
           >
             {t.nav.quick}
@@ -945,10 +1060,25 @@ function Capture({
               addFiles(files);
             }}
           />
+          {/* Where it is saved: the folder's name, to choose another. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="min-w-0 shrink gap-1 px-2 font-normal"
+            onClick={onPickFolder}
+            disabled={saving}
+            title={t.quick.folder(folder.name)}
+            aria-label={t.quick.folderLabel(folder.name)}
+          >
+            <FolderMark className="size-3.5 shrink-0 opacity-70" aria-hidden />
+            <span className="max-w-[8rem] truncate">{folder.name}</span>
+            <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden />
+          </Button>
           <Button
             size="sm"
+            className="shrink-0"
             onClick={save}
-            disabled={saving || !unsaved({ text, images, saved })}
+            disabled={saving || !changed}
             aria-keyshortcuts={SAVE_KEYS}
           >
             <Check className="size-4" aria-hidden />
@@ -971,55 +1101,36 @@ function Capture({
         {windowed ? null : statusLine}
       </div>
 
-      <Textarea
-        ref={field}
-        // What it starts with: from then on, the field holds the text (see
-        // `show`), not React. Drawn again with a value of React's, the field
-        // was seen, under a load, to lose what was typed between (each key
-        // then wrote over the character after the caret).
-        defaultValue={text}
-        onChange={(event) => edit(event.target.value)}
-        onPaste={(event) => {
-          const files = [...event.clipboardData.files];
-          if (files.length === 0) return;
-          // Text that comes with them (an image copied from a page) is pasted as text too.
-          if (!event.clipboardData.types.includes("text/plain")) event.preventDefault();
-          addFiles(files);
-        }}
-        onDragOver={(event) => {
-          if (event.dataTransfer.types.includes("Files")) event.preventDefault();
-        }}
-        onDrop={(event) => {
-          const files = [...event.dataTransfer.files];
-          if (files.length === 0) return;
+      <div
+        ref={scroller}
+        data-quick-pane=""
+        // What is written scrolls here, not the page, which the page would
+        // then chase. A tap below the last line goes to its end.
+        className={cn("min-h-0 flex-1 overflow-y-auto", !windowed && "overscroll-contain")}
+        onMouseDown={(event) => {
+          if (event.target !== event.currentTarget) return;
           event.preventDefault();
-          addFiles(files);
+          editor.current?.focus(true);
         }}
-        onKeyDown={(event) => {
-          if (composing(event.nativeEvent)) return;
-          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
-            event.preventDefault();
-            void save();
-          }
-        }}
-        placeholder={t.quick.placeholder}
-        aria-label={t.quick.field}
-        aria-keyshortcuts={SAVE_KEYS}
-        // 16px at every width: under 16px (md:text-sm, an iPhone on its side)
-        // iOS zooms in on focus, and zoomed in the page is not kept in sight.
-        // What is scrolled to its end stays in the field rather than moving
-        // the page, which the page would then chase.
-        className={cn(
-          "field-sizing-fixed min-h-0 flex-1 resize-none rounded-none border-0 p-4 text-base shadow-none focus-visible:ring-0 dark:bg-transparent",
-          !windowed && "overscroll-contain md:text-base",
-        )}
         // On a phone, what is written last clears the home indicator.
         style={
           windowed || keyboard
             ? undefined
             : { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }
         }
-      />
+      >
+        {loaded ? (
+          <QuickEditor
+            doc={doc}
+            handle={editor}
+            onSave={() => void save()}
+            onFiles={addFiles}
+            // The editor would take it to let go of the focus: the window goes, as from anywhere in it.
+            onEscape={windowed ? () => escapeEnabled && void close() : undefined}
+            barSlot={windowed ? null : barSlot}
+          />
+        ) : null}
+      </div>
 
       {images.length > 0 ? (
         <ul
@@ -1075,13 +1186,17 @@ function Capture({
           {said ? null : <p>{t.quick.hint(modKey, true)}</p>}
         </div>
       ) : (
-        // Keys a phone's keyboard does not have: not offered there.
-        <p
-          className="border-t px-4 py-2 text-xs text-muted-foreground pointer-coarse:hidden"
-          style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem)" }}
-        >
-          {t.quick.hint(modKey, false)}
-        </p>
+        <>
+          {/* Keys a phone's keyboard does not have: not offered there. */}
+          <p
+            className="border-t px-4 py-2 text-xs text-muted-foreground pointer-coarse:hidden"
+            style={{ paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 0.5rem)" }}
+          >
+            {t.quick.hint(modKey, false)}
+          </p>
+          {/* With the keyboard up, the bar of block actions (a list's 字下げ and the rest). */}
+          <div ref={setBarSlot} className="contents" />
+        </>
       )}
     </main>
   );

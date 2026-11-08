@@ -35,6 +35,7 @@ const h = vi.hoisted(() => ({
   newBuild: vi.fn(),
   prepare: vi.fn(),
   stage: vi.fn(),
+  move: vi.fn(),
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: h.replace, push: h.push }),
@@ -44,7 +45,96 @@ vi.mock("@/components/providers/sync-provider", () => ({
   useSync: () => ({ me: h.me }),
   useStorageUsage: () => h.me,
 }));
-vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote }));
+vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote, moveNote: h.move }));
+// The editor, as a field of lines: each a paragraph of the tab's document,
+// with ids that follow from where it is, so that the same lines say the same.
+vi.mock("@/components/notes/quick-editor", async () => {
+  const React = await import("react");
+  const { appendParagraphs } = await import("@/lib/quick/body");
+  const { bodyFragment: fragmentOf } = await import("@/lib/sync/ydoc");
+  const linesOf = (doc: Y.Doc) =>
+    ((fragmentOf(doc).get(0) as Y.XmlElement | undefined)?.toArray() ?? []).map((container) =>
+      ((container as Y.XmlElement).toArray()[0] as Y.XmlElement).toArray().map(String).join(""),
+    );
+  const write = (doc: Y.Doc, value: string) =>
+    doc.transact(() => {
+      const fragment = fragmentOf(doc);
+      if (fragment.length > 0) fragment.delete(0, fragment.length);
+      appendParagraphs(doc, value.split("\n"));
+      const group = fragment.get(0) as Y.XmlElement;
+      group.toArray().forEach((container, at) => {
+        (container as Y.XmlElement).setAttribute("id", `line-${at}`);
+      });
+    });
+  function QuickEditor({
+    doc,
+    handle,
+    onSave,
+    onFiles,
+  }: {
+    doc: Y.Doc;
+    handle: React.Ref<{ focus: () => void; focused: () => boolean }>;
+    onSave: () => void;
+    onFiles: (files: File[]) => void;
+  }) {
+    const field = React.useRef<HTMLTextAreaElement>(null);
+    React.useImperativeHandle(handle, () => ({
+      focus: () => field.current?.focus(),
+      focused: () => document.activeElement === field.current,
+    }));
+    return (
+      <textarea
+        ref={field}
+        aria-label="即席メモ"
+        defaultValue={linesOf(doc).join("\n")}
+        onChange={(event) => write(doc, event.target.value)}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+          if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+            event.preventDefault();
+            onSave();
+          }
+        }}
+        onPaste={(event) => {
+          const files = [...event.clipboardData.files];
+          if (files.length === 0) return;
+          if (!event.clipboardData.types.includes("text/plain")) event.preventDefault();
+          onFiles(files);
+        }}
+      />
+    );
+  }
+  return { QuickEditor, SAVE_KEYS: "Meta+Enter Control+Enter" };
+});
+// The folders to choose from, as buttons: which may be chosen is the quick
+// note's own rule (tests/quick-folder.test.ts).
+vi.mock("@/components/folders/folder-picker", () => ({
+  FolderPicker: ({
+    open,
+    onPick,
+    onOpenChange,
+  }: {
+    open: boolean;
+    onPick: (id: string | null) => void;
+    onOpenChange: (open: boolean) => void;
+  }) =>
+    open ? (
+      <div role="dialog">
+        {["work", "inbox-1"].map((id) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              onPick(id);
+              onOpenChange(false);
+            }}
+          >
+            {`選ぶ:${id}`}
+          </button>
+        ))}
+      </div>
+    ) : null,
+}));
 vi.mock("@/lib/sync/docs", () => ({ acquireDoc: h.acquire, releaseDoc: h.release }));
 vi.mock("@/lib/build", () => ({ newBuildOut: h.newBuild }));
 vi.mock("@/lib/quick/shell", async (original) => ({
@@ -96,7 +186,14 @@ const bodyOf = (noteId: string) =>
     .toArray()
     .flatMap((group) => (group instanceof Y.XmlElement ? group.toArray() : []))
     .map((container) => (container as Y.XmlElement).toArray()[0]!)
+    .filter((block) => (block as Y.XmlElement).nodeName !== "image")
     .map((paragraph) => (paragraph as Y.XmlElement).toArray().map(String).join(""));
+/** The kinds of the blocks a save wrote. */
+const kindsOf = (noteId: string) =>
+  bodyFragment(docs.get(noteId)!)
+    .toArray()
+    .flatMap((group) => (group instanceof Y.XmlElement ? group.toArray() : []))
+    .map((container) => ((container as Y.XmlElement).toArray()[0] as Y.XmlElement).nodeName);
 
 /** Opens the quick note at this address, as the router would show it. */
 async function render(query = "window=1") {
@@ -167,6 +264,12 @@ beforeEach(async () => {
     height: 1,
   }));
   h.stage.mockReset().mockResolvedValue("memoca://att-1");
+  h.move.mockReset().mockResolvedValue(undefined);
+  await db().folders.bulkPut([
+    { folderId: "inbox-1", parentId: null, name: "Inbox", system: "inbox", locked: false, deletedAt: null, purged: false, sortKey: "a" },
+    { folderId: "work", parentId: null, name: "仕事", system: null, locked: false, deletedAt: null, purged: false, sortKey: "b" },
+    { folderId: "vault", parentId: null, name: "金庫", system: null, locked: true, deletedAt: null, purged: false, sortKey: "c" },
+  ] as never);
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -743,7 +846,8 @@ describe("the quick note's images", () => {
       noteId: "note-1",
       prepared: { mime: "image/webp", width: 40, height: 30 },
     });
-    expect(bodyOf("note-1")).toEqual(["本文", ""]);
+    expect(bodyOf("note-1")).toEqual(["本文"]);
+    expect(kindsOf("note-1")).toEqual(["paragraph", "image"]);
     expect(imagesOf("note-1")).toEqual([{ url: "memoca://att-1", name: "写真.png" }]);
     expect(status()).toContain("保存しました");
   });
@@ -955,59 +1059,43 @@ describe("the quick note as a page on a phone", () => {
       viewport.dispatchEvent(new Event("scroll"));
     });
 
+  /** What scrolls: the pane the editor is in. */
+  const pane = () => field().parentElement!;
+
   test("keeps the line tapped on in sight as iOS pans to it, and leaves the text be as it pans back", async () => {
     await render("");
     await type("行\n".repeat(200));
     field().focus();
-    field().scrollTop = 300;
+    pane().scrollTop = 300;
     await move({ height: 420, offsetTop: 270 });
-    expect(field().scrollTop).toBe(570);
+    expect(pane().scrollTop).toBe(570);
     await move({ height: 800, offsetTop: 0 });
-    expect(field().scrollTop).toBe(570);
+    expect(pane().scrollTop).toBe(570);
   });
 
-  test("does not scroll a field that does not have the focus", async () => {
+  test("does not scroll what is written while the editor does not have the focus", async () => {
     await render("");
     await type("行\n".repeat(200));
     field().blur();
-    field().scrollTop = 300;
+    pane().scrollTop = 300;
     await move({ height: 420, offsetTop: 270 });
-    expect(field().scrollTop).toBe(300);
-  });
-
-  test("writes at 16px at every width, which iOS does not zoom in on", async () => {
-    await render("");
-    expect(field().className).toContain("md:text-base");
-    expect(field().className).not.toContain("md:text-sm");
+    expect(pane().scrollTop).toBe(300);
   });
 
   test("clears the home indicator, but not with a keyboard over it", async () => {
     await render("");
-    expect(field().style.paddingBottom).toContain("safe-area-inset-bottom");
+    expect(pane().style.paddingBottom).toContain("safe-area-inset-bottom");
     await move({ height: 420 });
-    expect(field().style.paddingBottom).toBe("");
+    expect(pane().style.paddingBottom).toBe("");
+  });
+
+  test("has a place at its foot for the bar of block actions, above the keyboard", async () => {
+    await render("");
+    expect(host.querySelector("main > div.contents")).not.toBeNull();
   });
 });
 
-describe("the field holds the text, not React", () => {
-  test("what is in the field is not written over by a draw, and is what the draft takes", async () => {
-    await render();
-    await type("一");
-    await pause();
-    // Put into the field with no event reaching React, as a key lost under a load would.
-    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
-    await act(async () => setter.call(field(), "一二三"));
-    await settle();
-    await pause();
-    expect(field().value).toBe("一二三");
-    // The watchdog tells the app from the field, and the draft follows.
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_100);
-    });
-    await pause();
-    expect((await draftOf(ME))?.text).toBe("一二三");
-  });
-
+describe("the quick note, written on while it saves", () => {
   test("typed on while a save runs, the more is not marked saved", async () => {
     let finish!: (id: string) => void;
     h.createNote.mockImplementationOnce(() => new Promise<string>((resolve) => (finish = resolve)));
@@ -1024,5 +1112,112 @@ describe("the field holds the text, not React", () => {
     expect(button("保存").disabled).toBe(false);
     await pause();
     expect((await draftOf(ME))?.text).toBe("一二");
+  });
+});
+
+describe("the quick note's folder", () => {
+  const chip = () => host.querySelector<HTMLButtonElement>('button[aria-label^="フォルダを選ぶ"]')!;
+  async function choose(id: string) {
+    await act(async () => chip().click());
+    await settle();
+    await act(async () => button(`選ぶ:${id}`).click());
+    await settle();
+  }
+
+  test("is Inbox at first, and says so", async () => {
+    await render();
+    expect(chip().textContent).toBe("Inbox");
+  });
+
+  test("chosen, is saved into, said, and remembered on this device for the next time", async () => {
+    await render();
+    await choose("work");
+    expect(chip().textContent).toBe("仕事");
+    await type("仕事のメモ");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(h.createNote).toHaveBeenCalledWith({ folderId: "work", title: "", kind: "quick" });
+    expect(status()).toContain("仕事 に保存しました");
+
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await render();
+    expect(chip().textContent).toBe("仕事");
+  });
+
+  test("one locked since, or gone, is not saved into: Inbox is", async () => {
+    await setMeta(`${META.quickFolder}:${ME}`, "vault");
+    await render();
+    expect(chip().textContent).toBe("Inbox");
+    await type("鍵の外");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(h.createNote).toHaveBeenCalledWith({ folderId: "inbox-1", title: "", kind: "quick" });
+  });
+
+  test("another chosen after a save, saved again: the note goes there too", async () => {
+    await render();
+    await type("最初");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(h.move).not.toHaveBeenCalled();
+    await choose("work");
+    await type("最初\n続き");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(h.createNote).toHaveBeenCalledOnce();
+    expect(h.move).toHaveBeenCalledWith("note-1", "work");
+    expect(bodyOf("note-1")).toEqual(["最初", "続き"]);
+  });
+
+  test("saved again with the same one chosen, the note is left where it is", async () => {
+    await render();
+    await type("最初");
+    await key({ key: "Enter", ctrlKey: true });
+    await type("最初\n続き");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(h.move).not.toHaveBeenCalled();
+  });
+});
+
+describe("the quick note, written as a note is", () => {
+  /** A draft whose body holds a list and a check, as the editor writes them. */
+  async function draftWithList() {
+    const { blocksToYDoc } = await import("@blocknote/core/yjs");
+    const { editor } = await import("./helpers/blocknote");
+    const { FRAGMENT } = await import("@/lib/sync/ydoc");
+    const written = blocksToYDoc(
+      editor,
+      [
+        { type: "paragraph", content: "買うもの" },
+        { type: "bulletListItem", content: "牛乳" },
+        { type: "checkListItem", content: "卵", props: { checked: true } },
+        { type: "paragraph", content: "" },
+      ],
+      FRAGMENT,
+    );
+    const tabs = await loadTabs(ME);
+    await setMeta(`${META.quickDraft}:${tabs.active}`, {
+      text: "買うもの\n牛乳\n卵",
+      body: Y.encodeStateAsUpdate(written),
+      updatedAt: 0,
+      userKey: ME,
+    });
+  }
+
+  test("its lists and checks go into the note as they are, the empty line at its end left out", async () => {
+    await draftWithList();
+    await render();
+    expect(field().value).toBe("買うもの\n牛乳\n卵\n");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(kindsOf("note-1")).toEqual(["paragraph", "bulletListItem", "checkListItem"]);
+    expect(bodyOf("note-1")).toEqual(["買うもの", "牛乳", "卵"]);
+  });
+
+  test("saved, its draft keeps the body, and nothing is left to save", async () => {
+    await draftWithList();
+    await render();
+    await key({ key: "Enter", ctrlKey: true });
+    await pause();
+    const kept = await draftOf(ME);
+    expect(kept?.body?.byteLength).toBeGreaterThan(0);
+    expect(kept?.saved?.key).toBe(kept?.key);
+    expect(button("保存").disabled).toBe(true);
   });
 });

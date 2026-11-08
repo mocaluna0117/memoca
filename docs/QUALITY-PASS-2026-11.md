@@ -91,6 +91,7 @@
 - 見張り（`lib/quick/field-watchdog`）：欄の値とアプリの持つ文がずれていれば欄から伝え直す。変換が始まったまま 2 秒以上何も来なければ記録して `blur/focus` で揺り起こす（窓の開閉と同じ効き目）。
 - `ime-commit` の修復は、確定直後にまだ変換中でも 50ms × 20 回まで試す。
 - 確かめ方：`tests/quick-capture.test.tsx`、`tests/field-watchdog.test.ts`、`tests/ime-commit-retry.test.ts`。**実機のエンジン停止そのものは検証できていない。** 再発したら ⌘⌥⇧I で記録を取ると、`quick:desync` / `quick:stuck-composition` のどちらが出たかで原因が絞れる。
+- **その後（同じ日）**：即席メモの欄を、ふつうのメモと同じ編集欄（BlockNote）に替えた（箇条書きなどの記法を使えるようにするため）。テキスト欄そのものがなくなったので、上の見張り（`field-watchdog`）は外した。IME の扱いはメモの編集欄と同じ（`ime-commit` の再試行を含む）になる。再発したときの ⌘⌥⇧I の記録は引き続き取れるが、`quick:desync` / `quick:stuck-composition` はもう出ない。
 
 ## 5. サーバー（Convex、追加のみ。本番は push で自動デプロイ、事前に `~/memoca-backups/memoca-2026-11-08-1242-before-quality-pass.zip` を取得）
 

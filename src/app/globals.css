@@ -252,6 +252,18 @@
     padding-bottom: var(--memoca-keyboard-room, 0px);
   }
 }
+/* The quick note's editor: no + or handle beside its blocks, so none of
+   the room a note keeps for them, and what is written starts where the
+   field did. */
+.memoca-quick-editor .bn-editor {
+  padding: 1rem 1rem 1.5rem;
+}
+/* On the window's own background, as the field was: not a box of the
+   editor's grey in the dark. */
+.bn-container.memoca-quick-editor[data-color-scheme] {
+  --bn-colors-editor-background: var(--background);
+}
+
 /* A column after another keeps the side menu of its blocks (the + and the
    handle, 54 pixels or so, drawn left of a block) inside itself: at
    BlockNote's 25 pixels it lay over the line between the columns, all of

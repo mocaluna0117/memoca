@@ -1,5 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
-import { createNote, editor, openApp, signUp } from "./helpers";
+import { createNote, editor, expectQuickText, openApp, quickField, signUp, writeQuick } from "./helpers";
 
 /** The quick note's own window, opened by `action`. */
 async function quickWindowFrom(
@@ -31,8 +31,8 @@ test.describe("opening the quick note on a computer", () => {
     await signUp(page);
     await openApp(page);
     const popup = await quickWindowFrom(context, () => sidebarButton(page).click());
-    const field = popup.getByLabel("即席メモ");
-    await field.fill("サイドバーから");
+    const field = quickField(popup);
+    await writeQuick(field, "サイドバーから");
     await field.press("Control+Enter");
     for (const window_ of [page, popup]) {
       await window_.evaluate(() => {
@@ -73,8 +73,8 @@ test.describe("opening the quick note on a computer", () => {
     await signUp(page);
     await openApp(page);
     const popup = await quickWindowFrom(context, () => page.keyboard.press("q"));
-    const field = popup.getByLabel("即席メモ");
-    await field.fill("書きかけ");
+    const field = quickField(popup);
+    await writeQuick(field, "書きかけ");
     await popup.evaluate(() => {
       (window as unknown as { stayed: boolean }).stayed = true;
     });
@@ -83,7 +83,7 @@ test.describe("opening the quick note on a computer", () => {
     await page.waitForTimeout(500);
     expect(context.pages()).toHaveLength(2);
     // Not loaded again: what was being written is there, and so is the page.
-    await expect(field).toHaveValue("書きかけ");
+    await expectQuickText(field, "書きかけ");
     expect(await popup.evaluate(() => (window as unknown as { stayed?: boolean }).stayed)).toBe(
       true,
     );
@@ -108,6 +108,6 @@ test.describe("opening the quick note on a computer", () => {
     await openApp(page);
     await sidebarButton(page).click();
     await expect(page).toHaveURL(/\/quick$/);
-    await expect(page.getByLabel("即席メモ")).toBeVisible();
+    await expect(quickField(page)).toBeVisible();
   });
 });

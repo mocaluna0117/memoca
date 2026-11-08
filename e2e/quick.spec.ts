@@ -1,5 +1,14 @@
 import { expect, type Page, test } from "@playwright/test";
-import { editor, openApp, showList, signUp, waitForSynced } from "./helpers";
+import {
+  editor,
+  expectQuickText,
+  openApp,
+  quickField,
+  showList,
+  signUp,
+  waitForSynced,
+  writeQuick,
+} from "./helpers";
 import { onScreen } from "./image-helpers";
 import { readTable } from "./local-db";
 import { createVaultInSettings, enterVaultPassword } from "./vault-helpers";
@@ -14,7 +23,7 @@ test.describe("the quick note", () => {
   }, testInfo) => {
     await signUp(page);
     await page.goto("/quick");
-    await page.getByLabel("即席メモ").fill("買い物\n\n牛乳\n卵");
+    await writeQuick(quickField(page), "買い物\n\n牛乳\n卵");
     await page.getByRole("button", { name: "保存" }).click();
 
     await expect(page).toHaveURL(/\/app\?n=/);
@@ -48,7 +57,7 @@ test.describe("the quick note", () => {
     const standIn = thought.slice(0, 60);
     await signUp(page);
     await page.goto("/quick");
-    await page.getByLabel("即席メモ").fill(thought);
+    await writeQuick(quickField(page), thought);
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page).toHaveURL(/\/app\?n=/);
     await expect(page.getByLabel("メモのタイトル")).toHaveValue("");
@@ -95,7 +104,7 @@ test.describe("the quick note", () => {
     await openApp(page);
     await createVaultInSettings(page);
     await page.goto("/quick");
-    await page.getByLabel("即席メモ").fill("秘密の買い物\n牛乳");
+    await writeQuick(quickField(page), "秘密の買い物\n牛乳");
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page).toHaveURL(/\/app\?n=/);
     await waitForSynced(page);
@@ -118,19 +127,19 @@ test.describe("the quick note", () => {
   test("what is being written is kept as a draft, and stays after it is saved", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick");
-    await page.getByLabel("即席メモ").fill("書きかけの考え");
+    await writeQuick(quickField(page), "書きかけの考え");
     // Away and back, as when another app is opened in between.
     await page.getByRole("button", { name: "戻る" }).click();
     await expect(page).toHaveURL(/\/app$/);
     await page.goto("/quick");
-    await expect(page.getByLabel("即席メモ")).toHaveValue("書きかけの考え");
+    await expectQuickText(quickField(page), "書きかけの考え");
 
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page).toHaveURL(/\/app\?n=/);
     // Saved, the tab is as it was, kept as its draft, with nothing new to save.
     expect(await hasDraft(page)).toBe(true);
     await page.goto("/quick");
-    await expect(page.getByLabel("即席メモ")).toHaveValue("書きかけの考え");
+    await expectQuickText(quickField(page), "書きかけの考え");
     await expect(page.getByRole("button", { name: "保存" })).toBeDisabled();
   });
 
@@ -158,9 +167,10 @@ test.describe("the quick note", () => {
     await signUp(page);
     await page.goto("/quick");
     await move(height, 0);
-    await page
-      .getByLabel("即席メモ")
-      .fill(Array.from({ length: 60 }, (_, line) => `${line + 1} 行目`).join("\n"));
+    await writeQuick(
+      quickField(page),
+      Array.from({ length: 60 }, (_, line) => `${line + 1} 行目`).join("\n"),
+    );
     const save = page.getByRole("button", { name: "保存" });
     expect(onScreen(page, (await save.boundingBox())!)).toBe(true);
     // What is written scrolls inside the field; the page itself does not.
@@ -185,7 +195,7 @@ test.describe("the quick note", () => {
       Math.abs((await page.locator("main").boundingBox())!.y - (seen.top + 40)),
     ).toBeLessThanOrEqual(1);
     // What is written stays inside what is seen, and the page itself never scrolls.
-    const field = (await page.getByLabel("即席メモ").boundingBox())!;
+    const field = (await page.locator("[data-quick-pane]").boundingBox())!;
     expect(field.y + field.height).toBeLessThanOrEqual(seen.top + 40 + seen.height + 1);
     expect(await page.evaluate(() => window.scrollY)).toBe(0);
   });
@@ -197,7 +207,7 @@ test.describe("the quick note", () => {
     const link = "https://example.com/a";
     const query = new URLSearchParams({ title: "記事", text: `記事 ${link}`, url: link });
     await page.goto(`/quick?${query}`);
-    await expect(page.getByLabel("即席メモ")).toHaveValue(`記事\n${link}`);
+    await expectQuickText(quickField(page), `記事\n${link}`);
 
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page).toHaveURL(/\/app\?n=/);
