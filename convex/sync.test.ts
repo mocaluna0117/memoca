@@ -286,6 +286,35 @@ describe("push", () => {
     expect(res.results[0]!.reason).toBe("quotaExceeded");
   });
 
+  test("an update too big for one row is refused, and the rest of the batch still goes through", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A, 10_000_000);
+    const as = t.withIdentity({ subject: AUTH_A });
+
+    await as.mutation(api.sync.push, { deviceId: DEVICE_1, ops: [noteOp("n", "note-1")] });
+    const res = await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        {
+          kind: "update",
+          opId: "big",
+          noteId: "note-1",
+          keyEpoch: 0,
+          payload: new Uint8Array(950_000).buffer,
+        },
+        {
+          kind: "update",
+          opId: "small",
+          noteId: "note-1",
+          keyEpoch: 0,
+          payload: new Uint8Array(10).buffer,
+        },
+      ],
+    });
+    expect(res.results[0]).toMatchObject({ opId: "big", status: "rejected", reason: "tooLarge" });
+    expect(res.results[1]).toMatchObject({ opId: "small", status: "ok" });
+  });
+
   test("two devices moving folders under each other cannot make a cycle", async () => {
     const t = setup();
     await seedUser(t, AUTH_A);

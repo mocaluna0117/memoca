@@ -9,6 +9,9 @@ const idle: SyncStatus = {
   catchingUp: false,
   quotaFull: false,
   heldForVault: false,
+  stuck: 0,
+  uploadRefused: false,
+  saveFailed: false,
 };
 
 describe("the sync status store", () => {
@@ -54,5 +57,8 @@ describe("the sync status store", () => {
     expect(sameStatus(idle, { ...idle, quotaFull: true })).toBe(false);
     expect(sameStatus(idle, { ...idle, heldForVault: true })).toBe(false);
     expect(sameStatus(idle, { ...idle, catchingUp: true })).toBe(false);
+    expect(sameStatus(idle, { ...idle, stuck: 1 })).toBe(false);
+    expect(sameStatus(idle, { ...idle, uploadRefused: true })).toBe(false);
+    expect(sameStatus(idle, { ...idle, saveFailed: true })).toBe(false);
   });
 });

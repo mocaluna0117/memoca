@@ -59,6 +59,12 @@ export type OutboxEntry = {
   attempts: number;
   lastError?: string;
   /**
+   * Set aside, when: the server threw on it a few times, or said it was too
+   * large to store. Not sent with the rounds; only on request (the sync
+   * engine's retryStuck), and not counted among those waiting.
+   */
+  stuck?: number;
+  /**
    * Refused for want of room: kept, and not sent again before this. Only an
    * edit to a note's text is held so, as dropping it would lose what was
    * written.

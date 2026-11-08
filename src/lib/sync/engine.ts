@@ -2,16 +2,19 @@
 
 import type { ConvexReactClient } from "convex/react";
 import type { FunctionReturnType } from "convex/server";
+import type { Stamp } from "@/lib/types";
 import * as Y from "yjs";
 import { api } from "@convex/_generated/api";
 import { toArrayBuffer } from "@/lib/bytes";
 import { ctx } from "@/lib/crypto/context";
 import { open, seal } from "@/lib/crypto/primitives";
 import { vault } from "@/lib/crypto/vault";
-import { type LocalUpdate, db, getMeta, resetLocalData, setMeta } from "@/lib/db";
+import { type LocalUpdate, type OutboxEntry, db, getMeta, resetLocalData, setMeta } from "@/lib/db";
 import { META, deviceId as ensureDeviceId } from "@/lib/db/meta";
 import { type PullBatch, applyBatch } from "./apply";
 import { loadClock, syncClock } from "./clock";
+import { onAlert } from "./alerts";
+import { restampOp } from "./restamp";
 import { onOutboxChanged } from "./signal";
 import { editsOutOfOutbox, enqueue } from "./outbox";
 import { tellPeers } from "./peers";
@@ -74,7 +77,25 @@ export type SyncStatus = {
    * wait here for the vault to be opened: they are not saved on the server.
    */
   heldForVault: boolean;
+  /**
+   * Edits the server would not take at all (an argument it refuses, a row
+   * too large to store), set aside after a few tries so the rest can go:
+   * how many. Sent again on request (retryStuck).
+   */
+  stuck: number;
+  /** A file the server refused (too large, or no room): dropped, and the note shows nothing for it. */
+  uploadRefused: boolean;
+  /** An edit could not be stored on this device, and is held in memory until one can. */
+  saveFailed: boolean;
 };
+
+/** Tries an op the server throws on gets before it is set aside. */
+const STUCK_AFTER = 3;
+/** How long an edit to a note the server does not have yet waits before it is sent again, and how often. */
+const UNKNOWN_NOTE_RETRY_MS = 2_000;
+const UNKNOWN_NOTE_TRIES = 20;
+
+type PushResponse = FunctionReturnType<typeof api.sync.push>;
 
 type Listener = (status: SyncStatus) => void;
 
@@ -90,6 +111,7 @@ export class SyncEngine {
   private unwatch: (() => void) | null = null;
   private unwatchOutbox: (() => void) | null = null;
   private unwatchVault: (() => void) | null = null;
+  private unwatchAlerts: (() => void) | null = null;
   private lastRefsPass = 0;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private interval = IDLE_INTERVAL_MS;
@@ -110,6 +132,9 @@ export class SyncEngine {
     catchingUp: false,
     quotaFull: false,
     heldForVault: false,
+    stuck: 0,
+    uploadRefused: false,
+    saveFailed: false,
   };
   /** Notes whose refused edits could not be sent again after asking for their body. */
   private rebaseWaits = new Map<string, { epoch: number; tries: number; at: number }>();
@@ -176,6 +201,9 @@ export class SyncEngine {
     this.unwatchVault = vault.subscribe((unlocked) => {
       if (unlocked) this.kick(0);
     });
+    // An edit that could not be stored here is said, until one is again.
+    this.unwatchAlerts = onAlert((alert) => this.set({ saveFailed: alert === "saveFailed" }));
+    this.set({ stuck: await this.stuckCount() });
   }
 
   stop(): void {
@@ -188,6 +216,8 @@ export class SyncEngine {
     this.unwatchOutbox = null;
     this.unwatchVault?.();
     this.unwatchVault = null;
+    this.unwatchAlerts?.();
+    this.unwatchAlerts = null;
     this.rebaseWaits.clear();
     this.claim += 1;
     this.stopWaiting?.abort();
@@ -635,17 +665,24 @@ export class SyncEngine {
       const database = db();
       // Files first: an image the editor already shows should reach the server
       // before the block that references it is compacted.
-      const { flushUploads } = await import("@/lib/media/attachments");
-      await flushUploads(this.client).catch(() => {});
+      let uploadRefused = await this.sendFiles();
       const heldForVault = await this.rebaseRefused();
+      // Ops the server threw on this round: left for the next round, so the
+      // ones after them go now rather than wait on them.
+      const failedNow = new Set<string>();
       for (;;) {
         const now = Date.now();
         const entries = await database.outbox
           .orderBy("createdAt")
-          .filter((entry) => !(entry.retryAt && entry.retryAt > now))
+          .filter(
+            (entry) =>
+              entry.stuck === undefined &&
+              !(entry.retryAt && entry.retryAt > now) &&
+              !failedNow.has(entry.opId),
+          )
           .limit(PUSH_OP_LIMIT)
           .toArray();
-        this.set({ pending: await database.outbox.count() });
+        this.set({ pending: await this.pendingCount() });
         if (entries.length === 0) break;
 
         const ops: Record<string, unknown>[] = [];
@@ -668,15 +705,18 @@ export class SyncEngine {
           if (state) before.set(entry.entityId, state);
         }
 
-        const response = await this.client.mutation(api.sync.push, {
-          deviceId: this.device,
-          ops: ops as never,
-        });
-        for (const [noteId, state] of before) void keepVersion(this.client, noteId, state);
+        const pushed = await this.push(entries.slice(0, ops.length), ops, failedNow);
+        if (!pushed) continue;
+        const { response, sent } = pushed;
+        for (const [noteId, state] of before) {
+          if (sent.some((entry) => entry.entityId === noteId)) {
+            void keepVersion(this.client, noteId, state);
+          }
+        }
         syncClock(response.serverTime);
 
         const byId = new Map(response.results.map((r) => [r.opId, r]));
-        for (const entry of entries.slice(0, ops.length)) {
+        for (const entry of sent) {
           const result = byId.get(entry.opId);
           if (!result) continue;
           if (result.status === "ok") {
@@ -688,17 +728,28 @@ export class SyncEngine {
 
         this.interval = response.activePeers > 0 ? FAST_INTERVAL_MS : IDLE_INTERVAL_MS;
         for (const noteId of response.shouldCompact) void this.compact(noteId);
-        if (ops.length === entries.length && entries.length < PUSH_OP_LIMIT) break;
+        if (sent.length === entries.length && entries.length < PUSH_OP_LIMIT) break;
       }
       // A file for a note that has only now reached the server waited above.
-      if ((await database.pendingUploads.count()) > 0)
-        await flushUploads(this.client).catch(() => {});
+      if ((await database.pendingUploads.count()) > 0) {
+        uploadRefused = (await this.sendFiles()) || uploadRefused;
+      }
       this.set({
         state: "idle",
-        pending: await database.outbox.count(),
+        pending: await this.pendingCount(),
+        // Held for want of room, not for a note still to reach the server.
         quotaFull:
-          (await database.outbox.filter((entry) => entry.retryAt !== undefined).count()) > 0,
+          (await database.outbox
+            .filter(
+              (entry) =>
+                entry.retryAt !== undefined &&
+                entry.stuck === undefined &&
+                entry.lastError !== "unknownNote",
+            )
+            .count()) > 0,
         heldForVault,
+        stuck: await this.stuckCount(),
+        uploadRefused,
       });
       // Everything of ours is sent: a good moment, and this loop keeps
       // running while nothing else happens, which a quiet note needs.
@@ -717,6 +768,120 @@ export class SyncEngine {
   }
 
   /**
+   * Sends the files waiting to go up. Whether the server refused one (too
+   * large, or no room): that file is dropped, and the note shows nothing
+   * for it, which is to be said. Anything else (no network, say) is tried
+   * again with the next round.
+   */
+  private async sendFiles(): Promise<boolean> {
+    const { flushUploads, QuotaError } = await import("@/lib/media/attachments");
+    try {
+      await flushUploads(this.client);
+      return false;
+    } catch (error) {
+      return error instanceof QuotaError;
+    }
+  }
+
+  /**
+   * Sends ops in one push. One the server throws on, as a whole (an
+   * argument it does not take, a row too large to store), would otherwise
+   * be sent again with every round, and every edit after it wait behind it
+   * for good. Thrown on, the first is sent alone: gone through, the one
+   * refused is among the rest, found the same way next time round; thrown
+   * on by itself, it is counted against, set aside after STUCK_AFTER tries
+   * (to be sent again on request), and left out of this round. What was
+   * sent, with the server's answer; null when the first could not be.
+   */
+  private async push(
+    entries: OutboxEntry[],
+    ops: Record<string, unknown>[],
+    failedNow: Set<string>,
+  ): Promise<{ response: PushResponse; sent: OutboxEntry[] } | null> {
+    const send = (batch: Record<string, unknown>[]) =>
+      this.client.mutation(api.sync.push, { deviceId: this.device, ops: batch as never });
+    try {
+      return { response: await send(ops), sent: entries };
+    } catch (error) {
+      // Not reached: left as they are, for when the network is back.
+      if (typeof navigator !== "undefined" && navigator.onLine === false) throw error;
+      const first = entries[0]!;
+      if (ops.length > 1) {
+        try {
+          return { response: await send([ops[0]!]), sent: [first] };
+        } catch (alone) {
+          await this.failedToSend(first, alone);
+        }
+      } else {
+        await this.failedToSend(first, error);
+      }
+      failedNow.add(first.opId);
+      return null;
+    }
+  }
+
+  /**
+   * Stamps an op anew (see lib/sync/restamp), and the local row it is for
+   * along with it, where the row still carries the stamp the op did: kept
+   * ahead there, an edit from elsewhere would lose here while winning on
+   * the server. Stored together, so a read in between sees neither or both.
+   */
+  private async restamp(entry: OutboxEntry): Promise<void> {
+    const database = db();
+    const { payload, changed } = restampOp(entry.payload as Record<string, unknown>, this.device);
+    const table =
+      entry.kind === "note" ? database.notes : entry.kind === "folder" ? database.folders : null;
+    await database.transaction("rw", [database.outbox, database.notes, database.folders], async () => {
+      await database.outbox.update(entry.opId, { payload, attempts: entry.attempts + 1 });
+      if (!table) return;
+      const row = await table.get(entry.entityId);
+      if (!row) return;
+      const stamps = row.ts as Record<string, Stamp | undefined>;
+      const patch: Record<string, Stamp> = {};
+      for (const { group, was, now } of changed) {
+        const current = stamps[group];
+        if (current && current.t === was.t && current.d === was.d) patch[`ts.${group}`] = now;
+      }
+      if (Object.keys(patch).length > 0) await table.update(entry.entityId, patch as never);
+    });
+  }
+
+  /** Counts a push the server threw on against its op; set aside after STUCK_AFTER. */
+  private async failedToSend(entry: OutboxEntry, error: unknown): Promise<void> {
+    const attempts = entry.attempts + 1;
+    await db().outbox.update(entry.opId, {
+      attempts,
+      lastError: error instanceof Error ? error.message : String(error),
+      ...(attempts >= STUCK_AFTER ? { stuck: Date.now() } : {}),
+    });
+  }
+
+  /** Sends the ops set aside again, from the start. */
+  async retryStuck(): Promise<void> {
+    await db()
+      .outbox.filter((entry) => entry.stuck !== undefined)
+      .modify((entry) => {
+        delete entry.stuck;
+        entry.attempts = 0;
+      });
+    this.set({ stuck: 0 });
+    this.kick(0);
+  }
+
+  /** The ops waiting to be sent, those set aside not among them. */
+  private pendingCount(): Promise<number> {
+    return db()
+      .outbox.filter((entry) => entry.stuck === undefined)
+      .count();
+  }
+
+  private stuckCount(): Promise<number> {
+    return db()
+      .outbox.filter((entry) => entry.stuck !== undefined)
+      .count();
+  }
+
+  /**
    * A rejected operation is dropped rather than retried forever. The two that
    * matter are a stale clock, which the client has already corrected, and a
    * stale key epoch, which means the note was locked or unlocked elsewhere and
@@ -725,7 +890,9 @@ export class SyncEngine {
    * An edit to a note's text refused because the account is full is the
    * exception: it is kept, and sent again from time to time until there is
    * room. Dropped, it would be gone from this device too once the note was
-   * closed, and what came after it would wait on other devices for it.
+   * closed, and what came after it would wait on other devices for it. One
+   * too large for the server to store in one row is kept the same way, set
+   * aside: dropped, the text it holds would be gone from here too.
    */
   private async handleRejection(opId: string, kind: string, reason?: string): Promise<void> {
     const database = db();
@@ -734,10 +901,38 @@ export class SyncEngine {
       this.set({ quotaFull: true });
       return;
     }
+    if (reason === "tooLarge" && kind === "update") {
+      await database.outbox.update(opId, { stuck: Date.now(), lastError: reason });
+      return;
+    }
     if (reason === "clockSkew") {
+      // Stamped while this device's clock ran ahead: stamped again, by the
+      // clock as the server's answer has just corrected it, and sent again
+      // at once. Never dropped: a note's making would go with it, and then
+      // its text (every edit to a note the server does not have is refused).
       const entry = await database.outbox.get(opId);
-      if (entry && entry.attempts < 3) {
-        await database.outbox.update(opId, { attempts: entry.attempts + 1 });
+      if (entry && entry.attempts < 5) {
+        await this.restamp(entry);
+        this.again = true;
+        return;
+      }
+      if (entry) {
+        await database.outbox.update(opId, { stuck: Date.now(), lastError: reason });
+        return;
+      }
+    }
+    if (reason === "unknownNote" && kind === "update") {
+      // The note is not on the server yet: its making is still to go (sent
+      // again after a refusal, say), or was set aside. Held while the note
+      // is here, for the round after the next.
+      const entry = await database.outbox.get(opId);
+      const note = entry ? await database.notes.get(entry.entityId) : undefined;
+      if (entry && note && !note.purged && entry.attempts < UNKNOWN_NOTE_TRIES) {
+        await database.outbox.update(opId, {
+          retryAt: Date.now() + UNKNOWN_NOTE_RETRY_MS,
+          attempts: entry.attempts + 1,
+          lastError: reason,
+        });
         return;
       }
     }

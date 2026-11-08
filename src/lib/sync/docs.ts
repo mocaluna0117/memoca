@@ -7,6 +7,7 @@ import { type BodyState, type LocalUpdate, db } from "@/lib/db";
 import { vault } from "@/lib/crypto/vault";
 import { migrateOldQuickBody } from "@/lib/quick/body";
 import type { Note } from "@/lib/types";
+import { reportAlert } from "./alerts";
 import { enqueue } from "./outbox";
 import { onPeers, tellPeers } from "./peers";
 import { linkTargets } from "@/lib/note-links";
@@ -14,6 +15,35 @@ import { ORIGIN, extractText, firstLine } from "./ydoc";
 
 /** Local edits are batched for this long before becoming one update row. */
 const FLUSH_MS = 500;
+/**
+ * Bytes one update row may hold: it is stored in one row on the server,
+ * which holds about 1 MiB with its other fields (the server refuses more as
+ * `tooLarge`). Edits are stored and sent in pieces under this.
+ */
+export const UPDATE_BYTE_LIMIT = 900_000;
+
+/**
+ * The buffered edits in pieces under the limit, each merged into one update,
+ * in the order they were made. One edit alone over the limit (a huge paste)
+ * is a piece by itself, as it is: it cannot be split, and the server says so.
+ */
+export function piecesOf(buffer: Uint8Array[], limit = UPDATE_BYTE_LIMIT): Uint8Array[] {
+  const pieces: Uint8Array[] = [];
+  let group: Uint8Array[] = [];
+  let bytes = 0;
+  const close = () => {
+    if (group.length > 0) pieces.push(group.length === 1 ? group[0]! : Y.mergeUpdates(group));
+    group = [];
+    bytes = 0;
+  };
+  for (const update of buffer) {
+    if (group.length > 0 && bytes + update.byteLength > limit) close();
+    group.push(update);
+    bytes += update.byteLength;
+  }
+  close();
+  return pieces;
+}
 /**
  * A note typed in has its updatedAt (its place in the lists, and the time
  * they show) written this often, rather than with every flush: each write
@@ -142,15 +172,9 @@ async function flush(handle: Handle): Promise<void> {
   // rather than leaving some to a write that may yet fail.
   while (handle.writing) await handle.writing.catch(() => {});
   if (handle.buffer.length === 0) return;
-  const merged = handle.buffer.length === 1 ? handle.buffer[0]! : Y.mergeUpdates(handle.buffer);
+  const pieces = piecesOf(handle.buffer);
   handle.buffer = [];
-  const writing = write(handle, merged).catch((error: unknown) => {
-    // Not stored: put back ahead of anything typed since, to be written with
-    // it by the next flush, whatever brings that on (the next edit, the note
-    // closing, the page being hidden). Every later edit builds on this one.
-    handle.buffer.unshift(merged);
-    throw error;
-  });
+  const writing = writePieces(handle, pieces);
   handle.writing = writing;
   writesInFlight.add(writing);
   try {
@@ -161,10 +185,41 @@ async function flush(handle: Handle): Promise<void> {
   }
 }
 
-async function write(handle: Handle, merged: Uint8Array): Promise<void> {
+/**
+ * Writes the pieces in order, each stored and queued on its own. A write
+ * that fails puts its piece and those after it back, ahead of anything
+ * typed since, to be written with it by the next flush, whatever brings
+ * that on (the next edit, the note closing, the page being hidden): every
+ * later edit builds on it. Said, as a store that fails and the next that
+ * works are (lib/sync/alerts), for the badge.
+ */
+async function writePieces(handle: Handle, pieces: Uint8Array[]): Promise<void> {
+  let stored = false;
+  for (let at = 0; at < pieces.length; at += 1) {
+    let outcome: Awaited<ReturnType<typeof write>>;
+    try {
+      outcome = await write(handle, pieces[at]!);
+    } catch (error) {
+      handle.buffer.unshift(...pieces.slice(at));
+      reportAlert("saveFailed");
+      throw error;
+    }
+    if (outcome === "stored") {
+      stored = true;
+      continue;
+    }
+    // Kept for later (a locked note with the vault closed): those after it
+    // wait with it, in order. Dropped (the note gone): they go with it.
+    if (outcome === "kept") handle.buffer.unshift(...pieces.slice(at + 1));
+    break;
+  }
+  if (stored) reportAlert("saveOk");
+}
+
+async function write(handle: Handle, merged: Uint8Array): Promise<"stored" | "kept" | "dropped"> {
   const database = db();
   const note = await database.notes.get(handle.noteId);
-  if (!note) return;
+  if (!note) return "dropped";
 
   const opId = uuidv7();
   let data = merged;
@@ -175,7 +230,7 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
       // Cannot encrypt right now; keep the edit buffered rather than writing
       // readable bytes anywhere.
       handle.buffer.unshift(merged);
-      return;
+      return "kept";
     }
     const key = await vault.noteKey(handle.noteId, note.keyEpoch, note.wrappedKey);
     const { seal } = await import("@/lib/crypto/primitives");
@@ -275,6 +330,7 @@ async function write(handle: Handle, merged: Uint8Array): Promise<void> {
     }
   }
   announce(handle.noteId);
+  return "stored";
 }
 
 /**

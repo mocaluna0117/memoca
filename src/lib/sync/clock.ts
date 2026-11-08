@@ -8,9 +8,13 @@ let offset = 0;
 let last = 0;
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
 
+/** Mirror of the server's MAX_CLOCK_SKEW_MS: a stamp further ahead of its clock is refused. */
+const CLOCK_SKEW_MS = 60_000;
+
 export async function loadClock(): Promise<void> {
   offset = await getMeta(META.clockOffset, 0);
   last = await getMeta(META.lastHlc, 0);
+  leaveTheFuture();
 }
 
 /**
@@ -23,9 +27,26 @@ export async function loadClock(): Promise<void> {
  */
 export function syncClock(serverTime: number): void {
   const next = serverTime - Date.now();
-  if (Math.abs(next - offset) < 1_000) return;
-  offset = next;
-  void setMeta(META.clockOffset, offset);
+  if (Math.abs(next - offset) >= 1_000) {
+    offset = next;
+    void setMeta(META.clockOffset, offset);
+  }
+  leaveTheFuture();
+}
+
+/**
+ * The last stamp, left where a clock that ran ahead put it, would hold
+ * every stamp from now on there too (each is made after the last), to be
+ * refused for as long as real time took to catch up: a new note made
+ * meanwhile would never reach the server. Brought back to within what the
+ * server allows of the corrected time. Half of it: a stamp taken in just
+ * before, up to the full minute ahead, is more likely still behind it.
+ */
+function leaveTheFuture(): void {
+  const corrected = Date.now() + offset;
+  if (last <= corrected + CLOCK_SKEW_MS) return;
+  last = corrected + CLOCK_SKEW_MS / 2;
+  void setMeta(META.lastHlc, last);
 }
 
 /** A stamp that never repeats and never goes backwards on this device. */

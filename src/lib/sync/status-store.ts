@@ -7,6 +7,9 @@ const FIELDS = [
   "catchingUp",
   "quotaFull",
   "heldForVault",
+  "stuck",
+  "uploadRefused",
+  "saveFailed",
 ] as const satisfies readonly (keyof SyncStatus)[];
 
 /** Whether two statuses say the same, field by field. */

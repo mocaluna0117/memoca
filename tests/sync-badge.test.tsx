@@ -11,6 +11,9 @@ const h = vi.hoisted(() => ({
     catchingUp: false,
     quotaFull: false,
     heldForVault: false,
+    stuck: 0,
+    uploadRefused: false,
+    saveFailed: false,
   } as SyncStatus,
   /** Edits in the outbox, as the badge counts them. */
   queued: 0,
@@ -58,6 +61,23 @@ test("edits of a locked note waiting for the vault are said, without spinning", 
   const shown = badge({ heldForVault: true });
   expect(shown.getAttribute("aria-label")).toBe(t.sync.heldForVault);
   expect(shown.querySelector(".animate-spin")).toBeNull();
+});
+
+test("edits set aside as unsendable are said first; then a file refused; then a store that failed", () => {
+  expect(badge({ stuck: 1, uploadRefused: true, saveFailed: true }).getAttribute("aria-label")).toBe(
+    t.sync.stuck,
+  );
+  expect(badge({ stuck: 0, uploadRefused: true, saveFailed: true }).getAttribute("aria-label")).toBe(
+    t.sync.uploadRefused,
+  );
+  expect(badge({ stuck: 0, uploadRefused: false, saveFailed: true }).getAttribute("aria-label")).toBe(
+    t.sync.saveFailed,
+  );
+  expect(
+    badge({ stuck: 0, uploadRefused: false, saveFailed: false, heldForVault: false }).getAttribute(
+      "aria-label",
+    ),
+  ).toBe(t.sync.idle);
 });
 
 test("with nothing waiting, the badge says all is synced", () => {

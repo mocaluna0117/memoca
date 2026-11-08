@@ -7,6 +7,7 @@ import {
   MAX_FOLDER_DEPTH,
   PULL_BYTE_BUDGET,
   PULL_PAGE_LIMIT,
+  UPDATE_INLINE_LIMIT,
 } from "./lib/constants";
 import { ZERO_STAMP, type Stamp, isFromTheFuture, isNewer } from "./lib/hlc";
 import { type Op, type OpResult, opV } from "./lib/ops";
@@ -652,6 +653,9 @@ async function applyUpdateOp(
   if (!note.locked && op.iv) return reject(op.opId, "ciphertextIntoPlainNote");
 
   const size = op.payload.byteLength;
+  // Refused, not thrown on: thrown on, the whole push would fail, and the
+  // client would send it again and again with everything after it.
+  if (size > UPDATE_INLINE_LIMIT) return reject(op.opId, "tooLarge");
   const { user, usedDelta, reservedDelta } = session;
   if (user.usedBytes + usedDelta + user.reservedBytes + reservedDelta + size > user.quotaBytes) {
     return reject(op.opId, "quotaExceeded");

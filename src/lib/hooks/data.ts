@@ -264,6 +264,7 @@ export function useTrash(): TrashEntry[] {
   }, [folders, notes]);
 }
 
+/** The edits waiting to be sent: not those set aside as ones the server will not take. */
 export function useOutboxCount(): number {
-  return useLiveQuery(() => db().outbox.count(), [], 0);
+  return useLiveQuery(() => db().outbox.filter((entry) => entry.stuck === undefined).count(), [], 0);
 }

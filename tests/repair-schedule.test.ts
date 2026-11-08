@@ -15,6 +15,9 @@ const status = (over: Partial<SyncStatus> = {}): SyncStatus => ({
   catchingUp: false,
   quotaFull: false,
   heldForVault: false,
+  stuck: 0,
+  uploadRefused: false,
+  saveFailed: false,
   ...over,
 });
 

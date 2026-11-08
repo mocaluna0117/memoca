@@ -13,6 +13,7 @@ import {
   releaseDoc,
   reloadDoc,
 } from "@/lib/sync/docs";
+import { onAlert } from "@/lib/sync/alerts";
 import { bodyFragment, extractText } from "@/lib/sync/ydoc";
 import type { Note } from "@/lib/types";
 import { valid } from "./helpers/blocknote";
@@ -159,7 +160,39 @@ describe("reloading an open note from storage", () => {
   });
 });
 
+describe("an edit larger than the server takes in one piece", () => {
+  test("is stored and queued in pieces, each under the limit, that together hold it all", async () => {
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "a".repeat(600_000));
+    doc.getText("t").insert(600_000, "b".repeat(600_000));
+    await flushDoc("n1");
+    const ops = await db().outbox.where("kind").equals("update").toArray();
+    expect(ops.length).toBe(2);
+    for (const op of ops) {
+      expect((op.payload as { payload: ArrayBuffer }).payload.byteLength).toBeLessThan(900_000);
+    }
+    expect((await elsewhere()).getText("t").toString().length).toBe(1_200_000);
+    expect((await stored()).getText("t").toString().length).toBe(1_200_000);
+    await releaseDoc("n1");
+  });
+});
+
 describe("an edit that could not be stored", () => {
+  test("is said, until one is stored again", async () => {
+    const heard: string[] = [];
+    const stop = onAlert((alert) => heard.push(alert));
+    const doc = await acquireDoc("n1");
+    doc.getText("t").insert(0, "一");
+    failNextWrite();
+    await flushDoc("n1").catch(() => undefined);
+    expect(heard).toEqual(["saveFailed"]);
+    doc.getText("t").insert(1, "二");
+    await flushDoc("n1");
+    expect(heard).toEqual(["saveFailed", "saveOk"]);
+    stop();
+    await releaseDoc("n1");
+  });
+
   test("is kept, and stored with the next one, which builds on it", async () => {
     const doc = await acquireDoc("n1");
     doc.getText("t").insert(0, "一");

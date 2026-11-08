@@ -39,6 +39,13 @@ export const COMPACT_UPDATE_BYTES = 256 * 1024;
 
 /** Snapshots above this go to file storage instead of inline bytes (1 MiB doc cap). */
 export const SNAPSHOT_INLINE_LIMIT = 900_000;
+/**
+ * An update above this is refused (`tooLarge`) rather than stored: it goes
+ * in one row, which holds about 1 MiB with its other fields. The client
+ * splits what it types into pieces under this (lib/sync/docs); one piece
+ * over it (a huge paste) is set aside there, and said.
+ */
+export const UPDATE_INLINE_LIMIT = 900_000;
 
 /**
  * Passkeys one vault accepts. Each is one wrapping of the vault key, and the

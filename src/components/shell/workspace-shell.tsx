@@ -7,6 +7,7 @@ import { OpenNoteFromQuickWindow, QuickNoteShortcut } from "@/components/notes/q
 import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
 import { PwaPrompts } from "@/components/shell/pwa-prompts";
+import { SyncAlerts } from "@/components/shell/sync-alerts";
 import { useShellRefresh } from "@/components/shell/shell-refresh";
 import { WorkspaceDnd } from "@/components/shell/workspace-dnd";
 import { LockRepairs } from "@/components/vault/lock-repairs";
@@ -116,6 +117,7 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
       {/* Follows the sync status, which changes with every flush of a note
           being typed in: a leaf of its own, so that nothing else here does. */}
       <LockRepairs />
+      <SyncAlerts />
       <VaultDialog />
     </>
   );

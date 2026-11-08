@@ -13,10 +13,23 @@ export function SyncBadge({ className }: { className?: string }) {
   const pending = useOutboxCount();
 
   const busy = status.state === "syncing" || status.catchingUp || pending > 0;
+  // Something wrong that needs attention, the most pressing first.
+  const wrong =
+    status.state === "error"
+      ? t.sync.error
+      : status.quotaFull
+        ? t.sync.quotaFull
+        : status.stuck > 0
+          ? t.sync.stuck
+          : status.uploadRefused
+            ? t.sync.uploadRefused
+            : status.saveFailed
+              ? t.sync.saveFailed
+              : null;
   const Icon =
     status.state === "offline"
       ? CloudOff
-      : status.state === "error" || status.quotaFull
+      : wrong
         ? TriangleAlert
         : status.heldForVault
           ? Lock
@@ -27,17 +40,15 @@ export function SyncBadge({ className }: { className?: string }) {
   const label =
     status.state === "offline"
       ? t.sync.offline
-      : status.state === "error"
-        ? t.sync.error
-        : status.quotaFull
-          ? t.sync.quotaFull
-          : status.heldForVault
-            ? t.sync.heldForVault
-            : pending > 0
-              ? t.sync.pending(pending)
-              : status.catchingUp
-                ? t.sync.catchingUp
-                : t.sync.idle;
+      : wrong
+        ? wrong
+        : status.heldForVault
+          ? t.sync.heldForVault
+          : pending > 0
+            ? t.sync.pending(pending)
+            : status.catchingUp
+              ? t.sync.catchingUp
+              : t.sync.idle;
 
   return (
     <Tooltip>
@@ -48,7 +59,7 @@ export function SyncBadge({ className }: { className?: string }) {
           aria-label={label}
           className={cn(
             "inline-flex items-center gap-1.5 text-xs text-muted-foreground",
-            (status.state === "error" || status.quotaFull) && "text-destructive",
+            wrong && "text-destructive",
             className,
           )}
         >
@@ -76,7 +87,7 @@ export function SyncRetryButton() {
   return (
     <button
       type="button"
-      onClick={() => engine()?.kick(0)}
+      onClick={() => void engine()?.retryStuck()}
       className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
     >
       <RefreshCw className="size-3.5" aria-hidden />
