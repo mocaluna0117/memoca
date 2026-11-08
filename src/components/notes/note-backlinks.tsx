@@ -3,7 +3,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { Link2 } from "lucide-react";
 import { db } from "@/lib/db";
-import { justAbove, justBelow } from "@/lib/key-range";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { noteName } from "@/lib/note-name";
 
@@ -16,17 +15,12 @@ export function NoteBacklinks({ noteId }: { noteId: string }) {
   const { openNote } = useWorkspace();
   const linking = useLiveQuery(async () => {
     const database = db();
-    // Every note's body but this one's (its links to itself are not among
-    // those shown), as the keys before it and after it: this note's own body
-    // is written with every flush while it is typed in, twice with the
-    // server's echo, and the whole table, read so, was read again each time.
-    // See key-range for why not below() and above().
-    const [before, after] = await Promise.all([
-      database.bodies.where("noteId").belowOrEqual(justBelow(noteId)).toArray(),
-      database.bodies.where("noteId").aboveOrEqual(justAbove(noteId)).toArray(),
-    ]);
-    const bodies = [...before, ...after].filter((body) => body.links?.includes(noteId) ?? false);
-    const notes = await database.notes.bulkGet(bodies.map((body) => body.noteId));
+    // By the index of what each body links to: only the bodies linking here
+    // are read, and the query runs again only when one of them is written,
+    // not with every flush of any note being typed in (which, with every
+    // body read, it did).
+    const linkers = await database.bodies.where("links").equals(noteId).primaryKeys();
+    const notes = await database.notes.bulkGet(linkers.filter((id) => id !== noteId));
     return notes
       .filter(
         (note) => note && note.noteId !== noteId && !note.deletedAt && !note.purged && !note.locked,

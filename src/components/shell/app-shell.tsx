@@ -24,6 +24,7 @@ import { SIDEBAR, usePaneWidth } from "@/lib/hooks/use-pane-width";
 import { isSidebarKey, useSidebarShown } from "@/lib/hooks/use-sidebar-shown";
 import { useModKeyLabel } from "@/lib/platform";
 import { useWorkspace } from "@/lib/hooks/workspace";
+import { useMediaQuery } from "@/lib/hooks/use-client-value";
 import { cn } from "@/lib/utils";
 
 type ShellContextValue = {
@@ -36,6 +37,8 @@ export const useShell = () => useContext(ShellContext);
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { selection, navigate, openFolder, openPinned } = useWorkspace();
+  // Whether the sidebar beside the notes can be seen at all (see below).
+  const wide = useMediaQuery("(min-width: 768px)", true);
   const drawer = useDrawerSwipe();
   const unreadNews = useUnreadNews();
   const [sidebarWidth] = usePaneWidth(SIDEBAR);
@@ -105,16 +108,21 @@ export function AppShell({ children }: { children: ReactNode }) {
           style={paneWidthStyle(SIDEBAR, sidebarWidth)}
         >
           <div className="h-full" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
-            <Sidebar
-              selectedFolderId={selection.folderId}
-              onSelectFolder={select}
-              pinnedSelected={selection.pinned}
-              onSelectPinned={selectPinned}
-              selectedNoteId={selection.noteId}
-              onOpenNote={openNoteHere}
-              onHide={hideSidebar}
-              hideShortcut={sidebarShortcut}
-            />
+            {/* Only where it can be seen: on a phone this copy is never shown
+                (the drawer has its own), yet its tree read every note again
+                with every flush of one being typed in. */}
+            {wide ? (
+              <Sidebar
+                selectedFolderId={selection.folderId}
+                onSelectFolder={select}
+                pinnedSelected={selection.pinned}
+                onSelectPinned={selectPinned}
+                selectedNoteId={selection.noteId}
+                onOpenNote={openNoteHere}
+                onHide={hideSidebar}
+                hideShortcut={sidebarShortcut}
+              />
+            ) : null}
           </div>
           <PaneResizer pane={SIDEBAR} label="サイドバーの幅" />
         </aside>

@@ -162,6 +162,11 @@ export class MemocaDb extends Dexie {
       outbox: "opId, createdAt, kind",
       meta: "key",
     });
+    // The notes each body links to (lib/note-links), for a note's list of
+    // those that link to it: read by the index, not by reading every body.
+    this.version(2).stores({
+      bodies: "noteId, *links",
+    });
   }
 }
 

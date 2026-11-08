@@ -30,15 +30,23 @@ function useSharedRows<T>(
   querier: () => Promise<T[]>,
   deps: unknown[],
   keyOf: (row: T) => string,
+  /**
+   * Off, the rows are left as they were last read, and nothing is read: for
+   * a list out of sight (the note list behind an open note on a phone),
+   * which would otherwise read its whole table again with every write to it,
+   * every flush of a note being typed in among them.
+   */
+  enabled = true,
 ): T[] {
   const last = useRef<T[] | undefined>(undefined);
   return useLiveQuery(
     async () => {
+      if (!enabled) return last.current ?? (EMPTY as T[]);
       const rows = shareRows(last.current, await querier(), keyOf);
       last.current = rows;
       return rows;
     },
-    deps,
+    [...deps, enabled],
     EMPTY as T[],
   );
 }
@@ -88,8 +96,8 @@ export type NoteScope =
   | { kind: "folder"; folderId: string }
   | { kind: "pinned" };
 
-/** Notes for the middle pane, with trashed subtrees filtered out. */
-export function useNotes(scope: NoteScope): Note[] {
+/** Notes for the middle pane, with trashed subtrees filtered out; `enabled` off, as last read (see useSharedRows). */
+export function useNotes(scope: NoteScope, enabled = true): Note[] {
   const folders = useFolders();
   const trashed = useMemo(() => trashedFolderIds(folders), [folders]);
 
@@ -100,6 +108,7 @@ export function useNotes(scope: NoteScope): Note[] {
         : db().notes.toArray(),
     [scope.kind, scope.kind === "folder" ? scope.folderId : ""],
     noteKey,
+    enabled,
   );
 
   return useMemo(() => {

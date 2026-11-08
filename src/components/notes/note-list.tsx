@@ -451,17 +451,21 @@ export function NoteList({
   pinnedOnly = false,
   selectedNoteId,
   onSelectNote,
+  active = true,
 }: {
   folderId: string | null;
   /** With no folder: the pinned notes, of every folder, rather than all. */
   pinnedOnly?: boolean;
   selectedNoteId: string | null;
   onSelectNote: (noteId: string) => void;
+  /** In sight: off, its notes stay as last read, and nothing is read for it (lib/hooks/data). */
+  active?: boolean;
 }) {
   const folder = useFolder(folderId);
   const folderName = useFolderName(folder);
   const listed = useNotes(
     folderId ? { kind: "folder", folderId } : pinnedOnly ? { kind: "pinned" } : { kind: "all" },
+    active,
   );
   /** Which list this is: a folder's, the pinned notes, or all. */
   const listKey = folderId ?? (pinnedOnly ? "@pinned" : null);

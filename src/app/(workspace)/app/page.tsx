@@ -7,6 +7,7 @@ import { NotePane } from "@/components/notes/note-pane";
 import { PANE_WIDTH_CLASS, PaneResizer, paneWidthStyle } from "@/components/shell/pane-resizer";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useFolder, useNote } from "@/lib/hooks/data";
+import { useMediaQuery } from "@/lib/hooks/use-client-value";
 import { useFolderName } from "@/lib/hooks/use-decrypted";
 import { NOTE_LIST, usePaneWidth } from "@/lib/hooks/use-pane-width";
 import { useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
@@ -32,6 +33,7 @@ function Workspace() {
   // of no one folder: all notes, and the pinned. Not for a note kept in the
   // sidebar, in no folder, opened from there.
   const [mode] = useSidebarMode();
+  const phone = useMediaQuery("(max-width: 767px)");
   const open = useNote(selection.noteId);
   const listShown =
     mode === "list" ||
@@ -59,6 +61,10 @@ function Workspace() {
             pinnedOnly={selection.pinned}
             selectedNoteId={selection.noteId}
             onSelectNote={openNote}
+            // Out of sight (behind the open note on a phone, or beside the
+            // sidebar's tree), it reads nothing: mounted still, for where it
+            // was scrolled to (usePhoneScroll).
+            active={listShown && !(phone && selection.noteId !== null)}
           />
         </div>
         <PaneResizer pane={NOTE_LIST} label="メモ一覧の幅" />
