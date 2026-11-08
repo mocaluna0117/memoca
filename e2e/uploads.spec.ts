@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { createNote, openApp, signUp, waitForSynced } from "./helpers";
+import { createNote, editor, openApp, signUp, waitForSynced } from "./helpers";
 import { pasteFile, uploadsDrained } from "./image-helpers";
 import { clearTable, readTable } from "./local-db";
 
@@ -45,6 +45,40 @@ test.describe("adding a file to a note", () => {
     });
     await expect(page.getByText("この種類のファイルは追加できません", { exact: false })).toBeVisible();
     await nothingKept(page);
+  });
+
+  test("several files pasted at once all go in, one turned away among them or not", async ({ page }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "まとめて");
+    await editor(page).click();
+    // A Word file (turned away) and two pictures, in one paste, as from Finder.
+    await editor(page).evaluate(async (target: HTMLElement) => {
+      const picture = async (fill: string) => {
+        const canvas = document.createElement("canvas");
+        canvas.width = 40;
+        canvas.height = 30;
+        const context = canvas.getContext("2d")!;
+        context.fillStyle = fill;
+        context.fillRect(0, 0, 40, 30);
+        return new Promise<Blob>((resolve) => canvas.toBlob((blob) => resolve(blob!), "image/png"));
+      };
+      const data = new DataTransfer();
+      data.items.add(new File([await picture("#ff0000")], "一.png", { type: "image/png" }));
+      data.items.add(
+        new File([new Uint8Array(64)], "資料.docx", {
+          type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        }),
+      );
+      data.items.add(new File([await picture("#0000ff")], "二.png", { type: "image/png" }));
+      target.dispatchEvent(
+        new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }),
+      );
+    });
+    await expect(page.locator('[data-content-type="image"] img.bn-visual-media')).toHaveCount(2, {
+      timeout: 20_000,
+    });
+    await uploadsDrained(page);
   });
 
   test("a PDF goes into an ordinary note, is stored on the server, and is saved again under its name", async ({

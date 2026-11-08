@@ -121,9 +121,13 @@ function VersionList({ noteId, onDone }: { noteId: string; onDone: () => void })
     if (!shown || !("doc" in shown) || restoring) return;
     setRestoring(true);
     try {
-      await restoreVersion(client, noteId, shown.doc);
+      const { kept } = await restoreVersion(client, noteId, shown.doc);
+      // Said as it is: the note as it was is kept as a version only when
+      // that worked (offline, say, it does not).
       toast.success("この版に戻しました", {
-        description: "戻す前の内容も変更履歴に残っています。",
+        description: kept
+          ? "戻す前の内容も変更履歴に残っています。"
+          : "戻す前の内容は変更履歴に残せませんでした（オフラインのときなど）。",
       });
       onDone();
     } catch {

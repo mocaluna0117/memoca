@@ -62,6 +62,7 @@ import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
+import { caretAboveKeyboard } from "@/components/editor/caret-above-keyboard";
 import { DISABLED_EXTENSIONS, quoteShortcuts } from "@/components/editor/quotes";
 import { NoteLinkMenu, noteLinkInput, noteLinkSlashItem } from "@/components/editor/note-links";
 import { listKeys } from "@/components/editor/list-keys";
@@ -341,6 +342,7 @@ function EditorSurface({
           imeCommit(),
           noteLinkInput(),
           findInNote(),
+          caretAboveKeyboard,
         ],
         dropCursor: { hooks: { computeDropPosition } },
         // An image Memoca copied alone, pasted back as the block it was; and

@@ -152,8 +152,12 @@ export async function restoreVersion(
   client: ConvexReactClient,
   noteId: string,
   version: Y.Doc,
-): Promise<void> {
-  await keep(client, noteId, await withStoredDoc(noteId, stateOf), true).catch(() => false);
+): Promise<{ kept: boolean }> {
+  // Whether the note as it is now was kept, for whoever restores to be told
+  // truly: a version is a convenience, and its failing does not stop this.
+  const kept = await keep(client, noteId, await withStoredDoc(noteId, stateOf), true).catch(
+    () => false,
+  );
   const doc = await acquireDoc(noteId);
   try {
     const body = bodyFragment(doc);
@@ -167,4 +171,5 @@ export async function restoreVersion(
   } finally {
     await releaseDoc(noteId);
   }
+  return { kept: kept === true };
 }
