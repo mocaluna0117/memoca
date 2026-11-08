@@ -36,6 +36,8 @@ import { uncover } from "@/components/editor/stuck-toggles";
  * - Copied or cut with its line all selected, a closed toggle takes what is
  *   hidden inside it along, where BlockNote takes the line alone. See
  *   {@link copyRange}.
+ * - Backspace at the start of a closed toggle's own line opens it (BlockNote
+ *   made it a paragraph, and brought what was inside it out after it).
  * - Backspace in an empty line inside an open toggle takes the line away,
  *   the caret to the end of the line above it, as anywhere else in a note.
  *   BlockNote moves the line out of the toggle instead, and (were it the
@@ -615,6 +617,28 @@ export function emptiedToggles(before: Node, after: Node): string[] {
 }
 
 /**
+ * Backspace at the start of a closed toggle's own line, with lines inside
+ * it: the toggle, to open. BlockNote makes the line a paragraph, and what
+ * was inside it, out of sight, comes out as lines after it: the opposite
+ * of what a key that takes something away is expected to do. Null for
+ * anything else (open, or nothing inside: left to BlockNote, as a list
+ * item's is).
+ */
+export function closedToggleToOpen(
+  state: EditorState,
+  isOpen: (block: Found) => boolean,
+): Found | null {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const { $from } = selection;
+  if ($from.parentOffset !== 0 || !isToggle($from.parent) || $from.depth < 2) return null;
+  const container = $from.node($from.depth - 1);
+  if (container.type.name !== "blockContainer" || container.childCount < 2) return null;
+  const block = { node: container, pos: $from.before($from.depth - 1) };
+  return isOpen(block) ? null : block;
+}
+
+/**
  * A toggle just closed with the caret inside it: the caret to the end of its
  * line, as Notion has it. Left inside, out of sight, it takes what is typed
  * next, and a click at the end of the line does not always bring it out.
@@ -719,6 +743,13 @@ export const toggles = createExtension(({ editor }) => ({
       const view = editor.prosemirrorView;
       if (!view) return false;
       const isOpen = (block: Found) => isOpenOnScreen(view, block);
+      // At the start of a closed toggle's line: opened, by its ▼ (which
+      // also brings the caret out, as a click on it does).
+      const closed = closedToggleToOpen(view.state, isOpen);
+      if (closed) {
+        buttonOf(view, closed)?.click();
+        return true;
+      }
       const tr = backspaceInToggle(view.state, isOpen) ?? backspaceAfterHidden(view.state, isOpen);
       if (!tr) return false;
       view.dispatch(tr);

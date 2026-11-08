@@ -16,8 +16,9 @@ const isItem = (content: Node) => ITEMS.has(content.type.name);
  * BlockNote does, but with text selected too (BlockNote makes the second a
  * paragraph then) and with its colours and alignment going on into the
  * second (BlockNote leaves them with the first). Not its tick, nor where
- * its numbers start. Null for anything else, an empty item (made a
- * paragraph, by BlockNote) among it.
+ * its numbers start: at the start of the line, the new, empty item goes
+ * above, and the text keeps both. Null for anything else, an empty item
+ * (made a paragraph, by BlockNote) among it.
  */
 export function enterInItem(state: EditorState): Transaction | null {
   const { selection } = state;
@@ -33,6 +34,18 @@ export function enterInItem(state: EditorState): Transaction | null {
   const attrs = Object.fromEntries(
     Object.entries(content.attrs).filter(([name]) => !OWN.has(name)),
   );
+  // At the start of a line with text: the empty item goes above, and the
+  // text keeps its item, its tick and its number with it. Split there, the
+  // tick stayed on the empty line, and the text went on as a new, unticked
+  // item (so with BlockNote's own Enter).
+  if ($at.parentOffset === 0 && content.content.size > 0) {
+    const empty = container.type.create(
+      { ...container.attrs, id: null },
+      content.type.create(attrs),
+    );
+    tr.insert($at.before($at.depth - 1), empty);
+    return tr.scrollIntoView();
+  }
   tr.split($at.pos, 2, [
     // A new block, with an id of its own.
     { type: container.type, attrs: { ...container.attrs, id: null } },

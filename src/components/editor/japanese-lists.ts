@@ -168,6 +168,11 @@ export function listFromMarks(
   return tr;
 }
 
+/** The dashes the input method makes of - (ー), and the full-width ones: a bullet, with a space after. */
+const DASHES = "ー－‐−―—";
+/** Digits, half or full width. */
+const DIGITS = "0-9０-９";
+
 /** Whether the paste being made is of what Memoca copied: see japaneseLists' mount. */
 let ownPaste = false;
 
@@ -181,6 +186,11 @@ let ownPaste = false;
  * or a toggle stays there, as the item it is (with - it would become a
  * bullet, its tick or what is inside it lost).
  *
+ * And what the input method makes of BlockNote's own shortcuts: ー, －, ＊
+ * or ＋ and a space (half or full width) a bullet; １．, 1。 and a space a
+ * numbered list, from that number; 「」 and a space a check list item,
+ * 「x」 one ticked. Not １、 nor ①: those begin sentences.
+ *
  * And lines written with ・ at their start, made a bullet list together,
  * lose it: see {@link listFromMarks}.
  */
@@ -188,11 +198,51 @@ export const japaneseLists = createExtension({
   key: "memocaJapaneseLists",
   inputRules: [
     {
-      find: /^\s?[・･]$/,
+      find: /^\s?[・･•]$/,
       replace({ editor }) {
         const { block } = editor.getTextCursorPosition();
         if (block.type !== "paragraph") return undefined;
         return { type: "bulletListItem", props: {} };
+      },
+    },
+    // With the input method on, - comes out as ー (or －), * as ＊, + as ＋,
+    // and the space after it as a full-width one: BlockNote's own rules
+    // (-, *, + and a space) do not see them.
+    {
+      find: new RegExp(`^\\s?[${DASHES}＊＋]\\s$`),
+      replace({ editor }) {
+        const { block } = editor.getTextCursorPosition();
+        if (block.type === "heading") return undefined;
+        return { type: "bulletListItem", props: {} };
+      },
+    },
+    // １．(full width), 1。(the . the input method turns into 。), 12．: a
+    // numbered list from that number, as "1." and a space is.
+    {
+      find: new RegExp(`^\\s?([${DIGITS}]+)[.．。]\\s$`),
+      replace({ editor, match }) {
+        const { block } = editor.getTextCursorPosition();
+        if (block.type === "heading") return undefined;
+        const start = Number.parseInt(match[1]!.normalize("NFKC"), 10);
+        return { type: "numberedListItem", props: start === 1 ? {} : { start } };
+      },
+    },
+    // 「」 and a space: a check list item, as [] and a space is; 「x」, 「×」
+    // or 「✓」: one ticked.
+    {
+      find: /^\s?「[\s　]*」\s$/,
+      replace({ editor }) {
+        const { block } = editor.getTextCursorPosition();
+        if (block.type === "heading") return undefined;
+        return { type: "checkListItem", props: { checked: false } };
+      },
+    },
+    {
+      find: /^\s?「[xXｘＸ×✓✔]」\s$/,
+      replace({ editor }) {
+        const { block } = editor.getTextCursorPosition();
+        if (block.type === "heading") return undefined;
+        return { type: "checkListItem", props: { checked: true } };
       },
     },
   ],

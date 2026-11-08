@@ -62,6 +62,7 @@ import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
+import { DISABLED_EXTENSIONS, quoteShortcuts } from "@/components/editor/quotes";
 import { NoteLinkMenu, noteLinkInput, noteLinkSlashItem } from "@/components/editor/note-links";
 import { listKeys } from "@/components/editor/list-keys";
 import { blockSelect } from "@/components/editor/block-select";
@@ -325,8 +326,11 @@ function EditorSurface({
         uploadFile,
         resolveFileUrl,
         links,
+        // BlockNote's quote shortcuts, all but > and a space (see quotes.ts).
+        disableExtensions: DISABLED_EXTENSIONS,
         extensions: [
           japaneseLists,
+          quoteShortcuts,
           listKeys(),
           toggles(),
           stuckToggles,
