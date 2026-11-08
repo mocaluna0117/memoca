@@ -17,6 +17,7 @@ import { editsOutOfOutbox, enqueue } from "./outbox";
 import { tellPeers } from "./peers";
 import {
   applyRemote,
+  flushAll,
   migrateOpenDoc,
   reloadDoc,
   withDetachedDoc,
@@ -53,6 +54,12 @@ const PREFETCH_LIMIT = 200;
  */
 const FULL_RESYNC_AFTER_MS = 60 * 24 * 60 * 60 * 1000;
 
+/** The Web Lock held by the window of the app that syncs. */
+const LOCK_NAME = "memoca-sync";
+
+/** Whether this window is in view: on the screen, not put away or in a tab behind. */
+const inView = () => typeof document !== "undefined" && document.visibilityState === "visible";
+
 type RemoteBody = FunctionReturnType<typeof api.notes.getBodies>["bodies"][number];
 
 export type SyncStatus = {
@@ -76,6 +83,10 @@ export class SyncEngine {
   private stopped = true;
   private leader = false;
   private releaseLock: (() => void) | null = null;
+  /** Which ask for the sync lock is this window's own now: an older one let go is ignored. */
+  private claim = 0;
+  /** Takes back an ask still waiting in line, one made again or the engine stopped. */
+  private stopWaiting: AbortController | null = null;
   private unwatch: (() => void) | null = null;
   private unwatchOutbox: (() => void) | null = null;
   private unwatchVault: (() => void) | null = null;
@@ -155,7 +166,9 @@ export class SyncEngine {
       await setMeta(META.pinPlacesPulled, true);
     }
 
-    this.claimLeadership();
+    // A window opened in view syncs itself, rather than waiting on one out
+    // of sight (see claimLeadership).
+    this.claimLeadership(inView());
     this.attachWindowHooks();
     this.unwatchOutbox = onOutboxChanged(() => this.kick(250));
     // Edits of a locked note refused while the vault was closed go once it
@@ -176,6 +189,9 @@ export class SyncEngine {
     this.unwatchVault?.();
     this.unwatchVault = null;
     this.rebaseWaits.clear();
+    this.claim += 1;
+    this.stopWaiting?.abort();
+    this.stopWaiting = null;
     this.releaseLock?.();
     this.releaseLock = null;
     this.leader = false;
@@ -183,33 +199,93 @@ export class SyncEngine {
   }
 
   /**
-   * Only one tab syncs. The others still read and write the same local
+   * Only one window syncs. The others still read and write the same local
    * database, so their UI stays live; they just do not open a second
    * subscription or race on the outbox.
+   *
+   * The one in view takes it (`take`): as it opens, and each time it comes
+   * into view, from one out of sight. A window out of sight may not be
+   * running at all: the desktop app's are suspended by WebKit a few minutes
+   * after they are put away, the quick note's mostly so, and it is often the
+   * one that syncs, being made first. Then the window looked at showed
+   * nothing another device had changed (nor sent what was typed in it) until
+   * the quick note was brought out. The one it is taken from steps down, and
+   * waits in line to sync again once this one lets go.
    */
-  private claimLeadership(): void {
+  private claimLeadership(take = false): void {
     const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
     if (!locks) {
       this.leader = true;
       void this.run();
       return;
     }
-    void locks.request("memoca-sync", { mode: "exclusive" }, () => {
-      if (this.stopped) return Promise.resolve();
-      this.leader = true;
-      void this.run();
-      return new Promise<void>((resolve) => {
-        this.releaseLock = resolve;
+    const claim = ++this.claim;
+    // An ask already in line goes: this one replaces it.
+    this.stopWaiting?.abort();
+    // Stealing cannot be taken back, nor waited for with a signal.
+    const waiting = take ? null : new AbortController();
+    this.stopWaiting = waiting;
+    const options: LockOptions = waiting
+      ? { mode: "exclusive", signal: waiting.signal }
+      : { mode: "exclusive", steal: true };
+    locks
+      .request(LOCK_NAME, options, () => {
+        if (this.stopped || claim !== this.claim) return Promise.resolve();
+        if (this.stopWaiting === waiting) this.stopWaiting = null;
+        this.leader = true;
+        void this.run();
+        return new Promise<void>((resolve) => {
+          this.releaseLock = resolve;
+        });
+      })
+      .catch(() => {
+        // Taken back by this window (asked again, or stopped): nothing to do.
+        if (this.stopped || claim !== this.claim) return;
+        // Taken by another window that came into view: it syncs now.
+        this.stepDown();
+        this.claimLeadership();
       });
-    });
+  }
+
+  /** No longer the window that syncs: what it was doing as that stops. */
+  private stepDown(): void {
+    this.leader = false;
+    this.releaseLock?.();
+    this.releaseLock = null;
+    this.unwatch?.();
+    this.unwatch = null;
+    // What the subscription let go of still brings is not taken in.
+    this.watching += 1;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    this.again = false;
   }
 
   private onOnline = () => this.kick(0);
   private onVisibility = () => {
-    if (document.visibilityState === "hidden") void this.drain();
+    if (document.visibilityState === "hidden") void this.sendBeforeHidden();
+    else if (!this.leader && !this.stopped) this.claimLeadership(true);
     else this.kick(0);
   };
-  private onPageHide = () => void this.drain();
+  private onPageHide = () => void this.sendBeforeHidden();
+
+  /**
+   * What is typed, written and sent at once as the app is put away: a phone
+   * suspends it soon after, and anything still waiting goes only once it is
+   * opened again. Written first: sent alongside, the push could look at the
+   * outbox before the last words were in it.
+   */
+  private async sendBeforeHidden(): Promise<void> {
+    await flushAll().catch(() => {});
+    if (!this.leader || this.stopped) return;
+    if (this.draining) {
+      this.again = true;
+      return;
+    }
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+    await this.drain();
+  }
 
   private attachWindowHooks() {
     if (typeof window === "undefined") return;
@@ -245,7 +321,9 @@ export class SyncEngine {
   }
 
   private async resubscribe(): Promise<void> {
-    if (this.stopped) return;
+    // Not once another window syncs: a batch still being taken in asks for
+    // it again, as it ends.
+    if (this.stopped || !this.leader) return;
     this.unwatch?.();
     const since = await getMeta<number>(META.cursor, 0);
     this.since = since;
