@@ -306,18 +306,17 @@ describe("the quick note, saving", () => {
     expect(bodyOf("note-1")).toEqual(["一行目", "二行目"]);
   });
 
-  test("while a save is under way the text is not changed under it", async () => {
+  test("while a save is under way, another ⌘ + Enter is not another save", async () => {
     let made!: (noteId: string) => void;
     h.createNote.mockImplementation(() => new Promise((resolve) => (made = resolve)));
     await render();
     await type("保存中");
     await key({ key: "Enter", ctrlKey: true });
-    expect(field().readOnly).toBe(true);
     await key({ key: "Enter", ctrlKey: true });
     expect(h.createNote).toHaveBeenCalledOnce();
     await act(async () => made("note-1"));
     await settle();
-    expect(field().readOnly).toBe(false);
+    expect(status()).toContain("保存しました");
   });
 });
 
@@ -987,5 +986,43 @@ describe("the quick note as a page on a phone", () => {
     expect(field().style.paddingBottom).toContain("safe-area-inset-bottom");
     await move({ height: 420 });
     expect(field().style.paddingBottom).toBe("");
+  });
+});
+
+describe("the field holds the text, not React", () => {
+  test("what is in the field is not written over by a draw, and is what the draft takes", async () => {
+    await render();
+    await type("一");
+    await pause();
+    // Put into the field with no event reaching React, as a key lost under a load would.
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => setter.call(field(), "一二三"));
+    await settle();
+    await pause();
+    expect(field().value).toBe("一二三");
+    // The watchdog tells the app from the field, and the draft follows.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_100);
+    });
+    await pause();
+    expect((await draftOf(ME))?.text).toBe("一二三");
+  });
+
+  test("typed on while a save runs, the more is not marked saved", async () => {
+    let finish!: (id: string) => void;
+    h.createNote.mockImplementationOnce(() => new Promise<string>((resolve) => (finish = resolve)));
+    await render();
+    await type("一");
+    await key({ key: "Enter", ctrlKey: true });
+    await type("一二");
+    await act(async () => finish("note-1"));
+    await settle();
+    expect(status()).toContain("保存しました");
+    expect(bodyOf("note-1")).toEqual(["一"]);
+    expect(field().value).toBe("一二");
+    // Still something to save.
+    expect(button("保存").disabled).toBe(false);
+    await pause();
+    expect((await draftOf(ME))?.text).toBe("一二");
   });
 });

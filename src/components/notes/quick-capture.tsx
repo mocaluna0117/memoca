@@ -18,7 +18,7 @@ import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { newBuildOut } from "@/lib/build";
-import { startImeTrace } from "@/lib/debug/ime-trace";
+import { startImeTrace, traceIme } from "@/lib/debug/ime-trace";
 import { toast } from "sonner";
 import { t } from "@/lib/i18n/ja";
 import { useClientValue } from "@/lib/hooks/use-client-value";
@@ -50,6 +50,7 @@ import {
   tabName,
 } from "@/components/notes/quick-tabs";
 import { useQuickMode } from "@/lib/quick/mode";
+import { attachFieldWatchdog } from "@/lib/quick/field-watchdog";
 import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
@@ -450,6 +451,18 @@ function Capture({
 
   const show = (next: string) => {
     textRef.current = next;
+    // Into the field, where it is not there already (typed there, it is):
+    // the caret kept where it was, for text put under what is typed.
+    const element = field.current;
+    if (element && element.value !== next) {
+      const { selectionStart, selectionEnd } = element;
+      element.value = next;
+      try {
+        element.setSelectionRange(selectionStart, selectionEnd);
+      } catch {
+        // Not focused, or no selection to keep.
+      }
+    }
     setText(next);
     report();
   };
@@ -556,10 +569,25 @@ function Capture({
   }, [windowed]);
 
   const edit = (next: string) => {
+    // The draft first: whatever drawing it may throw, what was typed is kept.
+    draft.current?.update(next);
     show(next);
     setStatus(null);
-    draft.current?.update(next);
   };
+  const latestEdit = useRef(edit);
+  useLayoutEffect(() => {
+    latestEdit.current = edit;
+  });
+  // Over the field, for what it has been seen to do under a load (lib/quick/field-watchdog).
+  useEffect(() => {
+    const element = field.current;
+    if (!element) return;
+    return attachFieldWatchdog(element, {
+      told: () => textRef.current,
+      resync: (value) => latestEdit.current(value),
+      trace: traceIme,
+    });
+  }, []);
 
   const editImages = (next: QuickImage[]) => {
     showImages(next);
@@ -711,11 +739,14 @@ function Capture({
       const refused = refusals.current;
       await allReady(preparing.current);
       if (refusals.current !== refused) return;
-      const body = quickLines(textRef.current);
+      // What is saved: the text as it is now. Typed on while the save runs,
+      // the field holds more, which is not saved, and is not marked so.
+      const snapshot = textRef.current;
+      const body = quickLines(snapshot);
       const pictures = imagesRef.current;
       if (body.length === 0 && pictures.length === 0) return;
       // Saved already, as it is: nothing to write again.
-      if (!unsaved({ text: textRef.current, images: pictures, saved: savedRef.current })) return;
+      if (!unsaved({ text: snapshot, images: pictures, saved: savedRef.current })) return;
       setSaving(true);
       setStatus(null);
       try {
@@ -771,7 +802,7 @@ function Capture({
         // Kept as it is, as what it was saved as: the tab stays.
         const now: SavedAs = {
           noteId,
-          text: textRef.current,
+          text: snapshot,
           images: pictures.map((image) => image.key),
         };
         savedRef.current = now;
@@ -779,9 +810,15 @@ function Capture({
         uploaded.current = refs;
         draft.current?.images(pictures.map(keep));
         await draft.current?.flush(true);
-        await markSaved(userKey, tabId, noteId, textRef.current, pictures.map(keep)).catch(
+        await markSaved(userKey, tabId, noteId, snapshot, pictures.map(keep)).catch(
           () => undefined,
         );
+        // Typed on meanwhile: the draft holds that, over what was saved
+        // (written again whatever it last wrote: markSaved wrote in between).
+        if (textRef.current !== snapshot) {
+          draft.current?.update(textRef.current);
+          await draft.current?.flush(true);
+        }
         report();
         if (!windowed) {
           router.replace(`/app?${new URLSearchParams({ n: noteId })}`);
@@ -936,8 +973,11 @@ function Capture({
 
       <Textarea
         ref={field}
-        value={text}
-        readOnly={saving}
+        // What it starts with: from then on, the field holds the text (see
+        // `show`), not React. Drawn again with a value of React's, the field
+        // was seen, under a load, to lose what was typed between (each key
+        // then wrote over the character after the caret).
+        defaultValue={text}
         onChange={(event) => edit(event.target.value)}
         onPaste={(event) => {
           const files = [...event.clipboardData.files];

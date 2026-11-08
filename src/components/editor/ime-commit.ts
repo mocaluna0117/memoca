@@ -3,6 +3,10 @@ import type { Node } from "prosemirror-model";
 import { type EditorState, TextSelection, type Transaction } from "prosemirror-state";
 import { traceIme } from "@/lib/debug/ime-trace";
 
+/** A repair that finds the editor still composing waits this long, this many times. */
+const REPAIR_EVERY_MS = 50;
+const REPAIR_TRIES = 20;
+
 /** A line as far as this needs it. */
 type Line = { id: string; content?: unknown; children: unknown[] };
 
@@ -144,6 +148,8 @@ export const imeCommit = createExtension(({ editor }) => {
       let started: string | null = null;
       // The lines there when the composition started.
       let there = new Set<string>();
+      // Which commit's repair is the latest: an earlier one still waiting stands down.
+      let generation = 0;
       dom.addEventListener(
         "compositionstart",
         () => {
@@ -188,10 +194,29 @@ export const imeCommit = createExtension(({ editor }) => {
           composed = "";
           deleting = false;
           // Once ProseMirror has taken in the commit and finished composing.
-          setTimeout(() => {
+          // Still composing then (the next word begun already, by a fast
+          // typist, or ProseMirror slow to notice under a load): tried again
+          // a little later, a few times, rather than given up, which left
+          // the stray line as it was. Not once another commit has come: that
+          // one's repair sees to the lines as they are then.
+          const mine = ++generation;
+          const repair = (tries: number) => {
             const view = editor.prosemirrorView;
-            if (!view || view.composing) {
-              traceIme({ type: "ime:repair", result: view ? "skipped-composing" : "no-view" });
+            if (!view) {
+              traceIme({ type: "ime:repair", result: "no-view" });
+              return;
+            }
+            if (generation !== mine) {
+              traceIme({ type: "ime:repair", result: "superseded", tries });
+              return;
+            }
+            if (view.composing) {
+              if (tries < REPAIR_TRIES) {
+                traceIme({ type: "ime:repair", result: "retry", tries });
+                setTimeout(() => repair(tries + 1), REPAIR_EVERY_MS);
+              } else {
+                traceIme({ type: "ime:repair", result: "skipped-composing", tries });
+              }
               return;
             }
             const now = editor.getTextCursorPosition().block as Line;
@@ -222,7 +247,8 @@ export const imeCommit = createExtension(({ editor }) => {
               editor.removeBlocks([fix.drop]);
               editor.setTextCursorPosition(fix.keep, "end");
             });
-          });
+          };
+          setTimeout(() => repair(0));
         },
         { capture: true, signal },
       );
