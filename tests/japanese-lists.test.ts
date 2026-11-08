@@ -1,6 +1,6 @@
 import { BlockNoteEditor, type PartialBlock } from "@blocknote/core";
 import { EditorState } from "prosemirror-state";
-import { afterEach, describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { japaneseLists, listFromMarks } from "@/components/editor/japanese-lists";
 
 let unmount: (() => void) | null = null;
@@ -278,5 +278,39 @@ describe("lines written with ・, made a bullet list", () => {
     ]);
     toBullets(editor);
     expect(outline(editor)).toEqual(["bulletListItem:a", "bulletListItem:b", "  paragraph:c"]);
+  });
+});
+
+describe("what a key typed costs in a long note", () => {
+  test("reads the blocks where the change was, not every block", async () => {
+    const { Node } = await import("prosemirror-model");
+    const editor = editorOf(
+      Array.from({ length: 300 }, (_, i) => ({ type: "paragraph" as const, content: `${i} 行目` })),
+    );
+    const view = editor.prosemirrorView!;
+    const before = view.state;
+    const tr = before.tr.insertText("あ", 2);
+    const after = before.apply(tr);
+    const walked = vi.spyOn(Node.prototype, "descendants");
+    const visited = vi.spyOn(Node.prototype, "nodesBetween");
+    try {
+      expect(listFromMarks([tr], before, after)).toBeNull();
+      expect(walked).not.toHaveBeenCalled();
+      // One look, at the changed range: the whole document would be (0, size).
+      const [from, to] = visited.mock.calls[0]!;
+      expect(to - from).toBeLessThan(40);
+    } finally {
+      walked.mockRestore();
+      visited.mockRestore();
+    }
+  });
+
+  test("a line with a ・ far down the note, made a bullet, still loses it", () => {
+    const editor = editorOf([
+      ...Array.from({ length: 50 }, (_, i) => ({ type: "paragraph" as const, content: `${i}` })),
+      { type: "paragraph", content: "・項目" },
+    ]);
+    editor.updateBlock(editor.document.at(-1)!, { type: "bulletListItem" });
+    expect(outline(editor).at(-1)).toBe("bulletListItem:項目");
   });
 });

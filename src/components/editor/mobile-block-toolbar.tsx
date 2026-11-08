@@ -57,15 +57,23 @@ type BlockType =
  * block the cursor is in (a type, on all those selected).
  */
 export function MobileBlockToolbar() {
+  // Only with the keyboard up: what the bar follows (the blocks selected,
+  // with every change to the note) is not followed while it is not shown,
+  // which on a computer is always.
+  const inset = useKeyboardInset();
+  if (inset === 0) return null;
+  return <KeyboardBlockBar inset={inset} />;
+}
+
+function KeyboardBlockBar({ inset }: { inset: number }) {
   const editor = useBlockNoteEditor();
   const selected = useSelectedBlocks(editor);
-  const inset = useKeyboardInset();
   const openCrop = useOpenCrop();
 
   const block = selected.at(0);
   // Trimming acts on one image, so only when it is the only block selected.
   const cropTarget = useCropTarget(selected.length === 1 ? block : undefined, editor.isEditable);
-  if (!block || inset === 0) return null;
+  if (!block) return null;
 
   const currentType = block.type as BlockType;
   const currentLevel = (block.props as { level?: number } | undefined)?.level;

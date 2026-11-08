@@ -744,6 +744,9 @@ export const toggles = createExtension(({ editor }) => ({
       view: () => ({
         update(view, before) {
           if (view.state.doc.eq(before.doc)) return;
+          // No toggle open on the screen: nothing to keep open, and every
+          // block of the note need not be read for it with every key typed.
+          if (!view.dom.querySelector('.bn-toggle-wrapper[data-show-children="true"]')) return;
           const open = emptiedToggles(before.doc, view.state.doc).filter(
             (id) => wrapperOf(view, id)?.getAttribute("data-show-children") === "true",
           );

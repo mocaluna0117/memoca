@@ -160,19 +160,22 @@ export const stuckToggles = createExtension({
     let frame = 0;
     const update = () => {
       frame = 0;
-      const css = stackRules(openToggles(dom));
+      // None open: nothing kept at the top, and no measuring of lines.
+      const css = dom.querySelector(OPEN_TOGGLE) ? stackRules(openToggles(dom)) : "";
       if (sheet.textContent !== css) sheet.textContent = css;
     };
     const later = () => {
       if (!frame) frame = requestAnimationFrame(update);
     };
     // Opened or closed (by its ▼, the keys, or BlockNote's opening one given
-    // its first line), lines changed, or the note's width.
+    // its first line), lines added or taken, or the note's size (a line
+    // wrapping as it is typed in changes that, which the size observer sees:
+    // not every character typed, which would measure every open toggle
+    // again with each).
     const changes = new MutationObserver(later);
     changes.observe(dom, {
       subtree: true,
       childList: true,
-      characterData: true,
       attributes: true,
       attributeFilter: ["data-show-children"],
     });
@@ -201,6 +204,9 @@ export const stuckToggles = createExtension({
           }
           const element = found instanceof Element ? found : found.parentElement;
           if (!element || !view.dom.contains(element)) return false;
+          // Not inside an open toggle: nothing kept at the top over it, and
+          // where it is on the screen (which costs a layout) is not asked.
+          if (!element.closest(OPEN_TOGGLE)) return false;
           return uncover(element, view.coordsAtPos(head).top);
         },
       },

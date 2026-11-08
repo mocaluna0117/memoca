@@ -241,3 +241,22 @@ describe("updates of a note locked (or unlocked) since this device's copy", () =
     expect(await db().bodies.get("n1")).toMatchObject({ keyEpoch: 0, throughSeq: 2 });
   });
 });
+
+describe("which notes a batch named or moved", () => {
+  test("new ones, and those whose name or folder changed; not a row that says the same", async () => {
+    const rows = (...notes: Note[]) => batch({ notes: notes as never });
+    const first = await applyBatch(rows(note("n1", { title: "A" })));
+    expect(first.renamed).toEqual(["n1"]);
+    const same = await applyBatch(rows(note("n1", { title: "A", seq: 2 })));
+    expect(same.renamed).toEqual([]);
+    const stamped = { ...note("n1").ts, title: { t: 1, d: "x" } };
+    const named = await applyBatch(rows(note("n1", { title: "B", seq: 3, ts: stamped })));
+    expect(named.renamed).toEqual(["n1"]);
+    const moved = await applyBatch(
+      rows(note("n1", { title: "B", folderId: "f", seq: 4, ts: { ...stamped, place: { t: 2, d: "x" } } })),
+    );
+    expect(moved.renamed).toEqual(["n1"]);
+    const updates = await applyBatch(batch({ updates: [] }));
+    expect(updates.renamed).toEqual([]);
+  });
+});

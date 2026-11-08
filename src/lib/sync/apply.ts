@@ -27,6 +27,13 @@ export type ApplyResult = {
   /** Notes whose key epoch changed, so their local document must be rebuilt. */
   reload: string[];
   incoming: IncomingUpdate[];
+  /**
+   * Notes new here, or whose name or folder the batch changed: the only ones
+   * that can clash with another's name in a folder (lib/note-titles), which
+   * is settled after a batch. Not every batch: each push of this device's
+   * own edits comes back as one, with its note's row at most.
+   */
+  renamed: string[];
 };
 
 /**
@@ -126,6 +133,7 @@ const toFolder = (remote: RemoteFolder): Folder => ({ ...remote });
 export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
   const database = db();
   const needBodies = new Set<string>();
+  const renamed: string[] = [];
   const reload = new Set<string>();
   const incoming: IncomingUpdate[] = [];
   // A file locked elsewhere may have been fetched here while it was plain,
@@ -168,6 +176,9 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
         const local = await database.notes.get(remote.noteId);
         const merged = local ? mergeNote(local, remote) : toNote(remote);
         await database.notes.put(merged);
+        if (!local || local.title !== merged.title || local.folderId !== merged.folderId) {
+          renamed.push(remote.noteId);
+        }
 
         const body = await database.bodies.get(remote.noteId);
         if (!body || body.keyEpoch !== remote.keyEpoch) {
@@ -271,5 +282,5 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
   // Not inside the transaction: it would end it.
   if (filesLocked) await purgeMediaCache();
 
-  return { needBodies: [...needBodies], reload: [...reload], incoming };
+  return { needBodies: [...needBodies], reload: [...reload], incoming, renamed };
 }

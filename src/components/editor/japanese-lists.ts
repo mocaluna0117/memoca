@@ -77,6 +77,34 @@ const byInputRule = (tr: Transaction, state: EditorState) =>
   });
 
 /**
+ * Where the transactions changed the document, as positions in the
+ * document after them all: each step's range, mapped through the steps
+ * after it, and widened by a position either way, so that a change at a
+ * line's edge takes the line in.
+ */
+export function changedRanges(
+  transactions: readonly Transaction[],
+  size: number,
+): [number, number][] {
+  const ranges: [number, number][] = [];
+  transactions.forEach((tr, k) => {
+    tr.steps.forEach((step, i) => {
+      step.getMap().forEach((_oldStart, _oldEnd, newStart, newEnd) => {
+        const rest = tr.mapping.slice(i + 1);
+        let from = rest.map(newStart, -1);
+        let to = rest.map(newEnd, 1);
+        for (const later of transactions.slice(k + 1)) {
+          from = later.mapping.map(from, -1);
+          to = later.mapping.map(to, 1);
+        }
+        ranges.push([Math.max(0, from - 1), Math.min(size, to + 1)]);
+      });
+    });
+  });
+  return ranges;
+}
+
+/**
  * Bullet list items with lines written with a bullet by hand (・), as text
  * pasted from elsewhere often has, just made so (by the toolbar, a
  * shortcut or a menu) or just pasted: the bullets taken off, as the list
@@ -102,13 +130,20 @@ export function listFromMarks(
   // on purpose, and stays.
   const pasted = !fromMemoca && transactions.some((tr) => tr.getMeta("uiEvent") === "paste");
 
-  const found: { node: Node; pos: number }[] = [];
-  after.doc.descendants((node, pos) => {
-    if (node.type.name !== "blockContainer") return true;
-    const line = node.firstChild;
-    if (line?.type.name === "bulletListItem" && hasMarks(line)) found.push({ node, pos });
-    return true;
-  });
+  // Only where the change was: a note's every block, read with every key
+  // typed, was most of what a key cost in a long note.
+  const seen = new Map<string, { node: Node; pos: number }>();
+  for (const [from, to] of changedRanges(transactions, after.doc.content.size)) {
+    after.doc.nodesBetween(from, to, (node, pos) => {
+      if (node.type.name !== "blockContainer") return true;
+      const line = node.firstChild;
+      if (line?.type.name === "bulletListItem" && hasMarks(line)) {
+        seen.set(node.attrs.id as string, { node, pos });
+      }
+      return true;
+    });
+  }
+  const found = [...seen.values()];
   if (found.length === 0) return null;
   const was = new Map<string, Node>();
   const ids = new Set(found.map(({ node }) => node.attrs.id as string));

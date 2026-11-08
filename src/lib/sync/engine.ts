@@ -126,6 +126,8 @@ export class SyncEngine {
   /** Asked for while a push was under way: another follows it at once. */
   private again = false;
   private checkingGhosts = false;
+  /** Whether every note's name has been settled since this engine started (see receive). */
+  private settledTitles = false;
   private listeners = new Set<Listener>();
   private status: SyncStatus = {
     state: "idle",
@@ -392,7 +394,7 @@ export class SyncEngine {
     syncClock(batch.serverTime);
     this.set({ state: "syncing", catchingUp: !batch.complete });
 
-    const { needBodies, reload, incoming } = await applyBatch(batch);
+    const { needBodies, reload, incoming, renamed } = await applyBatch(batch);
 
     for (const update of incoming) {
       if (!update.iv) {
@@ -455,10 +457,16 @@ export class SyncEngine {
       void this.dropGhosts();
       // Names two devices gave notes of one folder at once, and those from
       // before names were held to being a folder's own: numbered, the same
-      // way on every device (lib/note-titles).
-      void import("./mutations")
-        .then(({ settleAllNoteTitles }) => settleAllNoteTitles())
-        .catch(() => undefined);
+      // way on every device (lib/note-titles). Once everything is in, and
+      // then only when a batch named or moved a note: every push of this
+      // device's own edits comes back as a batch, and settling read every
+      // note each time, about once a second while typing.
+      if (renamed.length > 0 || !this.settledTitles) {
+        this.settledTitles = true;
+        void import("./mutations")
+          .then(({ settleAllNoteTitles }) => settleAllNoteTitles())
+          .catch(() => undefined);
+      }
     }
   }
 
