@@ -1,12 +1,12 @@
 "use client";
 
-import { useSync } from "@/components/providers/sync-provider";
+import { useStorageUsage } from "@/components/providers/sync-provider";
 import { Progress } from "@/components/ui/progress";
 import { formatBytes } from "@/lib/bytes";
 import { t } from "@/lib/i18n/ja";
 
 export function QuotaBar() {
-  const { me } = useSync();
+  const me = useStorageUsage();
   if (!me) return null;
 
   const used = me.usedBytes + me.reservedBytes;

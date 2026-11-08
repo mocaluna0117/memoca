@@ -37,7 +37,8 @@ export function useRelockCopies({
   locked: boolean;
   /** The note can be edited. */
   enabled: boolean;
-  allowance: Allowance | null | undefined;
+  /** The storage figures at the moment asked (sync-provider's useAllowance). */
+  allowance: () => Allowance | null | undefined;
 }): void {
   const figures = useRef(allowance);
   useEffect(() => {
@@ -53,7 +54,7 @@ export function useRelockCopies({
     const pass = locked ? relockCopies : plainCopies;
     const run = () => {
       timer = null;
-      void pass(client, noteId, { allowance: figures.current })
+      void pass(client, noteId, { allowance: figures.current() ?? null })
         .then((outcome) => {
           if (!alive || outcome.tooLarge === 0 || warned.current.has(locked)) return;
           warned.current.add(locked);

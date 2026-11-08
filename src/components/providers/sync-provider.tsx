@@ -18,6 +18,7 @@ import { uuidv7 } from "uuidv7";
 import { api } from "@convex/_generated/api";
 import { vault } from "@/lib/crypto/vault";
 import { db, getMeta, setMeta } from "@/lib/db";
+import type { Allowance } from "@/lib/media/attachments";
 import { META, deviceId } from "@/lib/db/meta";
 import { flushAll } from "@/lib/sync/docs";
 import { SyncEngine, type SyncStatus } from "@/lib/sync/engine";
@@ -27,18 +28,41 @@ type ServerProfile = NonNullable<
   Exclude<ReturnType<typeof useQuery<typeof api.users.me>>, undefined>
 >;
 
+/**
+ * The account, without its storage figures: those change with every push
+ * (each edit sent is counted), and through `me` every reader of the account
+ * (the shell, the sidebar and every folder row, the editor) was drawn again
+ * with every flush of a note being typed in. They are read apart, by
+ * {@link useStorageUsage} where they are shown and {@link useAllowance}
+ * where a file is checked against them.
+ */
+export type Profile = Omit<ServerProfile, "usedBytes" | "reservedBytes">;
+/** The account's storage figures, as the quota bar shows them. */
+export type StorageUsage = Pick<ServerProfile, "quotaBytes" | "usedBytes" | "reservedBytes"> & {
+  /** As Allowance has them: a profile kept from before the video limit was reported has none. */
+  limits?: { maxImageBytes: number; maxVideoBytes?: number };
+};
+
 /** Result of provisioning, which only matters before an account row exists. */
 type Provision = "pending" | "created" | "closed" | "badInvite";
 
 type SyncContextValue = {
   engine: () => SyncEngine | null;
   /** The account, from the server when reachable and from disk when not. */
-  me: ServerProfile | null;
+  me: Profile | null;
   gate: "loading" | "ready" | "closed" | "badInvite";
   submitInvite: (code: string) => Promise<void>;
 };
 
 const SyncContext = createContext<SyncContextValue | null>(null);
+/** The storage figures apart (see Profile): only what shows them follows them. */
+const UsageContext = createContext<StorageUsage | null | undefined>(undefined);
+/**
+ * The storage figures as they are at the moment asked, by one function for
+ * the app's whole life: for a file checked as it arrives, with nothing
+ * drawn again as the figures move.
+ */
+const AllowanceContext = createContext<(() => Allowance | null) | null>(null);
 /**
  * The status apart from the rest: it changes with every flush of a note being
  * typed in, and only the badge and the lock repairs follow it. Through the
@@ -70,6 +94,20 @@ export function useSync(): SyncContextValue {
   const value = useContext(SyncContext);
   if (!value) throw new Error("useSync must be used inside SyncProvider");
   return value;
+}
+
+/** The account's storage figures, drawn again as they move; null before the account is known. */
+export function useStorageUsage(): StorageUsage | null {
+  const usage = useContext(UsageContext);
+  if (usage === undefined) throw new Error("useStorageUsage must be used inside SyncProvider");
+  return usage;
+}
+
+/** The storage figures at the moment asked (see AllowanceContext). */
+export function useAllowance(): () => Allowance | null {
+  const allowance = useContext(AllowanceContext);
+  if (!allowance) throw new Error("useAllowance must be used inside SyncProvider");
+  return allowance;
 }
 
 const serverStatus = () => IDLE;
@@ -169,6 +207,39 @@ export function SyncProvider({
   /** The device's data is this account's (or there is none): it may be shown. */
   const ours = me !== null && owner !== undefined && (owner === null || owner === me.userKey);
 
+  // The account apart from its storage figures, the same object for as long
+  // as it says the same (see Profile): by its text, as the server's answer is
+  // a new object with every push.
+  const profileKey = me === null ? null : JSON.stringify(withoutUsage(me));
+  const profile = useMemo<Profile | null>(
+    () => (profileKey === null ? null : (JSON.parse(profileKey) as Profile)),
+    [profileKey],
+  );
+  const quotaBytes = me?.quotaBytes;
+  const usedBytes = me?.usedBytes;
+  const reservedBytes = me?.reservedBytes;
+  const maxImageBytes = me?.limits?.maxImageBytes;
+  const maxVideoBytes = me?.limits?.maxVideoBytes;
+  const usage = useMemo<StorageUsage | null>(
+    () =>
+      quotaBytes === undefined || usedBytes === undefined || reservedBytes === undefined
+        ? null
+        : {
+            quotaBytes,
+            usedBytes,
+            reservedBytes,
+            ...(maxImageBytes === undefined
+              ? {}
+              : { limits: { maxImageBytes, ...(maxVideoBytes === undefined ? {} : { maxVideoBytes }) } }),
+          },
+    [quotaBytes, usedBytes, reservedBytes, maxImageBytes, maxVideoBytes],
+  );
+  const usageRef = useRef<StorageUsage | null>(usage);
+  useEffect(() => {
+    usageRef.current = usage;
+  }, [usage]);
+  const allowance = useCallback(() => usageRef.current, []);
+
   const missing = remote === null && cached === null;
   useEffect(() => {
     if (!missing) return;
@@ -240,17 +311,29 @@ export function SyncProvider({
           : "loading";
 
   const value = useMemo<SyncContextValue>(
-    () => ({ engine, me, gate, submitInvite }),
-    [engine, me, gate, submitInvite],
+    () => ({ engine, me: profile, gate, submitInvite }),
+    [engine, profile, gate, submitInvite],
   );
 
   return (
     <SyncContext.Provider value={value}>
-      <SyncEngineContext.Provider value={engine}>
-        <SyncStatusContext.Provider value={store}>{children}</SyncStatusContext.Provider>
-      </SyncEngineContext.Provider>
+      <UsageContext.Provider value={usage}>
+        <AllowanceContext.Provider value={allowance}>
+          <SyncEngineContext.Provider value={engine}>
+            <SyncStatusContext.Provider value={store}>{children}</SyncStatusContext.Provider>
+          </SyncEngineContext.Provider>
+        </AllowanceContext.Provider>
+      </UsageContext.Provider>
     </SyncContext.Provider>
   );
+}
+
+/** The account as the server reports it, less the storage figures (see Profile). */
+function withoutUsage(me: ServerProfile): Profile {
+  const { usedBytes: _used, reservedBytes: _reserved, ...rest } = me;
+  void _used;
+  void _reserved;
+  return rest;
 }
 
 /** Wipes the cached profile along with the rest of the device's data. */

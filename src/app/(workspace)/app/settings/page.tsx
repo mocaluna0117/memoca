@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { useClientValue, useMediaQuery } from "@/lib/hooks/use-client-value";
 import { SIDEBAR_MODES, type SidebarMode, useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
 import { api } from "@convex/_generated/api";
-import { useSync } from "@/components/providers/sync-provider";
+import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
@@ -67,6 +67,9 @@ function Section({
 export default function SettingsPage() {
   const router = useRouter();
   const { me } = useSync();
+  // The storage figures apart: they move with every push, and only this
+  // section is to follow them.
+  const usage = useStorageUsage();
   const { theme, setTheme } = useTheme();
   const updateSettings = useMutation(api.users.updateSettings);
   const [sidebarMode, setSidebarMode] = useSidebarMode();
@@ -195,7 +198,7 @@ export default function SettingsPage() {
         <Section title="保存容量">
           <p className="text-sm">
             {t.quota.used(
-              formatBytes((me?.usedBytes ?? 0) + (me?.reservedBytes ?? 0)),
+              formatBytes((usage?.usedBytes ?? 0) + (usage?.reservedBytes ?? 0)),
               formatBytes(me?.quotaBytes ?? 0),
             )}
           </p>
@@ -203,14 +206,18 @@ export default function SettingsPage() {
             画像は自動で縮小して保存されます。動画は 1 本あたり{" "}
             {formatBytes(me?.limits.maxVideoBytes ?? 0)} までです。
           </p>
-          {me ? (
+          {me && usage ? (
             <StorageBreakdown
               account={me.userKey}
-              live={{ quotaBytes: me.quotaBytes, usedBytes: me.usedBytes, reservedBytes: me.reservedBytes }}
+              live={{
+                quotaBytes: usage.quotaBytes,
+                usedBytes: usage.usedBytes,
+                reservedBytes: usage.reservedBytes,
+              }}
               admin={me.role === "admin"}
             />
           ) : null}
-          {me ? <ConvertImages allowance={me} /> : null}
+          {usage ? <ConvertImages allowance={usage} /> : null}
           {me?.role === "admin" ? <ImageDiagnostics maxImageBytes={me.limits.maxImageBytes} /> : null}
         </Section>
 

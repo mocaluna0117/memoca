@@ -40,7 +40,10 @@ vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: h.replace, push: h.push }),
   useSearchParams: () => h.params,
 }));
-vi.mock("@/components/providers/sync-provider", () => ({ useSync: () => ({ me: h.me }) }));
+vi.mock("@/components/providers/sync-provider", () => ({
+  useSync: () => ({ me: h.me }),
+  useStorageUsage: () => h.me,
+}));
 vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote }));
 vi.mock("@/lib/sync/docs", () => ({ acquireDoc: h.acquire, releaseDoc: h.release }));
 vi.mock("@/lib/build", () => ({ newBuildOut: h.newBuild }));

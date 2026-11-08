@@ -14,7 +14,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSync } from "@/components/providers/sync-provider";
+import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { newBuildOut } from "@/lib/build";
@@ -139,6 +139,9 @@ const composing = (event: { isComposing: boolean; keyCode: number }) =>
  */
 export function QuickCapture() {
   const { me } = useSync();
+  // The storage figures apart from the account (see sync-provider): a file
+  // added is checked against them as they are.
+  const usage = useStorageUsage();
   const params = useSearchParams();
   // Temporary, in the Mac desktop app: ⌘⌥⇧I starts the input record, and again copies it.
   useEffect(
@@ -171,7 +174,7 @@ export function QuickCapture() {
       key={me?.userKey ?? ""}
       userKey={me?.userKey ?? ""}
       inbox={me?.inboxFolderId ?? null}
-      allowance={me ?? null}
+      allowance={usage}
       shared={shared}
     />
   );

@@ -17,6 +17,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
+import { useCallback } from "react";
 import { useOpenQuickNote } from "@/components/notes/quick-entry";
 import { useSync } from "@/components/providers/sync-provider";
 import { FolderTree } from "@/components/folders/folder-tree";
@@ -74,6 +75,15 @@ export function Sidebar({
 }: Props) {
   const { me } = useSync();
   const pathname = usePathname();
+  // The same function from draw to draw: a new one would draw every folder
+  // row of the tree again each time the sidebar is drawn.
+  const selectFolder = useCallback(
+    (id: string | null) => {
+      onSelectFolder(id);
+      onNavigate?.();
+    },
+    [onSelectFolder, onNavigate],
+  );
   const openQuickNote = useOpenQuickNote();
   const { navigate } = useWorkspace();
   const [mode] = useSidebarMode();
@@ -243,10 +253,7 @@ export function Sidebar({
         <FolderTree
           explorer={mode === "explorer"}
           selectedFolderId={selectedFolderId}
-          onSelect={(id) => {
-            onSelectFolder(id);
-            onNavigate?.();
-          }}
+          onSelect={selectFolder}
           onCreated={onCreatedFolder}
           selectedNoteId={selectedNoteId}
           onOpenNote={onOpenNote}

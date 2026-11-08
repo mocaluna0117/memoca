@@ -23,7 +23,7 @@ import {
   useState,
 } from "react";
 import { toast } from "sonner";
-import { useSync } from "@/components/providers/sync-provider";
+import { useAllowance } from "@/components/providers/sync-provider";
 import { vault } from "@/lib/crypto/vault";
 import { db } from "@/lib/db";
 import {
@@ -103,7 +103,8 @@ export function ImageCrop({
   editable: boolean;
   children: ReactNode;
 }) {
-  const { me } = useSync();
+  // The storage figures at the moment the crop is applied (see sync-provider).
+  const allowance = useAllowance();
   // `locked`: the image is kept encrypted, so the dialog shows it decrypted.
   const [target, setTarget] = useState<(CropTarget & { locked: boolean }) | null>(null);
   const close = useCallback(() => setTarget(null), []);
@@ -193,7 +194,7 @@ export function ImageCrop({
       noteId,
       target,
       image,
-      me,
+      me: allowance(),
       alive: () => mounted.current,
     });
     switch (outcome.status) {

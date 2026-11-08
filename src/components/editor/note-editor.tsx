@@ -26,7 +26,7 @@ import { useTheme } from "next-themes";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type * as Y from "yjs";
-import { useSync } from "@/components/providers/sync-provider";
+import { useAllowance, useSync } from "@/components/providers/sync-provider";
 import {
   ImageCrop,
   MemocaFormattingToolbar,
@@ -234,12 +234,15 @@ function EditorSurface({
 }) {
   const client = useConvex();
   const { me } = useSync();
+  // The storage figures at the moment a file arrives: not read through `me`,
+  // which would draw the editor again with every push while typing.
+  const allowance = useAllowance();
   const { resolvedTheme } = useTheme();
   // Read when a file arrives: BlockNote keeps the uploadFile it was made with,
   // so what that sees has to be looked up, not remembered.
-  const latest = useRef({ me, locked });
+  const latest = useRef({ locked });
   useEffect(() => {
-    latest.current = { me, locked };
+    latest.current = { locked };
   }, [me, locked]);
   const editorRef = useRef<BlockNoteEditor | null>(null);
   // A link clicked in a note: one to a note opens it here, any other apart
@@ -265,7 +268,8 @@ function EditorSurface({
 
   const uploadFile = useCallback(
     async (file: File, blockId?: string) => {
-      const { me: figures, locked: lockedNow } = latest.current;
+      const { locked: lockedNow } = latest.current;
+      const figures = allowance();
       // An image is shown at once, from the file itself, while it is made
       // smaller and staged; the block is drawn again with the staged file.
       const release = showUploadPreview(editorRef.current, blockId, file);
@@ -284,7 +288,7 @@ function EditorSurface({
         release();
       }
     },
-    [noteId],
+    [noteId, allowance],
   );
 
   const resolveFileUrl = useCallback(
@@ -385,7 +389,7 @@ function EditorSurface({
   useEffect(() => {
     editorRef.current = plain;
   }, [plain]);
-  useRelockCopies({ client, noteId, editor: plain, locked, enabled: !readOnly, allowance: me });
+  useRelockCopies({ client, noteId, editor: plain, locked, enabled: !readOnly, allowance });
   const loadImage = useCallback(
     async (url: string) => {
       const id = idFromRef(url);
