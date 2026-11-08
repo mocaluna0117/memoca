@@ -78,6 +78,10 @@ const SyncStatusContext = createContext<StatusStore | null>(null);
  */
 const SyncEngineContext = createContext<(() => SyncEngine | null) | null>(null);
 
+/** How often making the account is asked again when the server could not answer, and after how long (times the try). */
+const PROVISION_TRIES = 6;
+const PROVISION_RETRY_MS = 2_000;
+
 const IDLE: SyncStatus = {
   state: "idle",
   pending: 0,
@@ -244,12 +248,23 @@ export function SyncProvider({
   useEffect(() => {
     if (!missing) return;
     let cancelled = false;
-    void (async () => {
-      const result = await provisionAccount(client);
-      if (!cancelled) setProvision(result);
-    })();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // Asked again a little later, a few times, when the server could not
+    // answer (busy, the connection dropped): failed once, the account was
+    // never made, and the app stayed on its loading screen until reloaded.
+    const ask = async (tries: number) => {
+      try {
+        const result = await provisionAccount(client);
+        if (!cancelled) setProvision(result);
+      } catch {
+        if (cancelled || tries >= PROVISION_TRIES) return;
+        timer = setTimeout(() => void ask(tries + 1), PROVISION_RETRY_MS * tries);
+      }
+    };
+    void ask(1);
     return () => {
       cancelled = true;
+      if (timer) clearTimeout(timer);
     };
   }, [missing, client]);
 

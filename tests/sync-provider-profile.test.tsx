@@ -24,13 +24,17 @@ const h = vi.hoisted(() => ({
 
 // One client for the app's whole life, as the real one is: a new one each
 // draw would make the context's value anew (submitInvite is made from it).
-const client = {};
+const client = { mutation: vi.fn() };
 vi.mock("convex/react", () => ({
   useConvex: () => client,
   useQuery: () => h.remote,
 }));
 vi.mock("dexie-react-hooks", () => ({
   useLiveQuery: () => ({ profile: null, owner: "u1" }),
+}));
+vi.mock("@/lib/db/meta", async (original) => ({
+  ...(await original<typeof import("@/lib/db/meta")>()),
+  deviceId: async () => "device-1",
 }));
 vi.mock("next/navigation", () => ({ usePathname: () => "/app" }));
 vi.mock("@/lib/sync/engine", () => ({
@@ -131,4 +135,26 @@ test("a change to the account itself (its name, say) reaches its readers", async
   await draw();
   expect(renders.me - drawnMe).toBe(1);
   expect(seen.me).toMatchObject({ name: "New" });
+});
+
+test("an account the server could not make at first is asked for again, not left loading", async () => {
+  vi.useFakeTimers();
+  try {
+    h.remote = null as unknown as Record<string, unknown>;
+    client.mutation.mockReset();
+    client.mutation
+      .mockRejectedValueOnce(new Error("Function execution timed out"))
+      .mockResolvedValueOnce({ status: "created" });
+    await draw();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(client.mutation).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_100);
+    });
+    expect(client.mutation).toHaveBeenCalledTimes(2);
+  } finally {
+    vi.useRealTimers();
+  }
 });
