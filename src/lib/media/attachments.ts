@@ -10,6 +10,7 @@ import { VaultLockedError, vault } from "@/lib/crypto/vault";
 import { type PendingUpload, db } from "@/lib/db";
 import type { Attachment } from "@/lib/types";
 import { enqueue } from "@/lib/sync/outbox";
+import { copiedBlob } from "./blob-copy";
 import { type PreparedImage, UnsupportedImageError, categoryOf, prepareImage } from "./compress";
 import { purgeMediaCache } from "./media-cache";
 import { shownType } from "./shown-type";
@@ -23,22 +24,6 @@ const objectUrls = new Map<string, string>();
 /** Bumped when the vault closes, so a decryption still running is dropped. */
 let generation = 0;
 let watching = false;
-
-/**
- * A file read from the device, copied into memory: what a row is written
- * with, and what a URL is made from while its row may still be written.
- *
- * WebKit (the Mac desktop app, Safari) keeps a file in IndexedDB on disk, and
- * the blob a row is read as points at that file. Once the app has started
- * anew, writing a row again with such a blob loses the file: the row then
- * holds a file that is gone (NotFoundError), and so does every blob and URL
- * read from it before. Images pasted on the desktop app showed "?" after a
- * reload, their cached copy lost by the write that noted their use. A row is
- * therefore never written with a blob read from one, only with a copy.
- */
-async function inMemory(blob: Blob): Promise<Blob> {
-  return new Blob([await blob.arrayBuffer()], { type: blob.type });
-}
 
 /** Whether a file read from the device is still there: WebKit may have lost it (see {@link inMemory}). */
 async function readable(blob: Blob): Promise<boolean> {
@@ -54,7 +39,7 @@ async function readable(blob: Blob): Promise<boolean> {
 }
 
 /** A file read from the device, as a copy in memory where it can be read (see {@link inMemory}). */
-const copied = (blob: Blob) => inMemory(blob).catch(() => blob);
+const copied = copiedBlob;
 
 /**
  * Changes a waiting upload's fields, its file written again as a copy (see

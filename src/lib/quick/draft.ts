@@ -4,6 +4,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { uuidv7 } from "uuidv7";
 import { db, getMeta, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
+import { copiedBlob } from "@/lib/media/blob-copy";
 
 /**
  * What was being written in one of the quick note's tabs, kept on this device
@@ -66,10 +67,27 @@ export const DRAFT_DELAY_MS = 300;
 /** Where a tab's draft is kept. */
 const draftKey = (tabId: string) => `${META.quickDraft}:${tabId}`;
 
-/** The draft this account left in a tab on this device, if any. */
-export async function loadDraft(userKey: string, tabId: string): Promise<QuickDraft | null> {
+/** The draft as stored, its images' files as read from the device (see {@link loadDraft}). */
+async function readDraft(userKey: string, tabId: string): Promise<QuickDraft | null> {
   const draft = await getMeta<QuickDraft | null>(draftKey(tabId), null);
   return draft && draft.userKey === userKey ? draft : null;
+}
+
+/**
+ * The draft this account left in a tab on this device, if any: its images'
+ * files as copies in memory. Read from the device, a file's blob points at
+ * what is stored there, and WebKit loses the file when a row is written
+ * again with such a blob after the app has started anew (lib/media/blob-copy),
+ * which the draft is, as it is read and as it is typed in: an image added to
+ * the quick note was gone once the desktop app had been restarted.
+ */
+export async function loadDraft(userKey: string, tabId: string): Promise<QuickDraft | null> {
+  const draft = await readDraft(userKey, tabId);
+  if (!draft?.images?.length) return draft;
+  const images = await Promise.all(
+    draft.images.map(async (image) => ({ ...image, blob: await copiedBlob(image.blob) })),
+  );
+  return { ...draft, images };
 }
 
 /**
@@ -97,7 +115,8 @@ async function writeDraft(
   tabId: string,
 ): Promise<void> {
   if (text.trim() === "" && images.length === 0) return clearDraft(userKey, tabId);
-  const kept = await loadDraft(userKey, tabId);
+  // Only what it was saved as is wanted of it: not its images, copied.
+  const kept = await readDraft(userKey, tabId);
   await setMeta(draftKey(tabId), {
     text,
     images,

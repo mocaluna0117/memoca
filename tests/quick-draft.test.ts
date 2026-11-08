@@ -42,6 +42,31 @@ afterEach(async () => {
 });
 
 describe("the quick note's draft", () => {
+  test("gives its images back as copies, not as the files read from the device", async () => {
+    // What a row's blob is in WebKit: a handle on the stored file, which a
+    // write of the row with it, after a restart, loses.
+    const stored = {
+      size: 3,
+      type: "image/webp",
+      arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer,
+    } as unknown as Blob;
+    // As the row comes back from the device (a blob is not cloned into fake-indexeddb).
+    vi.spyOn(db().meta, "get").mockResolvedValueOnce({
+      key: KEY,
+      value: {
+        text: "写真",
+        images: [{ key: "k1", name: "a.webp", blob: stored, mime: "image/webp", width: 1, height: 1 }],
+        updatedAt: 0,
+        userKey: ME,
+      },
+    });
+    const draft = (await loadDraft(ME, TAB))!;
+    const image = draft.images![0]!;
+    expect(image.blob).not.toBe(stored);
+    expect(image.blob).toBeInstanceOf(Blob);
+    expect(new Uint8Array(await image.blob.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]));
+  });
+
   test("is written once typing pauses, not at every key", async () => {
     keeper.update("買");
     await vi.advanceTimersByTimeAsync(DRAFT_DELAY_MS - 50);
