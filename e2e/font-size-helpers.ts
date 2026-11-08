@@ -21,7 +21,11 @@ export async function makeTextLarger(page: Page) {
   await expect(sized).toHaveCSS("font-size", "20px");
 
   await waitForSynced(page);
-  await page.reload();
+  // Not until "load": in Playwright's WebKit, once the service worker is in
+  // place, the page's manifest request after a reload never ends, and the
+  // load event waits on it (2026-11-08, see docs/QUALITY-PASS-2026-11.md).
+  // The text below is waited for on its own.
+  await page.reload({ waitUntil: "domcontentloaded" });
   await expect(editor(page).locator('[data-style-type="fontSize"]')).toHaveText("大きい", {
     timeout: 20_000,
   });
