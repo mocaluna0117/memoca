@@ -12,32 +12,17 @@ import {
   hasTransparency,
   mayHideTransparency,
 } from "./crop";
+import { QUALITY_STEP, UPLOADABLE_IMAGE_TYPES, mustFit, uploadable, writePlan } from "./prepare-plan";
 import {
   type WorkerReport,
   canvasWritesWebp,
   encodeWebp,
+  prepareInWorker,
   prestartWebpEncoder,
   webpWorkerAvailable,
 } from "./webp-encoder";
 
-/**
- * For an image still over the limit for one image: smaller long edges, each
- * written a step lower in quality, tried in turn after its kind's own size.
- * Only those smaller than that size, and at most two: a screenshot kept at
- * its own size is tried next at 2048, as a photo would have been.
- */
-const SHRINK_EDGES = [2048, 1600, 1280];
-/** How much lower the quality is at each of those steps. */
-const QUALITY_STEP = 0.1;
-
-/** The image types the server takes: an image has to end up as one of these. */
-export const UPLOADABLE_IMAGE_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-  "image/gif",
-  "image/avif",
-] as const;
+export { UPLOADABLE_IMAGE_TYPES };
 
 /**
  * An image this browser cannot read, in a format the server does not take
@@ -56,9 +41,6 @@ export class UnsupportedImageError extends Error {
   }
 }
 
-/** Whether the server takes an image of this type as it is. */
-const uploadable = (type: string) => (UPLOADABLE_IMAGE_TYPES as readonly string[]).includes(type);
-
 /**
  * One image written while preparing an upload, as the diagnostics in Settings
  * show it: at what size, by what, as what, how large, and how long it took.
@@ -66,7 +48,7 @@ const uploadable = (type: string) => (UPLOADABLE_IMAGE_TYPES as readonly string[
 export type WriteTrace = {
   width: number;
   height: number;
-  by: "canvas" | "worker" | "fallback";
+  by: "canvas" | "worker" | "worker-canvas" | "worker-wasm" | "fallback";
   type: string;
   bytes: number;
   /** Drawing the image at that size, before writing it. */
@@ -135,6 +117,24 @@ export async function prepareImage(
     return { blob: file, mime: file.type, width: 0, height: 0 };
   }
 
+  // Off the page's thread, where the worker can take it: read, judged,
+  // drawn and written there, with the page free to go on. Done here only
+  // where it cannot (an old browser, the worker stopped or too slow), as
+  // every image was before.
+  const prepared = await prepareInWorker(file, { maxBytes: opts.maxBytes, trial: opts.trial });
+  if (prepared) {
+    if ("unsupported" in prepared) {
+      if (!uploadable(file.type)) throw new UnsupportedImageError(file.type || file.name);
+      return { blob: file, mime: file.type, width: 0, height: 0 };
+    }
+    opts.onRead?.(prepared.read);
+    for (const write of prepared.writes) opts.onWrite?.(write);
+    if ("original" in prepared) {
+      return { blob: file, mime: file.type, width: prepared.width, height: prepared.height };
+    }
+    return prepared.prepared;
+  }
+
   // Where the canvas cannot write WebP, the worker is started now, and
   // loads while the image is read and drawn.
   prestartWebpEncoder();
@@ -156,25 +156,14 @@ export async function prepareImage(
   const over = (bytes: number) => opts.maxBytes !== undefined && bytes > opts.maxBytes;
   // Written again smaller only when what is written has to be used and does
   // not fit: the original is over the limit, or not a type the server takes.
-  const mustFit = over(file.size) || !uploadable(file.type);
-  const { fit, quality } = ENCODING[kind];
-  const own = fitSize(original, fit);
-  const smaller = SHRINK_EDGES.filter((edge) => edge < Math.max(own.width, own.height)).slice(0, 2);
-  const fits: Fit[] = [fit, ...smaller.map((maxEdge) => ({ maxEdge }))];
+  const fitting = mustFit(file, opts.maxBytes);
   let best: PreparedImage | null = null;
   try {
-    for (const [step, size] of fits.entries()) {
-      const written = await writeAt(
-        bitmap,
-        size,
-        file.type,
-        quality - step * QUALITY_STEP,
-        step,
-        opts,
-      );
+    for (const [step, { fit, quality }] of writePlan(original, kind).entries()) {
+      const written = await writeAt(bitmap, fit, file.type, quality, step, opts);
       if (!written) break;
       if (!best || written.blob.size < best.blob.size) best = written;
-      if (!mustFit || !over(best.blob.size)) break;
+      if (!fitting || !over(best.blob.size)) break;
     }
   } finally {
     bitmap.close();

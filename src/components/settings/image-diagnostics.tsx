@@ -7,7 +7,13 @@ import { FLAT_SHARE } from "@/lib/media/classify";
 import { type ReadTrace, type WriteTrace, prepareImage } from "@/lib/media/compress";
 import { WEBP_ASSET_VERSION, canvasWritesWebp, webpWorkerState } from "@/lib/media/webp-encoder";
 
-const BY = { canvas: "canvas", worker: "WebAssembly", fallback: "予備の形式" } as const;
+const BY = {
+  canvas: "canvas",
+  worker: "WebAssembly",
+  "worker-canvas": "worker の canvas",
+  "worker-wasm": "worker の WebAssembly",
+  fallback: "予備の形式",
+} as const;
 const KIND = { photo: "写真", screen: "スクショ・図" } as const;
 const ms = (value: number | undefined) => (value === undefined ? "―" : `${Math.round(value)} ms`);
 

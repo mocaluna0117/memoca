@@ -32,6 +32,8 @@ const WASM_URL = `/webp/${WEBP_ASSET_VERSION}/webp_enc.wasm`;
 
 /** Longest one image may take to encode, counted only while the page is in view. */
 const ENCODE_TIMEOUT_MS = 8_000;
+/** Longest preparing one image file (reading, drawing and writing it, up to three times) may take. */
+const PREPARE_TIMEOUT_MS = 30_000;
 /** Longest the encoder may take to download and start, likewise. */
 const LOAD_TIMEOUT_MS = 30_000;
 /** Failed encodings in a row after which the worker is not asked again for a while. */
@@ -57,9 +59,46 @@ export type WorkerReport = {
 };
 
 type Ready = { ready: true; loadMs: number } | { ready: false; error: string };
+/** What the worker says of an image file it prepared (see workers/webp-worker). */
+export type PreparedReply =
+  | { id: number; unsupported: true }
+  | {
+      id: number;
+      read: PreparedRead;
+      writes: PreparedWrite[];
+      original: true;
+      width: number;
+      height: number;
+    }
+  | {
+      id: number;
+      read: PreparedRead;
+      writes: PreparedWrite[];
+      prepared: { blob: Blob; mime: string; width: number; height: number };
+    };
+export type PreparedRead = {
+  width: number;
+  height: number;
+  ms: number;
+  kind: "photo" | "screen";
+  flat: number | null;
+  sampleMs: number;
+};
+export type PreparedWrite = {
+  width: number;
+  height: number;
+  by: "worker-canvas" | "worker-wasm" | "fallback";
+  type: string;
+  bytes: number;
+  drawMs: number;
+  ms: number;
+  pixelsMs?: number;
+  issue?: string;
+};
 type Reply =
   | { id: number; webp: ArrayBuffer; ms: number; heap: number | null }
-  | { id: number; error: string };
+  | { id: number; error: string }
+  | PreparedReply;
 
 type Running = {
   worker: Worker;
@@ -94,6 +133,19 @@ export function webpWorkerAvailable(): boolean {
     (failures < GIVE_UP_AFTER || Date.now() - failedAt >= RETRY_AFTER_MS) &&
     typeof Worker !== "undefined" &&
     typeof WebAssembly !== "undefined"
+  );
+}
+
+/**
+ * Whether an image file can be prepared in the worker here: it can run, and
+ * the browser gives workers a canvas and image decoding (every current one;
+ * not jsdom, where the page's own path is tested).
+ */
+export function workerPreparesImages(): boolean {
+  return (
+    webpWorkerAvailable() &&
+    typeof OffscreenCanvas !== "undefined" &&
+    typeof createImageBitmap !== "undefined"
   );
 }
 
@@ -275,7 +327,7 @@ async function encodeOnce(
   });
 
   if (running === encoder) idle = setTimeout(stopWorker, IDLE_MS);
-  if (!reply || "error" in reply) {
+  if (!reply || !("webp" in reply)) {
     if (!trial) {
       failures += 1;
       failedAt = Date.now();
@@ -290,7 +342,9 @@ async function encodeOnce(
         ? "timed out"
         : reply && "error" in reply
           ? reply.error
-          : "the encoder stopped",
+          : reply
+            ? "the encoder answered otherwise"
+            : "the encoder stopped",
     };
   }
   failures = 0;
@@ -304,6 +358,95 @@ async function encodeOnce(
 }
 
 /**
+ * Prepares an image file for upload in the worker (see workers/webp-worker):
+ * read, judged, drawn and written there, off the page's thread. Null when
+ * that cannot be done here, or the worker could not (stopped, took too
+ * long): the page then does it itself, as it always did. One image at a
+ * time, after any pixels being written. `trial`: a try from the diagnostics,
+ * whose failures do not count against the worker.
+ */
+export function prepareInWorker(
+  file: File,
+  opts: { maxBytes?: number; timeoutMs?: number; trial?: boolean } = {},
+): Promise<PreparedReply | null> {
+  if (!workerPreparesImages()) return Promise.resolve(null);
+  const run = queue.then(() =>
+    prepareOnce(file, opts.maxBytes, opts.timeoutMs ?? PREPARE_TIMEOUT_MS, opts.trial === true),
+  );
+  queue = run.catch(() => undefined);
+  return run;
+}
+
+async function prepareOnce(
+  file: File,
+  maxBytes: number | undefined,
+  timeoutMs: number,
+  trial: boolean,
+): Promise<PreparedReply | null> {
+  if (!webpWorkerAvailable()) return null;
+  if (idle) clearTimeout(idle);
+  idle = null;
+  const encoder = startWorker();
+  if (!encoder) {
+    loadBlocked = true;
+    return null;
+  }
+  const ready = await new Promise<Ready>((resolve) => {
+    const cancel = visibleTimeout(LOAD_TIMEOUT_MS, () =>
+      resolve({ ready: false, error: "the worker took too long to load" }),
+    );
+    void encoder.ready.then((answer) => {
+      cancel();
+      resolve(answer);
+    });
+  });
+  if (!ready.ready) {
+    loadBlocked = true;
+    stopWorker();
+    return null;
+  }
+  encoder.fresh = false;
+
+  const id = nextId++;
+  const reply = await new Promise<Reply | null>((resolve) => {
+    const cancel = visibleTimeout(timeoutMs, () => {
+      waiting.delete(id);
+      stopWorker();
+      resolve(null);
+    });
+    waiting.set(id, (answer) => {
+      cancel();
+      resolve(answer);
+    });
+    try {
+      encoder.worker.postMessage({
+        kind: "prepare",
+        id,
+        file,
+        type: file.type,
+        size: file.size,
+        ...(maxBytes === undefined ? {} : { maxBytes }),
+      });
+    } catch (error) {
+      cancel();
+      waiting.delete(id);
+      resolve({ id, error: String(error) });
+    }
+  });
+  if (running === encoder) idle = setTimeout(stopWorker, IDLE_MS);
+  if (!reply || "error" in reply || "webp" in reply) {
+    if (!trial) {
+      failures += 1;
+      failedAt = Date.now();
+    }
+    if (reply) stopWorker();
+    return null;
+  }
+  failures = 0;
+  return reply;
+}
+
+/**
  * Where the canvas cannot write WebP, fetches the encoder's files while
  * there is a network, so the service worker has them for the first image, an
  * image added offline included. Once a session.
@@ -312,11 +455,12 @@ let warmed = false;
 
 export async function warmWebpEncoder(): Promise<void> {
   if (warmed || typeof navigator === "undefined" || !navigator.onLine) return;
-  if (await canvasWritesWebp()) return;
   warmed = true;
-  await Promise.all(
-    [fetch(WORKER_URL), fetch(WASM_URL)].map((request) => request.catch(() => undefined)),
-  );
+  // The worker itself everywhere it prepares images; the encoder's
+  // WebAssembly only where the canvas cannot write WebP.
+  const wanted = [fetch(WORKER_URL)];
+  if (!(await canvasWritesWebp())) wanted.push(fetch(WASM_URL));
+  await Promise.all(wanted.map((request) => request.catch(() => undefined)));
 }
 
 /**

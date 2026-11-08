@@ -14,7 +14,13 @@ import { fileURLToPath } from "node:url";
 
 export function webpSourceHash(root) {
   const hash = createHash("sha256");
-  for (const file of ["src/workers/webp-worker.ts", "scripts/build-webp-worker.mjs"]) {
+  for (const file of [
+    "src/workers/webp-worker.ts",
+    "src/lib/media/prepare-plan.ts",
+    "src/lib/media/classify.ts",
+    "src/lib/media/crop.ts",
+    "scripts/build-webp-worker.mjs",
+  ]) {
     hash.update(readFileSync(join(root, file)));
   }
   hash.update(JSON.parse(readFileSync(join(root, "node_modules/@jsquash/webp/package.json"), "utf8")).version);
