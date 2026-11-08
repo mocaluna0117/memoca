@@ -11,6 +11,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Tip } from "@/components/notes/quick-tip";
 import { Button } from "@/components/ui/button";
 import { t } from "@/lib/i18n/ja";
 import { quickLines } from "@/lib/quick/text";
@@ -81,28 +82,31 @@ export function QuickTabs({
                   : "border-transparent text-muted-foreground hover:bg-background/60",
               )}
             >
-              <button
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                onClick={() => onShow(tab.id)}
-                className="min-w-0 truncate py-1.5 pl-2.5 pr-1 text-left outline-none focus-visible:underline"
-                title={name}
-              >
-                {name}
-              </button>
-              {tabs.length > 1 ? (
+              <Tip label={name}>
                 <button
                   type="button"
-                  aria-label={t.quick.closeTab(name)}
-                  onClick={() => onClose(tab.id)}
-                  className={cn(
-                    "mr-1 flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted",
-                    selected ? "opacity-70" : "opacity-0 group-hover:opacity-70 focus-visible:opacity-70 pointer-coarse:opacity-70",
-                  )}
+                  role="tab"
+                  aria-selected={selected}
+                  onClick={() => onShow(tab.id)}
+                  className="min-w-0 truncate py-1.5 pl-2.5 pr-1 text-left outline-none focus-visible:underline"
                 >
-                  <X className="size-3" aria-hidden />
+                  {name}
                 </button>
+              </Tip>
+              {tabs.length > 1 ? (
+                <Tip label={t.quick.closeTabTip}>
+                  <button
+                    type="button"
+                    aria-label={t.quick.closeTab(name)}
+                    onClick={() => onClose(tab.id)}
+                    className={cn(
+                      "mr-1 flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted",
+                      selected ? "opacity-70" : "opacity-0 group-hover:opacity-70 focus-visible:opacity-70 pointer-coarse:opacity-70",
+                    )}
+                  >
+                    <X className="size-3" aria-hidden />
+                  </button>
+                </Tip>
               ) : (
                 <span className="w-1.5" aria-hidden />
               )}
@@ -110,17 +114,18 @@ export function QuickTabs({
           );
         })}
       </div>
-      <Button
-        variant="ghost"
-        size="icon"
-        className="mb-0.5 size-7 shrink-0"
-        aria-label={t.quick.openTab}
-        title={t.quick.openTab}
-        disabled={!canOpen}
-        onClick={onOpen}
-      >
-        <Plus className="size-4" aria-hidden />
-      </Button>
+      <Tip label={t.quick.openTab}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="mb-0.5 size-7 shrink-0"
+          aria-label={t.quick.openTab}
+          disabled={!canOpen}
+          onClick={onOpen}
+        >
+          <Plus className="size-4" aria-hidden />
+        </Button>
+      </Tip>
     </div>
   );
 }

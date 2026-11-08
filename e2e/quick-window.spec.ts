@@ -82,6 +82,26 @@ test.describe("the quick note in a window of its own", () => {
   });
 });
 
+test.describe("the quick note's tooltips", () => {
+  test("show within a moment of the pointer resting, inside a narrow window", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "a pointer to rest");
+    await signUp(page);
+    await page.setViewportSize({ width: 380, height: 460 });
+    await page.goto("/quick?window=1");
+    await quickField(page).waitFor();
+    await page.getByRole("button", { name: "画像を追加" }).hover();
+    await expect(page.getByRole("tooltip", { name: "画像を追加" })).toBeVisible({ timeout: 1_000 });
+    // The rightmost: kept inside the window.
+    await page.getByRole("button", { name: "閉じる" }).hover();
+    const tip = page.getByRole("tooltip", { name: "閉じる（Esc）" });
+    await expect(tip).toBeVisible({ timeout: 1_000 });
+    const box = (await tip.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(380);
+    await page.screenshot({ path: testInfo.outputPath("tooltip.png") });
+  });
+});
+
 test.describe("the quick note's window on a Mac", () => {
   test.use({
     userAgent:

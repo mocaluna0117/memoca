@@ -26,6 +26,7 @@ import {
 } from "react";
 import * as Y from "yjs";
 import { FolderPicker } from "@/components/folders/folder-picker";
+import { QuickTips, Tip } from "@/components/notes/quick-tip";
 import { QuickEditor, type QuickEditorHandle } from "@/components/notes/quick-editor";
 import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
@@ -224,13 +225,15 @@ export function QuickCapture() {
   // last one's, nor anything typed while it was shown, is carried over. What
   // was shared is, being the one at the device's.
   return (
-    <Tabbed
-      key={me?.userKey ?? ""}
-      userKey={me?.userKey ?? ""}
-      inbox={me?.inboxFolderId ?? null}
-      allowance={usage}
-      shared={shared}
-    />
+    <QuickTips>
+      <Tabbed
+        key={me?.userKey ?? ""}
+        userKey={me?.userKey ?? ""}
+        inbox={me?.inboxFolderId ?? null}
+        allowance={usage}
+        shared={shared}
+      />
+    </QuickTips>
   );
 }
 
@@ -1096,25 +1099,28 @@ function Capture({
             {t.nav.quick}
           </h1>
           {canShowApp ? (
+            <Tip label={t.quick.openApp}>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void showApp()}
+                aria-label={t.quick.openApp}
+              >
+                <AppWindow className="size-4" aria-hidden />
+              </Button>
+            </Tip>
+          ) : null}
+          <Tip label={t.quick.addImage}>
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => void showApp()}
-              title={t.quick.openApp}
-              aria-label={t.quick.openApp}
+              onClick={() => picker.current?.click()}
+              disabled={saving}
+              aria-label={t.quick.addImage}
             >
-              <AppWindow className="size-4" aria-hidden />
+              <ImagePlus className="size-4" aria-hidden />
             </Button>
-          ) : null}
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => picker.current?.click()}
-            disabled={saving}
-            aria-label={t.quick.addImage}
-          >
-            <ImagePlus className="size-4" aria-hidden />
-          </Button>
+          </Tip>
           <input
             ref={picker}
             type="file"
@@ -1128,39 +1134,44 @@ function Capture({
             }}
           />
           {/* Where it is saved: the folder's name, to choose another. */}
-          <Button
-            variant="outline"
-            size="sm"
-            className="min-w-0 shrink gap-1 px-2 font-normal"
-            onClick={onPickFolder}
-            disabled={saving}
-            title={t.quick.folder(folder.name)}
-            aria-label={t.quick.folderLabel(folder.name)}
-          >
-            <FolderMark className="size-3.5 shrink-0 opacity-70" aria-hidden />
-            <span className="max-w-[8rem] truncate">{folder.name}</span>
-            <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden />
-          </Button>
-          <Button
-            size="sm"
-            className="shrink-0"
-            onClick={save}
-            disabled={saving || !changed}
-            aria-keyshortcuts={SAVE_KEYS}
-          >
-            <Check className="size-4" aria-hidden />
-            {t.action.save}
-          </Button>
-          {windowed ? (
+          <Tip label={t.quick.folder(folder.name)}>
             <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => void close()}
-              aria-label={t.action.close}
-              aria-keyshortcuts="Escape"
+              variant="outline"
+              size="sm"
+              className="min-w-0 shrink gap-1 px-2 font-normal"
+              onClick={onPickFolder}
+              disabled={saving}
+              aria-label={t.quick.folderLabel(folder.name)}
             >
-              <X className="size-4" aria-hidden />
+              <FolderMark className="size-3.5 shrink-0 opacity-70" aria-hidden />
+              <span className="max-w-[8rem] truncate">{folder.name}</span>
+              <ChevronDown className="size-3.5 shrink-0 opacity-60" aria-hidden />
             </Button>
+          </Tip>
+          <Tip label={t.quick.saveTip(modKey)}>
+            <Button
+              size="sm"
+              className="shrink-0"
+              onClick={save}
+              disabled={saving || !changed}
+              aria-keyshortcuts={SAVE_KEYS}
+            >
+              <Check className="size-4" aria-hidden />
+              {t.action.save}
+            </Button>
+          </Tip>
+          {windowed ? (
+            <Tip label={t.quick.closeTip}>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => void close()}
+                aria-label={t.action.close}
+                aria-keyshortcuts="Escape"
+              >
+                <X className="size-4" aria-hidden />
+              </Button>
+            </Tip>
           ) : null}
         </header>
         {strip}
