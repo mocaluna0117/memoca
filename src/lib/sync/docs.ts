@@ -8,6 +8,7 @@ import { vault } from "@/lib/crypto/vault";
 import { migrateOldQuickBody } from "@/lib/quick/body";
 import type { Note } from "@/lib/types";
 import { reportAlert } from "./alerts";
+import { clockOffset } from "./clock";
 import { enqueue } from "./outbox";
 import { onPeers, tellPeers } from "./peers";
 import { linkTargets } from "@/lib/note-links";
@@ -298,7 +299,9 @@ async function write(handle: Handle, merged: Uint8Array): Promise<"stored" | "ke
 
   if (!note.locked) {
     const preview = firstLine(text, 160);
-    const now = Date.now();
+    // On the clock as the server's answers have corrected it: compared with
+    // the server's own stamps, on other devices and in the lists here.
+    const now = Date.now() + clockOffset();
     if (preview !== note.preview) {
       // Sent on its own, never bundled with the title: this runs on every
       // meaningful body edit, and `note` was read before the flush, so
@@ -356,7 +359,7 @@ async function stamp(handle: Handle): Promise<void> {
   const note = await database.notes.get(handle.noteId);
   // Gone, or locked since: as a flush leaves it.
   if (!note || note.locked) return;
-  const now = Date.now();
+  const now = Date.now() + clockOffset();
   handle.stampedAt = now;
   await database.notes.update(handle.noteId, { updatedAt: now });
 }

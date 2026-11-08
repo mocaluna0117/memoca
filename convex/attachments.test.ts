@@ -1091,3 +1091,25 @@ describe("the account's storage", () => {
     expect(usage.largest.find((row) => row.attachmentId === "shared")).toMatchObject({ trashed: false });
   });
 });
+
+describe("the weekly look over stored files", () => {
+  test("goes on past the first page of files, a page at a time, and deletes every file nothing points at", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup();
+      await seedUser(t, AUTH_A);
+      // More files than one page (200) holds, none of them any row's.
+      await t.run(async (ctx) => {
+        for (let i = 0; i < 201; i += 1) await ctx.storage.store(new Blob([new Uint8Array([i])]));
+      });
+      // Old enough not to be an upload whose row is still to come.
+      vi.setSystemTime(Date.now() + 2 * 60 * 60 * 1000);
+      await t.mutation(internal.attachments.reconcileStorage, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      const left = await t.run(async (ctx) => (await ctx.db.system.query("_storage").collect()).length);
+      expect(left).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

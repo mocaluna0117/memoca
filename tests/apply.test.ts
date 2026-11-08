@@ -260,3 +260,39 @@ describe("which notes a batch named or moved", () => {
     expect(updates.renamed).toEqual([]);
   });
 });
+
+describe("an update from elsewhere", () => {
+  test("stamps the note with when it reached the server, not when it was taken in here", async () => {
+    await db().notes.put(note("n1", { updatedAt: 500 }));
+    const { renamed } = await applyBatch(
+      batch({
+        updates: [
+          { noteId: "n1", opId: "u1", deviceId: "else", keyEpoch: 0, payload: new ArrayBuffer(3), seq: 5, at: 1_000 },
+        ] as never,
+      }),
+    );
+    expect(renamed).toEqual([]);
+    expect((await db().notes.get("n1"))?.updatedAt).toBe(1_000);
+    // Never backwards: a later local stamp stays.
+    await db().notes.update("n1", { updatedAt: 5_000 });
+    await applyBatch(
+      batch({
+        updates: [
+          { noteId: "n1", opId: "u2", deviceId: "else", keyEpoch: 0, payload: new ArrayBuffer(3), seq: 6, at: 2_000 },
+        ] as never,
+      }),
+    );
+    expect((await db().notes.get("n1"))?.updatedAt).toBe(5_000);
+  });
+
+  test("this device's own, come back as a header with nothing of it here, has the body fetched", async () => {
+    await db().notes.put(note("n1"));
+    const { needBodies } = await applyBatch(
+      batch({
+        updates: [{ noteId: "n1", opId: "mine", deviceId: "me", keyEpoch: 0, seq: 7, at: 1 }] as never,
+      }),
+    );
+    expect(needBodies).toEqual(["n1"]);
+    expect(await db().updates.count()).toBe(0);
+  });
+});

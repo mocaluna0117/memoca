@@ -1,5 +1,6 @@
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
+import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
 import {
   ALLOWED_MIME,
@@ -446,7 +447,16 @@ export const deleteUnusedNow = mutation({
  * accounting drifting away from reality.
  */
 export const reconcileStorage = internalMutation({
-  args: { cursor: v.optional(v.string()) },
+  args: {
+    cursor: v.optional(v.string()),
+    /**
+     * Pages still to go after this one, each scheduled after the last: the
+     * cron starts it with none given, and it goes on to the end of storage
+     * (up to RECONCILE_PAGES pages a run), rather than looking at the first
+     * 200 files only, as it did.
+     */
+    pagesLeft: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
     const page = await ctx.db.system
       .query("_storage")
@@ -474,6 +484,16 @@ export const reconcileStorage = internalMutation({
       await ctx.storage.delete(file._id);
       removed += 1;
     }
+    const pagesLeft = (args.pagesLeft ?? RECONCILE_PAGES) - 1;
+    if (!page.isDone && pagesLeft > 0) {
+      await ctx.scheduler.runAfter(0, internal.attachments.reconcileStorage, {
+        cursor: page.continueCursor,
+        pagesLeft,
+      });
+    }
     return { removed, isDone: page.isDone, cursor: page.continueCursor };
   },
 });
+
+/** Pages of 200 stored files one reconcile run looks over, at most. */
+const RECONCILE_PAGES = 500;

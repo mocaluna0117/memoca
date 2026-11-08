@@ -56,7 +56,7 @@ const stamp = (t: number, d: string) => ({ t, d });
 type Caller = Pick<ReturnType<typeof setup>, "query" | "mutation">;
 
 /** Reads a pull batch, asserting the caller is recognised. */
-async function pull(as: Caller, args: { since: number; limit?: number }) {
+async function pull(as: Caller, args: { since: number; limit?: number; deviceId?: string }) {
   const batch = await as.query(api.sync.pull, args);
   expect(batch, "pull should be authenticated").not.toBeNull();
   return batch!;
@@ -238,6 +238,36 @@ describe("push", () => {
     expect(second.results[0]!.status).toBe("ok");
     const { updates } = await pull(as, { since: 0 });
     expect(updates).toHaveLength(1);
+  });
+
+  test("an update says when it reached the server, and comes back to its own device as a header", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await as.mutation(api.sync.push, { deviceId: DEVICE_1, ops: [noteOp("n", "note-1")] });
+    const before = Date.now();
+    await as.mutation(api.sync.push, {
+      deviceId: DEVICE_1,
+      ops: [
+        {
+          kind: "update",
+          opId: "u1",
+          noteId: "note-1",
+          keyEpoch: 0,
+          payload: new Uint8Array([1, 2, 3]).buffer,
+        },
+      ],
+    });
+    // To the device that sent it: no bytes (it has them), and when.
+    const own = (await pull(as, { since: 0, deviceId: DEVICE_1 })).updates[0]!;
+    expect(own.payload).toBeUndefined();
+    expect(own.at).toBeGreaterThanOrEqual(before);
+    expect(own.seq).toBeGreaterThan(0);
+    // To another device, and to one that does not say which it is: the bytes.
+    const other = (await pull(as, { since: 0, deviceId: DEVICE_2 })).updates[0]!;
+    expect(new Uint8Array(other.payload!)).toEqual(new Uint8Array([1, 2, 3]));
+    const older = (await pull(as, { since: 0 })).updates[0]!;
+    expect(older.payload).toBeDefined();
   });
 
   test("one rejected operation does not roll back the rest of the batch", async () => {

@@ -199,6 +199,10 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
           if (own.seq !== remote.seq || own.pushed !== 1) {
             await database.updates.update(own.localId!, { seq: remote.seq, pushed: 1 });
           }
+        } else if (remote.payload === undefined) {
+          // This device's own, by the server's record, yet not here (the
+          // local data was wiped since): its bytes come back with the body.
+          needBodies.add(remote.noteId);
         } else {
           const data = new Uint8Array(remote.payload);
           const iv = remote.iv ? new Uint8Array(remote.iv) : undefined;
@@ -213,7 +217,15 @@ export async function applyBatch(batch: PullBatch): Promise<ApplyResult> {
             createdAt: Date.now(),
           });
           incoming.push({ noteId: remote.noteId, keyEpoch: remote.keyEpoch, data, iv });
-          await database.notes.update(remote.noteId, { updatedAt: Date.now() });
+          // Changed when it reached the server (older servers do not say:
+          // now, then), not when this device took it in: every note would
+          // otherwise come up "たった今" on a device signing in.
+          const row = await database.notes.get(remote.noteId);
+          if (row) {
+            await database.notes.update(remote.noteId, {
+              updatedAt: Math.max(row.updatedAt, remote.at ?? Date.now()),
+            });
+          }
         }
 
         // How far the local document reaches has to advance for this device's

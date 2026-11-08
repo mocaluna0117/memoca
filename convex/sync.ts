@@ -29,7 +29,16 @@ import { getUser, requireUser } from "./lib/user";
  * round.
  */
 export const pull = query({
-  args: { since: v.number(), limit: v.optional(v.number()) },
+  args: {
+    since: v.number(),
+    limit: v.optional(v.number()),
+    /**
+     * The asking device: its own updates come back without their bytes (it
+     * has them), which halved what a device typing on downloaded. Older
+     * clients leave it out and get everything, as before.
+     */
+    deviceId: v.optional(v.string()),
+  },
   handler: async (ctx, args) => {
     // Returns null rather than throwing while the client is signed out or its
     // token has not attached yet. A subscription that throws is a subscription
@@ -118,9 +127,18 @@ export const pull = query({
         opId: r.opId,
         deviceId: r.deviceId,
         keyEpoch: r.keyEpoch,
-        payload: r.payload,
-        iv: r.iv,
+        // Its own, sent back as a header: the device has the bytes.
+        ...(args.deviceId !== undefined && r.deviceId === args.deviceId
+          ? {}
+          : { payload: r.payload, iv: r.iv }),
         seq: r.seq,
+        /**
+         * When it reached the server: what the note's place in a list on
+         * other devices goes by. Without it, a device stamped the note with
+         * the time it took the update in, and every note came up "たった今"
+         * on a device signing in.
+         */
+        at: r._creationTime,
       })),
       // Headers only. The payload is fetched through notes.getBodies, and only
       // by devices whose local copy is actually behind the snapshot.

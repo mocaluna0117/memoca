@@ -4,6 +4,7 @@ import type { ConvexReactClient } from "convex/react";
 import * as Y from "yjs";
 import { api } from "@convex/_generated/api";
 import { toArrayBuffer } from "@/lib/bytes";
+import { snapshotArg, uploadBytes } from "@/lib/sync/snapshot-upload";
 import { ctx } from "@/lib/crypto/context";
 import { open, seal } from "@/lib/crypto/primitives";
 import { vault } from "@/lib/crypto/vault";
@@ -30,38 +31,6 @@ export type LockOutcome =
   | { status: "ok"; copiesLeft?: number }
   | { status: "skipped"; reason: string }
   | { status: "failed"; reason: string };
-
-/**
- * The largest snapshot sent inside the mutation itself, matching the server's
- * SNAPSHOT_INLINE_LIMIT (Convex documents stop at 1 MiB). Anything larger is
- * uploaded to storage first, so a long note can be locked too.
- */
-const SNAPSHOT_INLINE_LIMIT = 900_000;
-
-async function snapshotArg(
-  client: ConvexReactClient,
-  bytes: Uint8Array,
-  iv?: Uint8Array,
-): Promise<{ payload?: ArrayBuffer; storageId?: string; size: number; iv?: ArrayBuffer }> {
-  const base = { size: bytes.byteLength, ...(iv ? { iv: toArrayBuffer(iv) } : {}) };
-  if (bytes.byteLength <= SNAPSHOT_INLINE_LIMIT) return { ...base, payload: toArrayBuffer(bytes) };
-  return { ...base, storageId: await uploadBytes(client, bytes, "application/octet-stream") };
-}
-
-async function uploadBytes(
-  client: ConvexReactClient,
-  bytes: Uint8Array,
-  contentType: string,
-): Promise<string> {
-  const uploadUrl = await client.mutation(api.notes.snapshotUploadUrl, {});
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: { "Content-Type": contentType },
-    body: new Blob([toArrayBuffer(bytes)]),
-  });
-  const { storageId } = (await response.json()) as { storageId: string };
-  return storageId;
-}
 
 /**
  * Turns a plaintext note into an encrypted one.

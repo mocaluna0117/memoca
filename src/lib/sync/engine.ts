@@ -91,6 +91,8 @@ export type SyncStatus = {
 
 /** Tries an op the server throws on gets before it is set aside. */
 const STUCK_AFTER = 3;
+/** How long after a compaction failed or was refused before the note is tried again. */
+const COMPACT_RETRY_MS = 60_000;
 /** Why the server would not take a file's commit when the file is to go up again from the start. */
 const UPLOAD_AGAIN = new Set(["reservationExpired", "missingUpload", "largerThanReserved", "storageInUse"]);
 /** How long an edit to a note the server does not have yet waits before it is sent again, and how often. */
@@ -140,6 +142,10 @@ export class SyncEngine {
     uploadRefused: false,
     saveFailed: false,
   };
+  /** A note being compacted, by its id: asked again meanwhile, the same attempt. */
+  private compacting = new Map<string, Promise<boolean>>();
+  /** When a note's compaction last failed or was refused, by its id. */
+  private compactFailedAt = new Map<string, number>();
   /** Notes whose refused edits could not be sent again after asking for their body. */
   private rebaseWaits = new Map<string, { epoch: number; tries: number; at: number }>();
 
@@ -362,7 +368,7 @@ export class SyncEngine {
     const since = await getMeta<number>(META.cursor, 0);
     this.since = since;
     const watching = ++this.watching;
-    const watch = this.client.watchQuery(api.sync.pull, { since });
+    const watch = this.client.watchQuery(api.sync.pull, { since, deviceId: this.device });
 
     const consume = () => {
       try {
@@ -1127,6 +1133,23 @@ export class SyncEngine {
    * is what keeps the deletion of those updates safe.
    */
   async compact(noteId: string): Promise<boolean> {
+    // One at a time for a note: every push's answer asks for it again until
+    // it is done, and each would have sent the whole note. One refused a
+    // moment ago is not tried again for a while.
+    const running = this.compacting.get(noteId);
+    if (running) return running;
+    if (Date.now() - (this.compactFailedAt.get(noteId) ?? 0) < COMPACT_RETRY_MS) return false;
+    const attempt = this.compactNow(noteId)
+      .then((done) => {
+        if (!done) this.compactFailedAt.set(noteId, Date.now());
+        return done;
+      })
+      .finally(() => this.compacting.delete(noteId));
+    this.compacting.set(noteId, attempt);
+    return attempt;
+  }
+
+  private async compactNow(noteId: string): Promise<boolean> {
     const database = db();
     const note = await database.notes.get(noteId);
     const body = await database.bodies.get(noteId);
@@ -1151,13 +1174,15 @@ export class SyncEngine {
       iv = sealed.iv;
     }
 
+    // Inline, or (a long note, past what one row holds) by the file it is
+    // uploaded as: sent inline whatever its size, the server refused every
+    // snapshot of a long note, which was never compacted then.
+    const { snapshotArg } = await import("./snapshot-upload");
     const result = await this.client.mutation(api.notes.compact, {
       noteId,
       keyEpoch: note.keyEpoch,
       coversThroughSeq: note.lastUpdateSeq,
-      payload: toArrayBuffer(payload),
-      size: payload.byteLength,
-      ...(iv ? { iv: toArrayBuffer(iv) } : {}),
+      ...(await snapshotArg(this.client, payload, iv)),
     });
     if (result.status !== "ok") return false;
 

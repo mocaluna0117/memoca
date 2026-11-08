@@ -146,6 +146,7 @@ const remote = (
   payload: toArrayBuffer(data),
   iv: iv ? toArrayBuffer(iv) : undefined,
   seq,
+  at: 0,
 });
 
 /** The note's body as the server hands it to a device that asks for it. */
