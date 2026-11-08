@@ -112,6 +112,8 @@ const FOLDER_KEYS_HINT =
  * folder (at depth 0), or, shown as an explorer shows files, in its folder.
  */
 type Row = { kind: "folder"; node: FolderNode } | { kind: "note"; note: Note; depth: number };
+/** A row of the tree, as {@link nested} groups them (for its tests). */
+export type TreeRow = Row;
 /** What is at the top level, in order, with the sort key that orders it. */
 type TopItem = ({ kind: "folder"; node: FolderNode } | { kind: "note"; note: Note }) & { key: string };
 
@@ -1203,27 +1205,30 @@ export function FolderTree({
 const FOLDER_ROW_REM = 2;
 
 /**
- * The rows, each open folder's with what is inside it in a group of its own,
+ * The rows, each folder's with what is inside it in a group of its own,
  * its row kept at the top of the sidebar while what is inside it is scrolled
  * past (under the rows of the folders it is in), and pushed off by the end
  * of it, as VS Code keeps a folder's: a long folder's notes scrolled, its
  * name is still in sight.
+ *
+ * A closed folder is grouped the same way, with nothing after its row: its
+ * row then stays the same element as it opens and closes, with the focus
+ * (or a rename under way) on it. Moved out of the group when closed, as it
+ * was, React made it anew, and the focus fell off it with each ← or →.
  */
-function nested(rows: Row[], render: (row: Row, index: number) => ReactNode): ReactNode[] {
+export function nested(rows: Row[], render: (row: Row, index: number) => ReactNode): ReactNode[] {
   const depthOf = (row: Row) => (row.kind === "folder" ? row.node.depth : row.depth);
   const range = (start: number, end: number): ReactNode[] => {
     const out: ReactNode[] = [];
     for (let i = start; i < end; ) {
       const row = rows[i]!;
-      let after = i + 1;
-      if (row.kind === "folder") {
-        while (after < end && depthOf(rows[after]!) > row.node.depth) after += 1;
-      }
-      if (row.kind === "note" || after === i + 1) {
+      if (row.kind === "note") {
         out.push(render(row, i));
-        i = after;
+        i += 1;
         continue;
       }
+      let after = i + 1;
+      while (after < end && depthOf(rows[after]!) > row.node.depth) after += 1;
       const { depth, folderId } = row.node;
       out.push(
         <div key={`inside/${folderId}`} data-folder-group={folderId} className="flex flex-col gap-0.5">
