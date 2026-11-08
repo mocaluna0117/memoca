@@ -9,6 +9,7 @@ import {
   PULL_PAGE_LIMIT,
   UPDATE_INLINE_LIMIT,
 } from "./lib/constants";
+import { uploadedSize } from "./lib/files";
 import { ZERO_STAMP, type Stamp, isFromTheFuture, isNewer } from "./lib/hlc";
 import { type Op, type OpResult, opV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
@@ -716,16 +717,20 @@ async function applyAttachmentCommit(
   if (row.deletedAt !== null) {
     // Its note was purged while it was on its way: the row is only a
     // tombstone now. The upload is not kept, and the room it held goes back.
-    if (await ctx.db.system.get(op.storageId)) await ctx.storage.delete(op.storageId);
+    // Unless another row holds the file already: then it is that row's.
+    if ((await uploadedSize(ctx, op.storageId)) !== null) await ctx.storage.delete(op.storageId);
     await ctx.db.patch(row._id, { status: "orphan", expiresAt: null, seq: seq.next() });
     session.reservedDelta -= row.reservedBytes;
     return reject(op.opId, "unknownAttachment");
   }
 
   // Trust the file, not the client: the declared size was only a reservation.
-  const meta = await ctx.db.system.get(op.storageId);
-  if (!meta) return reject(op.opId, "missingUpload");
-  const actual = meta.size;
+  // And a file another row (a file, a snapshot, a version, anyone's) holds
+  // already is not taken under this one: deleted under either, it would be
+  // gone from the other, and this one could read what is not its own.
+  if (!(await ctx.db.system.get(op.storageId))) return reject(op.opId, "missingUpload");
+  const actual = await uploadedSize(ctx, op.storageId);
+  if (actual === null) return reject(op.opId, "storageInUse");
 
   if (actual > row.reservedBytes) {
     await ctx.storage.delete(op.storageId);

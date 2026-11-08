@@ -357,6 +357,23 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
 
   for (const item of pending) {
     try {
+      if (item.storageId && item.commitOpId) {
+        // Up already: waits for the server to take its commit. The commit
+        // gone from the queue (the app closed between the two), queued again.
+        if (!(await database.outbox.get(item.commitOpId))) {
+          await enqueue({
+            opId: item.commitOpId,
+            kind: "attachment.commit",
+            entityId: item.attachmentId,
+            payload: {
+              kind: "attachment.commit",
+              attachmentId: item.attachmentId,
+              storageId: item.storageId,
+            },
+          });
+        }
+        continue;
+      }
       let body: Blob = item.blob;
       let wrappedKey: { ct: ArrayBuffer; iv: ArrayBuffer } | undefined;
       let contentIv: ArrayBuffer | undefined;
@@ -443,31 +460,41 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
         headers: { "Content-Type": body.type || "application/octet-stream" },
         body,
       });
-      const { storageId } = (await response.json()) as { storageId: string };
+      // Not taken (storage refused it, say): tried again with the next
+      // pass. Taken as if it were, a commit with no file behind it would be
+      // queued, which the server throws out, and the file with it.
+      if (!response.ok) throw new Error(`upload refused: ${response.status}`);
+      const { storageId } = (await response.json()) as { storageId?: unknown };
+      if (typeof storageId !== "string") throw new Error("upload answered without a file");
 
       // The commit goes through the outbox so a lost response replays safely.
-      await enqueue({
-        kind: "attachment.commit",
-        entityId: item.attachmentId,
-        payload: {
+      // Queued, and the row marked as up, together: the row stays (its file
+      // with it) until the server has taken the commit (commitAccepted), or
+      // let it go, when the file goes up again (uploadAgain). A copy of the
+      // file, not the blob the row was read as (see inMemory), read before
+      // the transaction, which a read of the file would end.
+      const commitOpId = uuidv7();
+      const blob = await copied(item.blob);
+      await database.transaction("rw", [database.pendingUploads, database.outbox], async () => {
+        await enqueue({
+          opId: commitOpId,
           kind: "attachment.commit",
-          attachmentId: item.attachmentId,
-          storageId,
-        },
-      });
-
-      // Only plain files are cached: a locked note's file must not sit on the
-      // device in plaintext. A copy, not the blob the waiting row was read as
-      // (see inMemory).
-      if (!locked) {
-        await database.blobs.put({
-          attachmentId: item.attachmentId,
-          blob: await copied(item.blob),
-          bytes: item.blob.size,
-          lastUsed: Date.now(),
+          entityId: item.attachmentId,
+          payload: {
+            kind: "attachment.commit",
+            attachmentId: item.attachmentId,
+            storageId,
+          },
         });
-      }
-      await database.pendingUploads.delete(item.attachmentId);
+        await database.pendingUploads.put({
+          ...item,
+          blob,
+          reserved: true,
+          storageId,
+          uploadedAt: Date.now(),
+          commitOpId,
+        });
+      });
     } catch (error) {
       if (error instanceof QuotaError) throw error;
       // Anything else (offline, transient failure) is retried next drain.
@@ -476,6 +503,54 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
   }
 
   await trimBlobCache();
+}
+
+/**
+ * The server has taken a file's commit: the file is its own now. The row
+ * that waited with the file goes; a plain file's copy is kept on the device,
+ * to show without fetching it again. Only plain files: a locked note's must
+ * not sit on the device in plaintext.
+ */
+export async function commitAccepted(attachmentId: string): Promise<void> {
+  const database = db();
+  const row = await database.pendingUploads.get(attachmentId);
+  if (!row) return;
+  const locked = row.locked || (await database.notes.get(row.noteId))?.locked === true;
+  if (!locked) {
+    await database.blobs.put({
+      attachmentId,
+      blob: await copied(row.blob),
+      bytes: row.blob.size,
+      lastUsed: Date.now(),
+    });
+  }
+  await database.pendingUploads.delete(attachmentId);
+  await trimBlobCache();
+}
+
+/**
+ * The server would not take a file's commit (its reservation run out, the
+ * file not found under the id, larger than reserved): sent up again from
+ * the start, by the next pass, from the copy the row kept.
+ */
+export async function uploadAgain(attachmentId: string): Promise<void> {
+  const database = db();
+  const row = await database.pendingUploads.get(attachmentId);
+  if (!row) return;
+  const again: PendingUpload = { ...row, reserved: false, blob: await copied(row.blob) };
+  delete again.storageId;
+  delete again.uploadedAt;
+  delete again.commitOpId;
+  await database.transaction("rw", [database.pendingUploads, database.outbox], async () => {
+    // Its commit, if still queued: a new one is queued once it is up again.
+    if (row.commitOpId) await database.outbox.delete(row.commitOpId);
+    await database.pendingUploads.put(again);
+  });
+}
+
+/** The server does not know the file at all (its note purged): nothing to send again. */
+export async function discardUploaded(attachmentId: string): Promise<void> {
+  await db().pendingUploads.delete(attachmentId);
 }
 
 async function trimBlobCache(): Promise<void> {

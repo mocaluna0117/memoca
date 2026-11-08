@@ -724,6 +724,43 @@ describe("a file purged with its note", () => {
     expect(after?.contentIv).toBeUndefined();
   });
 
+  test("a commit naming a file another row holds already is refused, and that file left alone", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushNote(as, "a");
+    const reserve = (attachmentId: string) =>
+      as.mutation(api.attachments.reserve, {
+        attachmentId,
+        noteId: "a",
+        bytes: 100,
+        mime: "image/webp",
+        name: `${attachmentId}.webp`,
+        width: 1,
+        height: 1,
+        locked: false,
+        category: "image",
+      });
+    await reserve("first");
+    const storageId = await t.run((ctx) => ctx.storage.store(new Blob([new Uint8Array(100)])));
+    const first = await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [{ kind: "attachment.commit", opId: "commit-first", attachmentId: "first", storageId }],
+    });
+    expect(first.results[0]).toMatchObject({ status: "ok" });
+
+    // The same file named for another: not taken, and the first's file stays.
+    await reserve("second");
+    const second = await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [{ kind: "attachment.commit", opId: "commit-second", attachmentId: "second", storageId }],
+    });
+    expect(second.results[0]).toMatchObject({ status: "rejected", reason: "storageInUse" });
+    expect(await file(t, "second")).toMatchObject({ status: "reserved" });
+    expect(await file(t, "first")).toMatchObject({ status: "committed", storageId });
+    expect(await t.run(async (ctx) => (await ctx.storage.get(storageId)) !== null)).toBe(true);
+  });
+
   test("one arriving after its note was purged is not kept, and the room it held goes back", async () => {
     const t = setup();
     const userId = await seedUser(t, AUTH_A);

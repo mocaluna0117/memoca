@@ -7,6 +7,7 @@ import { prepareVault, vault } from "@/lib/crypto/vault";
 import { db, resetLocalData } from "@/lib/db";
 import {
   AttachmentUnavailableError,
+  commitAccepted,
   discardStaged,
   fitsAllowance,
   flushUploads,
@@ -16,6 +17,7 @@ import {
   resolveAttachment,
   stageUpload,
   updatePending,
+  uploadAgain,
 } from "@/lib/media/attachments";
 import type { Note } from "@/lib/types";
 import { fakeConvex } from "./helpers/fake-convex";
@@ -437,7 +439,7 @@ describe("flushUploads", () => {
   test("a file for a note the server has not heard of yet waits for it, and then goes up", async () => {
     // A note made offline: its file goes up before the note itself does.
     await putNote("n1", false);
-    await stageUpload({
+    const ref = await stageUpload({
       noteId: "n1",
       file: new File([], "a.webp", { type: "image/webp" }),
       prepared: { blob: image(10), mime: "image/webp", width: 1, height: 1 },
@@ -463,7 +465,80 @@ describe("flushUploads", () => {
     } finally {
       vi.unstubAllGlobals();
     }
+    // Up, its commit queued: the row stays, with the file, until the server
+    // has taken the commit. Gone before then, a commit the server let go of
+    // (an hour on, say) left a note pointing at a file that never was.
+    const id = idFromRef(ref)!;
+    const row = (await db().pendingUploads.get(id))!;
+    expect(row.storageId).toBe("stored-1");
+    expect(row.commitOpId).toBeTypeOf("string");
+    expect(await db().outbox.where("kind").equals("attachment.commit").count()).toBe(1);
+    expect(await db().blobs.count()).toBe(0);
+    expect(await queuedBytes()).toBe(0);
+
+    await commitAccepted(id);
     expect(await db().pendingUploads.count()).toBe(0);
+    expect(await db().blobs.count()).toBe(1);
+  });
+
+  test("an upload the server answers with an error is tried again, not committed", async () => {
+    await putNote("n1", false);
+    const ref = await stageUpload({
+      noteId: "n1",
+      file: new File([], "a.webp", { type: "image/webp" }),
+      prepared: { blob: image(10), mime: "image/webp", width: 1, height: 1 },
+    });
+    const server = fakeConvex({
+      "attachments:reserve": () => ({ status: "ok", uploadUrl: "https://upload.test" }),
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response("boom", { status: 500 })),
+    );
+    try {
+      await flushUploads(server.client);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    const row = (await db().pendingUploads.get(idFromRef(ref)!))!;
+    expect(row.storageId).toBeUndefined();
+    expect(await db().outbox.where("kind").equals("attachment.commit").count()).toBe(0);
+  });
+
+  test("a commit the server would not take sends the file up again", async () => {
+    await putNote("n1", false);
+    const ref = await stageUpload({
+      noteId: "n1",
+      file: new File([], "a.webp", { type: "image/webp" }),
+      prepared: { blob: image(10), mime: "image/webp", width: 1, height: 1 },
+    });
+    const id = idFromRef(ref)!;
+    const server = fakeConvex({
+      "attachments:reserve": () => ({ status: "ok", uploadUrl: "https://upload.test" }),
+    });
+    let stored = 0;
+    const fetchSpy = vi.fn(async () => {
+      stored += 1;
+      return new Response(JSON.stringify({ storageId: `stored-${stored}` }));
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      await flushUploads(server.client);
+      expect((await db().pendingUploads.get(id))?.storageId).toBe("stored-1");
+      // Up already: another pass leaves it be.
+      await flushUploads(server.client);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      // The server let the reservation go: from the start.
+      await uploadAgain(id);
+      await flushUploads(server.client);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(server.callsTo("attachments:reserve")).toHaveLength(2);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const row = (await db().pendingUploads.get(id))!;
+    expect(row.storageId).toBe("stored-2");
+    expect(await db().outbox.where("kind").equals("attachment.commit").count()).toBe(1);
   });
 
   test("a file the server has reserved room for is no longer counted as waiting here", async () => {

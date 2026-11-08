@@ -76,6 +76,16 @@ export type PendingUpload = {
   attachmentId: string;
   noteId: string;
   blob: Blob;
+  /**
+   * Up on the server under this, its commit (commitOpId) queued: the row
+   * stays, file and all, until the server has taken the commit (see
+   * lib/media/attachments commitAccepted). Let go of before then, a commit
+   * refused (the reservation run out, an hour on) would leave the note
+   * pointing at a file that never was, with no copy to send again.
+   */
+  storageId?: string;
+  uploadedAt?: number;
+  commitOpId?: string;
   mime: string;
   name: string;
   width: number | null;

@@ -91,6 +91,8 @@ export type SyncStatus = {
 
 /** Tries an op the server throws on gets before it is set aside. */
 const STUCK_AFTER = 3;
+/** Why the server would not take a file's commit when the file is to go up again from the start. */
+const UPLOAD_AGAIN = new Set(["reservationExpired", "missingUpload", "largerThanReserved", "storageInUse"]);
 /** How long an edit to a note the server does not have yet waits before it is sent again, and how often. */
 const UNKNOWN_NOTE_RETRY_MS = 2_000;
 const UNKNOWN_NOTE_TRIES = 20;
@@ -721,8 +723,13 @@ export class SyncEngine {
           if (!result) continue;
           if (result.status === "ok") {
             await database.outbox.delete(entry.opId);
+            // The file is the server's now: the row that waited with it goes.
+            if (entry.kind === "attachment.commit") {
+              const { commitAccepted } = await import("@/lib/media/attachments");
+              await commitAccepted(entry.entityId);
+            }
           } else {
-            await this.handleRejection(entry.opId, entry.kind, result.reason);
+            await this.handleRejection(entry.opId, entry.kind, result.reason, entry.entityId);
           }
         }
 
@@ -894,8 +901,28 @@ export class SyncEngine {
    * too large for the server to store in one row is kept the same way, set
    * aside: dropped, the text it holds would be gone from here too.
    */
-  private async handleRejection(opId: string, kind: string, reason?: string): Promise<void> {
+  private async handleRejection(
+    opId: string,
+    kind: string,
+    reason?: string,
+    entityId?: string,
+  ): Promise<void> {
     const database = db();
+    if (kind === "attachment.commit") {
+      // The file's row waited with the file (lib/media/attachments): sent up
+      // again when the server let the upload go, given up when it does not
+      // know the file at all (its note purged).
+      await database.outbox.delete(opId);
+      if (!entityId) return;
+      const { uploadAgain, discardUploaded } = await import("@/lib/media/attachments");
+      if (reason && UPLOAD_AGAIN.has(reason)) {
+        await uploadAgain(entityId);
+        this.again = true;
+      } else {
+        await discardUploaded(entityId);
+      }
+      return;
+    }
     if (reason === "quotaExceeded" && kind === "update") {
       await database.outbox.update(opId, { retryAt: Date.now() + QUOTA_RETRY_MS });
       this.set({ quotaFull: true });
