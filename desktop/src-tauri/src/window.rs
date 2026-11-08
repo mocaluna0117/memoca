@@ -9,6 +9,7 @@ use crate::{activation, app_window, sign_in};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
+use tauri::utils::config::BackgroundThrottlingPolicy;
 use tauri::webview::NewWindowResponse;
 use tauri::{
     AppHandle, LogicalPosition, LogicalSize, Manager, Rect, WebviewUrl, WebviewWindow,
@@ -172,6 +173,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .skip_taskbar(true)
         .minimizable(false)
         .visible(false)
+        // Kept running, if slowed, while put away: WebKit otherwise suspends
+        // a hidden window's page a few minutes on, and this one, made first,
+        // is often the one that syncs (the site's lib/sync/engine.ts).
+        .background_throttling(BackgroundThrottlingPolicy::Throttle)
         .user_agent(&user_agent())
         .initialization_script(bridge())
         // The page's own: images dropped into the quick note.

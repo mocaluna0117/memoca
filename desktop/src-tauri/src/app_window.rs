@@ -19,6 +19,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use tauri::utils::config::BackgroundThrottlingPolicy;
 use tauri::webview::{DownloadEvent, NewWindowResponse};
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, WindowEvent};
 use tauri_plugin_opener::OpenerExt;
@@ -293,6 +294,9 @@ fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
         .center()
         // Shown once the plugin has put it where it was left.
         .visible(false)
+        // Kept running, if slowed, while put away, as the quick note's is
+        // (window.rs): changes from other devices still come in.
+        .background_throttling(BackgroundThrottlingPolicy::Throttle)
         .user_agent(&window::user_agent())
         .initialization_script(window::bridge())
         // The page's own: files dropped into a note, blocks dragged in it.
