@@ -127,8 +127,12 @@ export function useNotes(scope: NoteScope, enabled = true): Note[] {
  * them with the folders).
  */
 export function useTopLevelNotes(): Note[] {
+  // All of them read at once, and those in no folder kept: a note in none
+  // has no key in the folderId index to be found by (null is none), and
+  // read through `filter`, one by one, the whole table was walked a row at
+  // a time with every write to it, twice a second as a note was typed in.
   const notes = useSharedRows(
-    () => db().notes.filter((note) => note.folderId === null).toArray(),
+    async () => (await db().notes.toArray()).filter((note) => note.folderId === null),
     [],
     noteKey,
   );
@@ -142,11 +146,12 @@ export function useTopLevelNotes(): Note[] {
  */
 export function useNotesByFolder(enabled: boolean): ReadonlyMap<string, Note[]> {
   const notes = useSharedRows(
+    // Read at once, as useTopLevelNotes: not walked a row at a time.
     async () =>
       enabled
-        ? db()
-            .notes.filter((note) => note.folderId !== null && !note.purged && note.deletedAt === null)
-            .toArray()
+        ? (await db().notes.toArray()).filter(
+            (note) => note.folderId !== null && !note.purged && note.deletedAt === null,
+          )
         : [],
     [enabled],
     noteKey,

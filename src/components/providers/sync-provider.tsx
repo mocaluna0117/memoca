@@ -11,6 +11,7 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useLayoutEffect,
   useState,
   useSyncExternalStore,
 } from "react";
@@ -56,7 +57,35 @@ type SyncContextValue = {
 
 const SyncContext = createContext<SyncContextValue | null>(null);
 /** The storage figures apart (see Profile): only what shows them follows them. */
-const UsageContext = createContext<StorageUsage | null | undefined>(undefined);
+/**
+ * The storage figures, kept apart from React's context: they change with
+ * every push (usedBytes), and a context's value changed has React walk all
+ * of the app below it for those reading it, the editor and every note in
+ * the lists with it. Read through a store, only those reading them are told.
+ */
+type UsageStore = {
+  get: () => StorageUsage | null;
+  set: (next: StorageUsage | null) => void;
+  subscribe: (listener: () => void) => () => void;
+};
+function createUsageStore(initial: StorageUsage | null): UsageStore {
+  let current = initial;
+  const listeners = new Set<() => void>();
+  return {
+    get: () => current,
+    set: (next) => {
+      if (next === current) return;
+      current = next;
+      for (const listener of listeners) listener();
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+}
+const UsageContext = createContext<UsageStore | null>(null);
+const noUsage = () => null;
 /**
  * The storage figures as they are at the moment asked, by one function for
  * the app's whole life: for a file checked as it arrives, with nothing
@@ -103,8 +132,8 @@ export function useSync(): SyncContextValue {
 /** The account's storage figures, drawn again as they move; null before the account is known. */
 export function useStorageUsage(): StorageUsage | null {
   const usage = useContext(UsageContext);
-  if (usage === undefined) throw new Error("useStorageUsage must be used inside SyncProvider");
-  return usage;
+  if (!usage) throw new Error("useStorageUsage must be used inside SyncProvider");
+  return useSyncExternalStore(usage.subscribe, usage.get, noUsage);
 }
 
 /** The storage figures at the moment asked (see AllowanceContext). */
@@ -260,6 +289,9 @@ export function SyncProvider({
           },
     [quotaBytes, usedBytes, reservedBytes, maxImageBytes, maxVideoBytes],
   );
+  // The store, made once with the figures first known, and told of each change after.
+  const [usageStore] = useState(() => createUsageStore(usage));
+  useLayoutEffect(() => usageStore.set(usage), [usageStore, usage]);
   const usageRef = useRef<StorageUsage | null>(usage);
   useEffect(() => {
     usageRef.current = usage;
@@ -354,7 +386,7 @@ export function SyncProvider({
 
   return (
     <SyncContext.Provider value={value}>
-      <UsageContext.Provider value={usage}>
+      <UsageContext.Provider value={usageStore}>
         <AllowanceContext.Provider value={allowance}>
           <SyncEngineContext.Provider value={engine}>
             <SyncStatusContext.Provider value={store}>{children}</SyncStatusContext.Provider>

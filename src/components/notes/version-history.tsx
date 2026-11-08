@@ -1,6 +1,7 @@
 "use client";
 
 import { useConvex } from "convex/react";
+import { useSyncEngine } from "@/components/providers/sync-provider";
 import { History, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -81,6 +82,7 @@ type Shown = { versionId: string } & ({ doc: Y.Doc; text: string } | { error: st
 
 function VersionList({ noteId, onDone }: { noteId: string; onDone: () => void }) {
   const client = useConvex();
+  const engine = useSyncEngine();
   const [versions, setVersions] = useState<VersionRow[] | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const [picked, setPicked] = useState<VersionRow | null>(null);
@@ -92,14 +94,19 @@ function VersionList({ noteId, onDone }: { noteId: string; onDone: () => void })
 
   useEffect(() => {
     let current = true;
-    listVersions(client, noteId).then(
-      (rows) => current && setVersions(rows),
-      () => current && setFailed(unavailable(null)),
-    );
+    // A version read before the edits just made waits for them to pause
+    // (lib/sync/engine): uploaded first, so it is listed.
+    (engine()?.keepPendingVersions() ?? Promise.resolve())
+      .catch(() => undefined)
+      .then(() => listVersions(client, noteId))
+      .then(
+        (rows) => current && setVersions(rows),
+        () => current && setFailed(unavailable(null)),
+      );
     return () => {
       current = false;
     };
-  }, [client, noteId]);
+  }, [client, noteId, engine]);
 
   useEffect(() => {
     if (!picked) return;

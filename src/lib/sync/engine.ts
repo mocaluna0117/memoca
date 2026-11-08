@@ -38,6 +38,8 @@ const FAST_INTERVAL_MS = 1_000;
 const IDLE_INTERVAL_MS = 5_000;
 /** At most this often a push for edits just queued, while they keep coming (kickPaced). */
 export const PUSH_EVERY_MS = 1_200;
+/** A version of a note (lib/sync/versions) is uploaded once edits have paused this long. */
+export const VERSION_QUIET_MS = 2_000;
 /** How long an edit refused for want of room waits before it is sent again. */
 const QUOTA_RETRY_MS = 60_000;
 /**
@@ -137,6 +139,17 @@ export class SyncEngine {
    * goes in a quarter of a second, as it did.
    */
   private sentAt = 0;
+  /** When edits were last queued: what a version waits to be quiet after. */
+  private editedAt = 0;
+  /**
+   * Versions read before their edits went (stateBeforeEdits), to be uploaded
+   * once the edits pause: the upload holds the thread a moment (the state
+   * handed to fetch), between two keys otherwise.
+   */
+  private versionsDue: { noteId: string; state: Uint8Array }[] = [];
+  private versionTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The uploads of versions under way: a history listed waits for them. */
+  private versionUploads: Promise<void> = Promise.resolve();
   private checkingGhosts = false;
   /** Whether every note's name has been settled since this engine started (see receive). */
   private settledTitles = false;
@@ -227,6 +240,8 @@ export class SyncEngine {
   }
 
   stop(): void {
+    // Its versions read already are kept still, if the page lives on.
+    void this.keepVersionsNow();
     this.stopped = true;
     this.unwatch?.();
     this.unwatch = null;
@@ -318,11 +333,16 @@ export class SyncEngine {
 
   private onOnline = () => this.kick(0);
   private onVisibility = () => {
-    if (document.visibilityState === "hidden") void this.sendBeforeHidden();
-    else if (!this.leader && !this.stopped && !this.leaving) this.claimLeadership(true);
+    if (document.visibilityState === "hidden") {
+      void this.keepVersionsNow();
+      void this.sendBeforeHidden();
+      return;
+    }
+    if (!this.leader && !this.stopped && !this.leaving) this.claimLeadership(true);
     else this.kick(0);
   };
   private onPageHide = () => {
+    void this.keepVersionsNow();
     const leading = this.leader;
     // Let go at once, before anything is awaited (see letGo); what was just
     // typed is still sent, by this page as it goes, if it was the one that
@@ -386,12 +406,55 @@ export class SyncEngine {
    * Its edits still reach the other devices within a second or two.
    */
   private kickPaced(): void {
+    this.editedAt = Date.now();
     if (!this.leader || this.stopped) return;
     if (this.draining) {
       this.againPaced = true;
       return;
     }
     this.kick(Math.max(250, this.sentAt + PUSH_EVERY_MS - Date.now()));
+  }
+
+  /** A version read before its edits went, uploaded once edits pause (VERSION_QUIET_MS). */
+  private keepWhenQuiet(noteId: string, state: Uint8Array): void {
+    this.versionsDue.push({ noteId, state });
+    if (this.versionTimer) return;
+    const wait = () => Math.max(0, this.editedAt + VERSION_QUIET_MS - Date.now());
+    const check = () => {
+      if (wait() > 0) {
+        this.versionTimer = setTimeout(check, wait());
+        return;
+      }
+      this.versionTimer = null;
+      void this.keepVersionsNow();
+    };
+    this.versionTimer = setTimeout(check, Math.max(wait(), 0));
+  }
+
+  /** Uploads the versions waiting: now, as the page goes or the engine stops. */
+  private keepVersionsNow(): Promise<void> {
+    if (this.versionTimer) clearTimeout(this.versionTimer);
+    this.versionTimer = null;
+    const due = this.versionsDue.splice(0);
+    if (due.length === 0) return this.versionUploads;
+    const upload = import("./versions").then(async ({ keepVersion }) => {
+      await Promise.all(due.map(({ noteId, state }) => keepVersion(this.client, noteId, state)));
+    });
+    // Those under way already are waited for too, by whoever waits for these.
+    this.versionUploads = Promise.all([this.versionUploads, upload]).then(
+      () => undefined,
+      () => undefined,
+    );
+    return this.versionUploads;
+  }
+
+  /**
+   * Uploads now the versions waiting for the edits to pause, and waits for
+   * those under way: for a note's history about to be listed, which would
+   * otherwise not have the one read before the edits just made.
+   */
+  keepPendingVersions(): Promise<void> {
+    return this.keepVersionsNow();
   }
 
   /** Asks for a push sooner than the current cadence would. */
@@ -767,10 +830,13 @@ export class SyncEngine {
 
         // The notes these edits change, as they were before them, where a
         // version of one is due (lib/sync/versions): read now, kept once sent.
-        const { stateBeforeEdits, keepVersion } = await import("./versions");
+        const { stateBeforeEdits } = await import("./versions");
         const before = new Map<string, Uint8Array>();
         for (const entry of entries.slice(0, ops.length)) {
           if (entry.kind !== "update" || before.has(entry.entityId)) continue;
+          // One read already, waiting for the edits to pause: that is the
+          // note as it was before them, and it is not read again.
+          if (this.versionsDue.some((due) => due.noteId === entry.entityId)) continue;
           const state = await stateBeforeEdits(entry.entityId);
           if (state) before.set(entry.entityId, state);
         }
@@ -780,9 +846,7 @@ export class SyncEngine {
         if (!pushed) continue;
         const { response, sent } = pushed;
         for (const [noteId, state] of before) {
-          if (sent.some((entry) => entry.entityId === noteId)) {
-            void keepVersion(this.client, noteId, state);
-          }
+          if (sent.some((entry) => entry.entityId === noteId)) this.keepWhenQuiet(noteId, state);
         }
         syncClock(response.serverTime);
 

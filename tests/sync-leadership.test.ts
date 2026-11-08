@@ -7,7 +7,8 @@ import "@/lib/media/attachments";
 import "@/lib/media/report-refs";
 import "@/lib/search/yomi";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
-import { PUSH_EVERY_MS, SyncEngine } from "@/lib/sync/engine";
+import { PUSH_EVERY_MS, SyncEngine, VERSION_QUIET_MS } from "@/lib/sync/engine";
+import { bodyFragment } from "@/lib/sync/ydoc";
 import "@/lib/sync/mutations";
 import { enqueue } from "@/lib/sync/outbox";
 import type { Note } from "@/lib/types";
@@ -104,6 +105,8 @@ function window_() {
       shouldCompact: [],
       results: (args.ops as { opId: string }[]).map((op) => ({ opId: op.opId, status: "ok" })),
     }),
+    "notes:snapshotUploadUrl": () => "https://upload.test/",
+    "versions:save": () => ({ status: "ok" }),
   });
   const client = {
     ...server.client,
@@ -307,3 +310,71 @@ describe("the window that syncs", () => {
     }
   });
 });
+
+describe("a version of a note, due as its edits are sent", () => {
+  /** What the server has of the note already: one update sent, a line in it. */
+  async function sentAlready() {
+    const sent = new Y.Doc();
+    bodyFragment(sent).insert(0, [new Y.XmlElement("blockGroup")]);
+    await db().updates.add({
+      noteId: "n1",
+      seq: 1,
+      opId: "sent-1",
+      keyEpoch: 0,
+      data: Y.encodeStateAsUpdate(sent),
+      pushed: 1,
+      createdAt: 0,
+    } as never);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => new Response(JSON.stringify({ storageId: "s1" }), { status: 200 })),
+    );
+  }
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  test("is uploaded once the edits pause, not between two of them", async () => {
+    await sentAlready();
+    visibility = "visible";
+    const main = window_();
+    await main.engine.start("me");
+    try {
+      await vi.waitFor(() => expect(main.watching()).toBe(true));
+      await op("a");
+      await vi.waitFor(() => expect(main.server.callsTo("sync:push")).toHaveLength(1), {
+        timeout: PUSH_EVERY_MS + 1_000,
+      });
+      // Typed on: not quiet yet.
+      await op("b");
+      await new Promise((resolve) => setTimeout(resolve, VERSION_QUIET_MS / 2));
+      expect(main.server.callsTo("notes:snapshotUploadUrl")).toHaveLength(0);
+      await vi.waitFor(() => expect(main.server.callsTo("versions:save")).toHaveLength(1), {
+        timeout: VERSION_QUIET_MS + 2_000,
+      });
+    } finally {
+      main.engine.stop();
+    }
+  }, 15_000);
+
+  test("is uploaded at once as the page is put away", async () => {
+    await sentAlready();
+    visibility = "visible";
+    const main = window_();
+    await main.engine.start("me");
+    try {
+      await vi.waitFor(() => expect(main.watching()).toBe(true));
+      await op("a");
+      await vi.waitFor(() => expect(main.server.callsTo("sync:push")).toHaveLength(1), {
+        timeout: PUSH_EVERY_MS + 1_000,
+      });
+      await op("b");
+      setVisibility("hidden");
+      await vi.waitFor(() => expect(main.server.callsTo("versions:save")).toHaveLength(1), {
+        timeout: VERSION_QUIET_MS / 2,
+      });
+    } finally {
+      main.engine.stop();
+    }
+  });
+});
+
