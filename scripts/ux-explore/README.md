@@ -12,3 +12,8 @@ E2E が覆っていない流れを、手元の Convex と手元のビルドに�
    結果は `scripts/ux-explore/findings-<device>-<時刻>.json` とスクリーンショット（`shots/`、git には入れない）。
 
 計測のシナリオは CPU を 4 倍遅くして走る（`cpuSlow`）。数値は 3 回の中央値。
+
+即席メモだけを測るとき：`UX_BASE=http://localhost:3100 node scripts/ux-explore/measure-quick.mjs`
+（Pixel 7・CPU 4 倍遅く・3 回の中央値で、`/quick` が打てるようになるまでの時間と、1 文字ごとの遅れ）。
+前後を比べるときは、前の版を別のフォルダ（git worktree）でビルドし、同じ 3100 番で順に起動して測る
+（ログインは 3100 番の origin しか受け付けない）。

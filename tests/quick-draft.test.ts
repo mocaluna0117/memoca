@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { db, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
-import { DRAFT_DELAY_MS, clearDraft, keepDraft, loadDraft } from "@/lib/quick/draft";
+import { DRAFT_DELAY_MS, clearDraft, keepDraft, loadDraft, unsaved } from "@/lib/quick/draft";
 
 /** The tab these drafts are of, and where its draft is kept. */
 const TAB = "tab-1";
@@ -195,5 +195,56 @@ describe("the quick note's draft", () => {
     // One kept before drafts knew their account is no one's.
     await setMeta(KEY, { text: "古い下書き", updatedAt: 0 });
     expect(await textOf()).toBeNull();
+  });
+});
+
+describe("unsaved", () => {
+  const saved = (over: Partial<{ text: string; key: string; images: string[] }> = {}) => ({
+    noteId: "note-1",
+    text: "買い物\n牛乳",
+    images: [],
+    ...over,
+  });
+
+  test("by what its body says, where both have it: a line made a list is a change", () => {
+    const was = saved({ key: "<p>買い物</p>" });
+    expect(unsaved({ text: "買い物\n牛乳", key: "<p>買い物</p>", images: [], saved: was })).toBe(false);
+    expect(unsaved({ text: "買い物\n牛乳", key: "<li>買い物</li>", images: [], saved: was })).toBe(true);
+  });
+
+  test("saved before the editor, with a blank line, is still saved once read back from a body", () => {
+    // What a body reads back as leaves the blank line out.
+    const was = saved({ text: "買い物\n\n牛乳" });
+    expect(unsaved({ text: "買い物\n牛乳", key: "<p/>", images: [], saved: was })).toBe(false);
+    expect(unsaved({ text: "買い物\n牛乳\n卵", key: "<p/>", images: [], saved: was })).toBe(true);
+  });
+
+  test("an image added or taken out is a change; nothing at all is nothing to save", () => {
+    expect(unsaved({ text: "買い物\n牛乳", images: [{ key: "a" }], saved: saved() })).toBe(true);
+    expect(unsaved({ text: "  ", images: [], saved: null })).toBe(false);
+  });
+});
+
+describe("keepDraft, told how to read what it holds", () => {
+  test("reads it as it writes, not as it is told", async () => {
+    let text = "一";
+    let reads = 0;
+    const kept = keepDraft(ME, TAB);
+    kept.release();
+    const read = () => {
+      reads += 1;
+      return { text, key: text };
+    };
+    kept.update(read);
+    text = "一二";
+    kept.update(read);
+    text = "一二三";
+    kept.update(read);
+    expect(reads).toBe(0);
+    await vi.advanceTimersByTimeAsync(DRAFT_DELAY_MS * 2);
+    await settle();
+    expect(await textOf()).toBe("一二三");
+    expect(reads).toBe(1);
+    kept.dispose();
   });
 });

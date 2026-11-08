@@ -5,6 +5,18 @@ import { uuidv7 } from "uuidv7";
 import { db, getMeta, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { copiedBlob } from "@/lib/media/blob-copy";
+import { quickLines } from "@/lib/quick/text";
+
+/**
+ * A text as it is compared where there is no body to tell by: its lines
+ * with text, as the text read back from a body has them (it leaves out
+ * blank lines). A tab saved before the quick note had an editor, with a
+ * blank line in it, is then still saved once read back as a body.
+ */
+const plain = (text: string) =>
+  quickLines(text)
+    .filter((line) => line.trim() !== "")
+    .join("\n");
 
 /**
  * What was being written in one of the quick note's tabs, kept on this device
@@ -74,7 +86,9 @@ export function unsaved(tab: {
   const { saved } = tab;
   if (!saved) return true;
   const same =
-    tab.key !== undefined && saved.key !== undefined ? saved.key === tab.key : saved.text === tab.text;
+    tab.key !== undefined && saved.key !== undefined
+      ? saved.key === tab.key
+      : plain(saved.text) === plain(tab.text);
   return (
     !same ||
     saved.images.length !== tab.images.length ||
