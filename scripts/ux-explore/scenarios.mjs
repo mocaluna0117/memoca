@@ -147,9 +147,12 @@ export const scenarios = [
       await page.keyboard.press("Enter");
       await page.keyboard.type("資料はこちら");
       for (let i = 0; i < 3; i += 1) await page.keyboard.press("Shift+ArrowLeft");
+      // As a person pastes: after the selection has been taken in.
+      await sleep(page, 150);
+      const selected = await page.evaluate(() => getSelection()?.toString());
       await pasteData(page, { "text/plain": "https://example.com/doc" });
       await sleep(page, 300);
-      await run.step("pasted-url-over-selection", "選んだ「こちら」がリンクになる", () => editor(page).locator('a[href="https://example.com/doc"]').innerText().catch(() => ""), (t) => t === "こちら");
+      await run.step("pasted-url-over-selection", "選んだ「こちら」がリンクになる", async () => ({ selected, link: await editor(page).locator('a[href="https://example.com/doc"]').innerText().catch(() => "") }), (r) => r.link === "こちら");
     },
   },
   {
