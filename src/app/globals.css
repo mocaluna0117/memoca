@@ -244,6 +244,14 @@
 .memoca-editor {
   container: memoca-note / inline-size;
 }
+/* On a phone with the keyboard up, room after the note for the keyboard and
+   the block bar over it (set by MobileBlockToolbar): the page then reaches
+   far enough for its last lines to be scrolled up above both. */
+@media (max-width: 767px) {
+  .memoca-editor {
+    padding-bottom: var(--memoca-keyboard-room, 0px);
+  }
+}
 /* A column after another keeps the side menu of its blocks (the + and the
    handle, 54 pixels or so, drawn left of a block) inside itself: at
    BlockNote's 25 pixels it lay over the line between the columns, all of

@@ -52,6 +52,7 @@ import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { pasteOwnImage } from "@/components/editor/copy-image";
+import { pasteLink } from "@/components/editor/paste-link";
 import { pasteMarkingUnreadableImages } from "@/components/editor/unreadable-images";
 import { showUploadPreview } from "@/components/editor/upload-preview";
 import { dragHandle } from "@/components/editor/drag-handle";
@@ -348,6 +349,7 @@ function EditorSurface({
         // An image Memoca copied alone, pasted back as the block it was; and
         // images that cannot be read (Notion's) marked by a line in their place.
         pasteHandler: ({ event, editor: pasting, defaultPasteHandler }) =>
+          pasteLink(event, pasting as unknown as BlockNoteEditor) ||
           pasteOwnImage(event, pasting as unknown as BlockNoteEditor) ||
           pasteMarkingUnreadableImages(event, pasting as unknown as BlockNoteEditor) ||
           defaultPasteHandler(),

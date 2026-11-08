@@ -1,6 +1,7 @@
 "use client";
 
 import { useBlockNoteEditor, useSelectedBlocks } from "@blocknote/react";
+import { useEffect } from "react";
 import {
   ArrowUpToLine,
   ChevronDown,
@@ -61,9 +62,24 @@ export function MobileBlockToolbar() {
   // with every change to the note) is not followed while it is not shown,
   // which on a computer is always.
   const inset = useKeyboardInset();
+  // Room at the end of the note for the keyboard and this bar over it: the
+  // last lines can then be scrolled up above both (see the editor's CSS,
+  // and caret-above-keyboard). Without it, the page ended under the
+  // keyboard, and a long note's last line, typed in, stayed there.
+  useEffect(() => {
+    if (inset === 0) return;
+    const root = document.documentElement;
+    root.style.setProperty("--memoca-keyboard-room", `${inset + BAR_ROOM_PX}px`);
+    return () => {
+      root.style.removeProperty("--memoca-keyboard-room");
+    };
+  }, [inset]);
   if (inset === 0) return null;
   return <KeyboardBlockBar inset={inset} />;
 }
+
+/** Room for the bar itself over the keyboard, with a little to spare. */
+const BAR_ROOM_PX = 64;
 
 function KeyboardBlockBar({ inset }: { inset: number }) {
   const editor = useBlockNoteEditor();
@@ -265,6 +281,7 @@ function KeyboardBlockBar({ inset }: { inset: number }) {
       style={{ bottom: inset }}
       role="toolbar"
       aria-label="ブロックの操作"
+      data-keyboard-bar=""
     >
       <div className="flex gap-1 overflow-x-auto px-2 py-1.5">
         {shown.map(({ key, label, icon: Icon, active, disabled, run }) => (

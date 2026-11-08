@@ -52,9 +52,11 @@ export const caretAboveKeyboard = createExtension({
               } catch {
                 return;
               }
+              // Above the block bar too, which sits on the keyboard.
+              const bar = document.querySelector("[data-keyboard-bar]")?.getBoundingClientRect();
               const by = caretShift(caret, {
                 top: viewport.offsetTop,
-                bottom: viewport.offsetTop + viewport.height,
+                bottom: viewport.offsetTop + viewport.height - (bar?.height ?? 0),
               });
               if (by !== 0) window.scrollBy(0, by);
             });
