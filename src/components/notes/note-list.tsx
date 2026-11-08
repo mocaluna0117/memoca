@@ -94,6 +94,8 @@ import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, fillFromTemplate } from 
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { useEscapeFromPage } from "@/lib/hooks/use-escape-from-page";
 import { useStableActions } from "@/lib/hooks/use-stable-actions";
+import { sameRowProps } from "@/lib/note-face";
+import { useClock } from "@/lib/hooks/use-clock";
 import { relativeDate } from "@/lib/relative-date";
 import { cn } from "@/lib/utils";
 
@@ -106,6 +108,23 @@ type RowDrag = {
   listeners: Record<string, unknown> | undefined;
   dragging: boolean;
 };
+
+/**
+ * Whether a row's props say the same (lib/note-face): its note by what the
+ * row shows of it, its drag by its parts (dnd-kit hands out a new object
+ * with each draw), and everything else as it is.
+ */
+const sameDrag = (a: RowDrag | undefined, b: RowDrag | undefined) =>
+  a === b ||
+  (a !== undefined &&
+    b !== undefined &&
+    a.ref === b.ref &&
+    a.listeners === b.listeners &&
+    a.dragging === b.dragging &&
+    a.style?.transform === b.style?.transform &&
+    a.style?.transition === b.style?.transition);
+const sameRow = (prev: RowProps, next: RowProps) => sameRowProps(prev, next, { drag: sameDrag });
+const sameRowButDrag = <T extends { note: Note }>(prev: T, next: T) => sameRowProps(prev, next);
 
 /** What a row's drag carries: the list it is in (`owner`) and the note. */
 const noteData = (owner: string, noteId: string) => ({ owner, kind: "note" as const, noteId });
@@ -131,7 +150,7 @@ const SortableNoteRow = memo(function SortableNoteRow({
       }}
     />
   );
-});
+}, sameRowButDrag);
 
 /** A row that can be dragged to a folder, staying where it is in the list. */
 const DraggableNoteRow = memo(function DraggableNoteRow({
@@ -144,7 +163,7 @@ const DraggableNoteRow = memo(function DraggableNoteRow({
     disabled: props.editing,
   });
   return <NoteRow {...props} drag={{ ref: setNodeRef, listeners, dragging: isDragging }} />;
-});
+}, sameRowButDrag);
 
 /**
  * The notes chosen in a folder's list (`folderId`): whether it is set to
@@ -425,7 +444,7 @@ const NoteRow = memo(function NoteRow({
       {actions.menu(note)}
     </ContextMenu>
   );
-});
+}, sameRow);
 
 export function NoteList({
   folderId,
@@ -967,10 +986,14 @@ export function NoteList({
     menu: menuOf,
   });
 
+  // The time each row says ("3 分前"), kept up as it passes: every ten
+  // seconds, as a note typed in is stamped.
+  const now = useClock(10_000);
   const rowProps = (note: Note): RowProps => ({
     note,
     when: relativeDate(
       order === "created" ? (createdAt(note.noteId) ?? note.updatedAt) : note.updatedAt,
+      now,
     ),
     selected: note.noteId === selectedNoteId,
     editing: note.noteId === editing,

@@ -64,6 +64,7 @@ import { useClientValue } from "@/lib/hooks/use-client-value";
 import { TemplatePicker } from "@/components/notes/template-picker";
 import { TEMPLATES_FOLDER_ID, TemplateUnavailableError, fillFromTemplate } from "@/lib/templates";
 import { useTreeOpen } from "@/lib/store/tree-open";
+import { sameRowProps } from "@/lib/note-face";
 import { STAND_IN_CLASS, noteName } from "@/lib/note-name";
 import { t } from "@/lib/i18n/ja";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
@@ -1487,7 +1488,7 @@ const TreeNoteRow = memo(function TreeNoteRow({
       </div>
     </NoteRowDropZone>
   );
-});
+}, sameRowProps);
 
 /** The note row's icon while its lock is being put on or taken off. */
 function Loader2Note({ className }: { className?: string }) {
