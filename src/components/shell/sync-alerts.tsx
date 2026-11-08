@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { useSyncEngine, useSyncStatus } from "@/components/providers/sync-provider";
+import { useSyncEngine, useSyncStatusOf } from "@/components/providers/sync-provider";
 import { t } from "@/lib/i18n/ja";
 
 /**
@@ -13,13 +13,15 @@ import { t } from "@/lib/i18n/ja";
  * of a note being typed in), so that nothing else is drawn again with it.
  */
 export function SyncAlerts() {
-  const status = useSyncStatus();
+  // Only what it says something about: not every change of the status.
+  const stuck = useSyncStatusOf((status) => status.stuck > 0);
+  const uploadRefused = useSyncStatusOf((status) => status.uploadRefused);
+  const saveFailed = useSyncStatusOf((status) => status.saveFailed);
   const engine = useSyncEngine();
   const told = useRef({ stuck: false, uploadRefused: false, saveFailed: false });
 
   useEffect(() => {
     const was = told.current;
-    const stuck = status.stuck > 0;
     if (stuck && !was.stuck) {
       toast.error(t.sync.stuck, {
         description: t.sync.stuckDetail,
@@ -27,14 +29,14 @@ export function SyncAlerts() {
         action: { label: t.sync.retryStuck, onClick: () => void engine()?.retryStuck() },
       });
     }
-    if (status.uploadRefused && !was.uploadRefused) {
+    if (uploadRefused && !was.uploadRefused) {
       toast.error(t.sync.uploadRefused, { description: t.sync.uploadRefusedDetail, duration: 10_000 });
     }
-    if (status.saveFailed && !was.saveFailed) {
+    if (saveFailed && !was.saveFailed) {
       toast.error(t.sync.saveFailed, { description: t.sync.saveFailedDetail, duration: 10_000 });
     }
-    told.current = { stuck, uploadRefused: status.uploadRefused, saveFailed: status.saveFailed };
-  }, [status.stuck, status.uploadRefused, status.saveFailed, engine]);
+    told.current = { stuck, uploadRefused, saveFailed };
+  }, [stuck, uploadRefused, saveFailed, engine]);
 
   return null;
 }

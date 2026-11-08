@@ -5,7 +5,7 @@ import { useLiveQuery } from "dexie-react-hooks";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
-import { useSyncEngine, useSyncStatus } from "@/components/providers/sync-provider";
+import { useSyncEngine, useSyncStatusStore } from "@/components/providers/sync-provider";
 import { vault } from "@/lib/crypto/vault";
 import type { SyncStatus } from "@/lib/sync/engine";
 import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
@@ -29,7 +29,8 @@ export function LockRepairs() {
   const client = useConvex();
   const engine = useSyncEngine();
   const router = useRouter();
-  const status = useSyncStatus();
+  // Followed, not drawn with: each change of it is looked at as it comes.
+  const statusStore = useSyncStatusStore();
   const sealedNames = useLiveQuery(async () => (await sealedNameFolders()).length, [], 0);
   const mounted = useRef(false);
   const unreadableSeen = useRef(0);
@@ -116,28 +117,33 @@ export function LockRepairs() {
   // second as a sync ends. It runs only if sync is still settled by then:
   // typing resumed, it is left to the next settling (a catch-up's pass stays
   // owed, so that one is not lost to the ten-minute limit).
-  const latest = useRef(status);
+  const latest = useRef(statusStore.get());
   const prevStatus = useRef<SyncStatus | null>(null);
   const schedule = useRef<RepairSchedule>(NO_PASS_YET);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
-    latest.current = status;
-    const due = repairDue(prevStatus.current, status, schedule.current, Date.now());
-    prevStatus.current = status;
-    schedule.current = due.schedule;
-    if (!due.run) return;
-    const kind = due.run;
-    if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => {
-      timer.current = null;
-      if (!settled(latest.current)) {
-        if (kind === "catchUp") schedule.current = { ...schedule.current, catchUpOwed: true };
-        return;
-      }
-      schedule.current = { ...schedule.current, lastSettledRunAt: Date.now() };
-      void run();
-    }, REPAIR_AFTER_MS);
-  }, [status, run]);
+    const follow = () => {
+      const status = statusStore.get();
+      latest.current = status;
+      const due = repairDue(prevStatus.current, status, schedule.current, Date.now());
+      prevStatus.current = status;
+      schedule.current = due.schedule;
+      if (!due.run) return;
+      const kind = due.run;
+      if (timer.current) clearTimeout(timer.current);
+      timer.current = setTimeout(() => {
+        timer.current = null;
+        if (!settled(latest.current)) {
+          if (kind === "catchUp") schedule.current = { ...schedule.current, catchUpOwed: true };
+          return;
+        }
+        schedule.current = { ...schedule.current, lastSettledRunAt: Date.now() };
+        void run();
+      }, REPAIR_AFTER_MS);
+    };
+    follow();
+    return statusStore.subscribe(follow);
+  }, [statusStore, run]);
   useEffect(
     () => () => {
       if (timer.current) clearTimeout(timer.current);

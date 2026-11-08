@@ -2,7 +2,7 @@ import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as Y from "yjs";
 import { db, resetLocalData } from "@/lib/db";
-import { appendParagraphs } from "@/lib/quick/body";
+import { appendParagraphs, prependParagraphs } from "@/lib/quick/body";
 import {
   STAMP_EVERY_MS,
   acquireDoc,
@@ -11,8 +11,7 @@ import {
   hasUnsavedEdits,
   openDoc,
   releaseDoc,
-  reloadDoc,
-} from "@/lib/sync/docs";
+  reloadDoc, PREVIEW_EVERY_MS } from "@/lib/sync/docs";
 import { onAlert } from "@/lib/sync/alerts";
 import { bodyFragment, extractText } from "@/lib/sync/ydoc";
 import type { Note } from "@/lib/types";
@@ -404,6 +403,41 @@ describe("the note's updatedAt while it is typed in", () => {
     await flushed();
     expect((await db().notes.get("n1"))?.preview).toBe("本文");
     expect(await updatedAt()).toBe(first + FLUSH_MS);
+  });
+
+  test("a first line changed again within PREVIEW_EVERY_MS waits, and is written as it is then", async () => {
+    const preview = async () => (await db().notes.get("n1"))?.preview;
+    const doc = await acquireDoc("n1");
+    appendParagraphs(doc, ["一行目"]);
+    await flushed();
+    expect(await preview()).toBe("一行目");
+
+    // Typed on in the first line: not written with every flush.
+    prependParagraphs(doc, ["二"]);
+    await flushed();
+    prependParagraphs(doc, ["三"]);
+    await flushed();
+    expect(await preview()).toBe("一行目");
+    await vi.advanceTimersByTimeAsync(PREVIEW_EVERY_MS);
+    await settle();
+    expect(await preview()).toBe("三");
+  });
+
+  test("closed, or flushed as the page goes, a first line still to be written is written at once", async () => {
+    const preview = async () => (await db().notes.get("n1"))?.preview;
+    const doc = await acquireDoc("n1");
+    appendParagraphs(doc, ["一行目"]);
+    await flushed();
+    prependParagraphs(doc, ["二"]);
+    await flushed();
+    expect(await preview()).toBe("一行目");
+    await flushAll();
+    expect(await preview()).toBe("二");
+
+    prependParagraphs(doc, ["三"]);
+    await flushed();
+    await releaseDoc("n1");
+    expect(await preview()).toBe("三");
   });
 
   test("opened again, it is written by the first flush, however recent the last", async () => {

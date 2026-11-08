@@ -52,6 +52,16 @@ export function piecesOf(buffer: Uint8Array[], limit = UPDATE_BYTE_LIMIT): Uint8
  */
 export const STAMP_EVERY_MS = 10_000;
 
+/**
+ * A note's first line (its preview, in the lists) changed as it is typed in
+ * is written at once, then at most this often, the latest as it is then:
+ * each write runs every list that shows the note again, the whole of a
+ * list of hundreds, and sends the line. Typing the first line, that was
+ * every flush (twice a second). Written at once as the note closes, and as
+ * the page goes, whatever is still to be written.
+ */
+export const PREVIEW_EVERY_MS = 2_000;
+
 type Handle = {
   noteId: string;
   doc: Y.Doc;
@@ -65,6 +75,10 @@ type Handle = {
   stampedAt: number;
   /** The write of it due for the edits since, while one waits. */
   stampTimer: ReturnType<typeof setTimeout> | null;
+  /** When the note's first line was last written for edits made here. */
+  previewAt: number;
+  /** The first line still to be written, and the write of it due, while one waits. */
+  previewDue: { preview: string; timer: ReturnType<typeof setTimeout> } | null;
   detach: () => void;
 };
 
@@ -302,33 +316,21 @@ async function write(handle: Handle, merged: Uint8Array): Promise<"stored" | "ke
     // On the clock as the server's answers have corrected it: compared with
     // the server's own stamps, on other devices and in the lists here.
     const now = Date.now() + clockOffset();
-    if (preview !== note.preview) {
-      // Sent on its own, never bundled with the title: this runs on every
-      // meaningful body edit, and `note` was read before the flush, so
-      // resending a title from here would overwrite a rename made in between.
-      const { stamp: clockStamp } = await import("./clock");
-      const { deviceId } = await import("@/lib/db/meta");
-      const ts = clockStamp(await deviceId());
-      // Its own stamp only: `note` was read before the flush, and the whole
-      // `ts` written from it would put back a rename's stamp made since.
-      await database.notes.update(handle.noteId, {
-        preview,
-        updatedAt: now,
-        "ts.preview": ts,
-      });
-      // Stamped with it: a write due for the edits before has nothing to add.
-      if (handle.stampTimer) clearTimeout(handle.stampTimer);
-      handle.stampTimer = null;
-      handle.stampedAt = now;
-      await enqueue({
-        kind: "note",
-        entityId: handle.noteId,
-        payload: {
-          kind: "note",
-          noteId: handle.noteId,
-          preview: { value: preview, ts },
-        },
-      });
+    if (preview !== note.preview || handle.previewDue) {
+      const since = Date.now() - handle.previewAt;
+      if (since >= PREVIEW_EVERY_MS) {
+        if (handle.previewDue) clearTimeout(handle.previewDue.timer);
+        handle.previewDue = null;
+        if (preview !== note.preview) await writePreview(handle, preview);
+      } else if (handle.previewDue) {
+        // Due already: written as it is then.
+        handle.previewDue.preview = preview;
+      } else {
+        handle.previewDue = {
+          preview,
+          timer: setTimeout(() => void writeDuePreview(handle), PREVIEW_EVERY_MS - since),
+        };
+      }
     } else if (now - handle.stampedAt >= STAMP_EVERY_MS) {
       await database.notes.update(handle.noteId, { updatedAt: now });
       handle.stampedAt = now;
@@ -344,6 +346,54 @@ async function write(handle: Handle, merged: Uint8Array): Promise<"stored" | "ke
   }
   announce(handle.noteId);
   return "stored";
+}
+
+/**
+ * Writes a note's first line, and its updatedAt with it, and sends the line.
+ * Sent on its own, never bundled with the title: this runs on every
+ * meaningful body edit, and a title read before it would overwrite a rename
+ * made in between.
+ */
+async function writePreview(handle: Handle, preview: string): Promise<void> {
+  const database = db();
+  // On the clock as the server's answers have corrected it: compared with
+  // the server's own stamps, on other devices and in the lists here.
+  const now = Date.now() + clockOffset();
+  handle.previewAt = Date.now();
+  const { stamp: clockStamp } = await import("./clock");
+  const { deviceId } = await import("@/lib/db/meta");
+  const ts = clockStamp(await deviceId());
+  // Its own stamp only: the whole `ts` written from a row read before would
+  // put back a rename's stamp made since.
+  await database.notes.update(handle.noteId, {
+    preview,
+    updatedAt: now,
+    "ts.preview": ts,
+  });
+  // Stamped with it: a write due for the edits before has nothing to add.
+  if (handle.stampTimer) clearTimeout(handle.stampTimer);
+  handle.stampTimer = null;
+  handle.stampedAt = now;
+  await enqueue({
+    kind: "note",
+    entityId: handle.noteId,
+    payload: { kind: "note", noteId: handle.noteId, preview: { value: preview, ts } },
+  });
+}
+
+/**
+ * Writes the first line that waited (PREVIEW_EVERY_MS), if the note still
+ * holds another: once the wait is up, or now, as the note closes or the page
+ * goes. Not for a note gone or locked since.
+ */
+async function writeDuePreview(handle: Handle): Promise<void> {
+  const due = handle.previewDue;
+  if (!due) return;
+  clearTimeout(due.timer);
+  handle.previewDue = null;
+  const note = await db().notes.get(handle.noteId);
+  if (!note || note.locked || note.preview === due.preview) return;
+  await writePreview(handle, due.preview);
 }
 
 /**
@@ -434,6 +484,8 @@ async function openHandle(noteId: string): Promise<Handle> {
     timer: null,
     stampedAt: 0,
     stampTimer: null,
+    previewAt: 0,
+    previewDue: null,
     detach: () => {},
   };
 
@@ -488,7 +540,8 @@ export async function releaseDoc(noteId: string): Promise<void> {
   // Opened again while its last edits were being written: someone is using
   // it, so it stays.
   if (handle.refs > 0) return;
-  // The updatedAt write due for its last edits: now, not once it is gone.
+  // The first line, and the updatedAt, due for its last edits: now, not once it is gone.
+  if (handle.previewDue) await writeDuePreview(handle);
   if (handle.stampTimer) await stamp(handle);
   // Opened again while that was written: likewise.
   if (handle.refs > 0) return;
@@ -565,12 +618,19 @@ export async function migrateOpenDoc(noteId: string): Promise<void> {
  */
 export async function flushDoc(noteId: string): Promise<void> {
   const handle = handles.get(noteId);
-  if (handle) await flush(handle);
+  if (!handle) return;
+  await flush(handle);
+  await writeDuePreview(handle);
 }
 
-/** Flushes every open document, for example before the tab goes away. */
+/** Flushes every open document, its first line with it, for example before the tab goes away. */
 export async function flushAll(): Promise<void> {
-  await Promise.all([...handles.values()].map((handle) => flush(handle)));
+  await Promise.all(
+    [...handles.values()].map(async (handle) => {
+      await flush(handle);
+      await writeDuePreview(handle);
+    }),
+  );
 }
 
 // Buffered edits to a locked note are written encrypted, so they have to be

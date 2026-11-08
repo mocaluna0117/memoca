@@ -23,7 +23,7 @@ import { getMultiColumnSlashMenuItems } from "@blocknote/xl-multi-column";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { useConvex } from "convex/react";
 import { useTheme } from "next-themes";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import type * as Y from "yjs";
 import { useAllowance, useSync } from "@/components/providers/sync-provider";
@@ -64,6 +64,7 @@ import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
 import { japaneseLists } from "@/components/editor/japanese-lists";
 import { caretAboveKeyboard } from "@/components/editor/caret-above-keyboard";
+import { sideMenuAwayOnInput } from "@/components/editor/side-menu-input";
 import { DISABLED_EXTENSIONS, quoteShortcuts } from "@/components/editor/quotes";
 import { NoteLinkMenu, noteLinkInput, noteLinkSlashItem } from "@/components/editor/note-links";
 import { listKeys } from "@/components/editor/list-keys";
@@ -155,8 +156,13 @@ const paintFrame = () =>
  * BlockNote edits the Yjs document directly, and the document manager turns
  * those changes into update rows and outbox entries. Nothing here talks to the
  * network, which is why typing works the same with or without one.
+ *
+ * Drawn again only as which note it is, or whether it is locked or read
+ * only, changes: the pane around it is drawn again with every flush of the
+ * note being typed in (its first line, when it changed), and the editor
+ * with it, all of BlockNote's parts in it, for nothing.
  */
-export function NoteEditor({
+export const NoteEditor = memo(function NoteEditor({
   noteId,
   locked,
   readOnly = false,
@@ -222,7 +228,7 @@ export function NoteEditor({
   return (
     <EditorSurface key={noteId} noteId={noteId} doc={doc} locked={locked} readOnly={readOnly} />
   );
-}
+});
 
 function EditorSurface({
   noteId,
@@ -344,6 +350,7 @@ function EditorSurface({
           noteLinkInput(),
           findInNote(),
           caretAboveKeyboard,
+          sideMenuAwayOnInput(),
         ],
         dropCursor: { hooks: { computeDropPosition } },
         // An image Memoca copied alone, pasted back as the block it was; and

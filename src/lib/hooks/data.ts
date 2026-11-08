@@ -189,6 +189,28 @@ export function useNote(noteId: string | null): Note | null | undefined {
   return row.noteId === noteId ? row : undefined;
 }
 
+/**
+ * The folder a note is in (null: none, kept at the top level), and nothing
+ * else of it: undefined while it is read, or with no such note. Drawn again
+ * only as the note moves, not with each flush of it being typed in (its
+ * first line and when it changed are written then).
+ */
+export function useNoteFolder(noteId: string | null): string | null | undefined {
+  // As one string, with the note it is of: a value compared as it is, so a
+  // flush that leaves it as it was draws nothing again; and one read for
+  // the note before (as the query reads anew for another) is not taken for
+  // this one's.
+  const found = useLiveQuery(async () => {
+    if (!noteId) return undefined;
+    const note = await db().notes.get(noteId);
+    return note ? `${noteId}\n${note.folderId ?? ""}` : undefined;
+  }, [noteId]);
+  if (!found || !noteId) return undefined;
+  const [of, folderId] = found.split("\n");
+  if (of !== noteId) return undefined;
+  return folderId || null;
+}
+
 export function useNoteText(noteId: string | null): string | null {
   const body = useLiveQuery(
     async () => (noteId ? await db().bodies.get(noteId) : undefined),

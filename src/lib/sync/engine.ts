@@ -36,6 +36,8 @@ const PUSH_OP_LIMIT = 50;
 /** Poll cadence while another device is actively editing. */
 const FAST_INTERVAL_MS = 1_000;
 const IDLE_INTERVAL_MS = 5_000;
+/** At most this often a push for edits just queued, while they keep coming (kickPaced). */
+export const PUSH_EVERY_MS = 1_200;
 /** How long an edit refused for want of room waits before it is sent again. */
 const QUOTA_RETRY_MS = 60_000;
 /**
@@ -127,6 +129,14 @@ export class SyncEngine {
   private draining = false;
   /** Asked for while a push was under way: another follows it at once. */
   private again = false;
+  /** Edits queued while a push was under way: pushed as paced once it ends (kickPaced). */
+  private againPaced = false;
+  /**
+   * When edits were last sent, for pacing the pushes edits being typed ask
+   * for: not a round that found nothing to send, after which the first edit
+   * goes in a quarter of a second, as it did.
+   */
+  private sentAt = 0;
   private checkingGhosts = false;
   /** Whether every note's name has been settled since this engine started (see receive). */
   private settledTitles = false;
@@ -205,7 +215,7 @@ export class SyncEngine {
     // of sight (see claimLeadership).
     this.claimLeadership(inView());
     this.attachWindowHooks();
-    this.unwatchOutbox = onOutboxChanged(() => this.kick(250));
+    this.unwatchOutbox = onOutboxChanged(() => this.kickPaced());
     // Edits of a locked note refused while the vault was closed go once it
     // opens (rebaseRefused), not at the next round.
     this.unwatchVault = vault.subscribe((unlocked) => {
@@ -365,6 +375,23 @@ export class SyncEngine {
     window.removeEventListener("pagehide", this.onPageHide);
     window.removeEventListener("pageshow", this.onPageShow);
     document.removeEventListener("visibilitychange", this.onVisibility);
+  }
+
+  /**
+   * Asks for a push for edits just queued: in a quarter of a second, but
+   * not sooner than PUSH_EVERY_MS after the last push began. A note being
+   * typed in queues its edits twice a second, and each push, beyond what it
+   * sends, has the outbox counted and the lists that show it run again, and
+   * the server's echo taken in; those, while typing, made every key slower.
+   * Its edits still reach the other devices within a second or two.
+   */
+  private kickPaced(): void {
+    if (!this.leader || this.stopped) return;
+    if (this.draining) {
+      this.againPaced = true;
+      return;
+    }
+    this.kick(Math.max(250, this.sentAt + PUSH_EVERY_MS - Date.now()));
   }
 
   /** Asks for a push sooner than the current cadence would. */
@@ -748,6 +775,7 @@ export class SyncEngine {
           if (state) before.set(entry.entityId, state);
         }
 
+        this.sentAt = Date.now();
         const pushed = await this.push(entries.slice(0, ops.length), ops, failedNow);
         if (!pushed) continue;
         const { response, sent } = pushed;
@@ -807,11 +835,20 @@ export class SyncEngine {
     } finally {
       this.draining = false;
       const again = this.again;
+      const againPaced = this.againPaced;
       this.again = false;
-      // The next round, while this window is the one that syncs.
+      this.againPaced = false;
+      // The next round, while this window is the one that syncs: straight
+      // away for what was asked for during this one, edits queued meanwhile
+      // as paced (kickPaced).
       if (!this.stopped && this.leader) {
         if (this.timer) clearTimeout(this.timer);
-        this.timer = setTimeout(() => void this.drain(), again ? 0 : this.interval);
+        const next = again
+          ? 0
+          : againPaced
+            ? Math.max(0, this.sentAt + PUSH_EVERY_MS - Date.now())
+            : this.interval;
+        this.timer = setTimeout(() => void this.drain(), next);
       }
     }
   }

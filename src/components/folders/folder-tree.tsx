@@ -54,7 +54,7 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { useFolderTree, useNote, useNotesByFolder, useTopLevelNotes } from "@/lib/hooks/data";
+import { useFolderTree, useNoteFolder, useNotesByFolder, useTopLevelNotes } from "@/lib/hooks/data";
 import { LOCKED_LABEL, useNoteTitle, useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { setNoteOrder, useNoteOrders } from "@/lib/hooks/use-note-order";
 import { NOTE_ORDERS, isNoteOrder, orderNotes, placeAt } from "@/lib/note-order";
@@ -562,7 +562,7 @@ export function FolderTree({
 
   // The note open (or else the folder) shown, its folders opened, as VS Code
   // shows the file open: once for each, so that one closed again stays so.
-  const openNoteFolder = useNote(explorer ? selectedNoteId : null)?.folderId ?? null;
+  const openNoteFolder = useNoteFolder(explorer ? selectedNoteId : null) ?? null;
   const shownFolder = selectedNoteId ? openNoteFolder : selectedFolderId;
   const revealed = useRef<string | null>(null);
   useEffect(() => {

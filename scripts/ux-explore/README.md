@@ -20,3 +20,17 @@ E2E が覆っていない流れを、手元の Convex と手元のビルドに�
 どこに時間を使っているかは `UX_BASE=http://localhost:3100 node scripts/ux-explore/profile-quick.mjs`
 （開くとき・最初の 1 文字・200 文字・日本語の変換中の入力それぞれの CPU プロファイルを、関数とチャンクごとにまとめる。
 打っている途中の長い処理があれば、その時間だけを切り出して出す）。
+
+## ふつうのメモの内訳（どこに時間を使っているか、何が描き直されているか）
+
+- `UX_BASE=http://localhost:3100 node scripts/ux-explore/profile-note.mjs --device=pixel7|desktop`
+  短いメモと 300 行のメモに 200 文字打つとき、日本語の変換中の入力のときの CPU プロファイルを、関数とチャンクごとにまとめる。
+  - `--only=short` / `--only=long` で絞る。
+  - `--notes=300`：この端末にメモを 300 件足してから測る（アプリで作った 1 件の行を写したもの。サーバーには送らない）。一覧やサイドバーの読み直しの重さは、メモの数で大きく変わる。
+  - `--renders`：打っているあいだに、どの部品が何回描き直されたか、そのうちどれが自分の state・context・store の変化で描き直しを始めたか（`部品#フック番号`）を出す。React DevTools と同じ仕組み（`__REACT_DEVTOOLS_GLOBAL_HOOK__`）。
+  - `--save=<dir>`：プロファイルを JSON で残す。`node scripts/ux-explore/inclusive.mjs <file> --callers=関数名,…` で、部品ごとの（呼んだ先を含む）時間と、指定した関数の呼び出し元をたどれる。
+- 部品や関数の名前を読めるようにするには、名前を縮めずにビルドする：
+  `NEXT_PUBLIC_CONVEX_URL=http://127.0.0.1:3210 NEXT_PUBLIC_CONVEX_SITE_URL=http://127.0.0.1:3211 npx next build --no-mangling`
+  （調べ終わったら、ふつうの `pnpm build` に戻してから E2E と前後比較をする）。
+- 打つ文字は `keyboard.type`（日本語は文字を挿入するだけで keydown が出ない）。BlockNote の「⋮⋮」は keydown で隠れるので、keydown が出ない入力でも隠れるようにしてある（`side-menu-input.ts`）。
+

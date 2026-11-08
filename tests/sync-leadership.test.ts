@@ -7,7 +7,7 @@ import "@/lib/media/attachments";
 import "@/lib/media/report-refs";
 import "@/lib/search/yomi";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
-import { SyncEngine } from "@/lib/sync/engine";
+import { PUSH_EVERY_MS, SyncEngine } from "@/lib/sync/engine";
 import "@/lib/sync/mutations";
 import { enqueue } from "@/lib/sync/outbox";
 import type { Note } from "@/lib/types";
@@ -165,14 +165,41 @@ describe("the window that syncs", () => {
       await vi.waitFor(() => expect(main.watching()).toBe(true));
       expect(quick.watching()).toBe(false);
 
-      // What is typed is sent by the one in view.
+      // What is typed is sent by the one in view (paced: see the test below).
       await op("a");
-      await vi.waitFor(() => expect(main.server.callsTo("sync:push")).toHaveLength(1));
+      await vi.waitFor(() => expect(main.server.callsTo("sync:push")).toHaveLength(1), {
+        timeout: PUSH_EVERY_MS + 1_000,
+      });
       expect(quick.server.callsTo("sync:push")).toHaveLength(0);
       expect(await db().outbox.count()).toBe(0);
     } finally {
       main.engine.stop();
       quick.engine.stop();
+    }
+  });
+
+  test("edits that keep coming are pushed at most every PUSH_EVERY_MS, not each as it comes", async () => {
+    visibility = "visible";
+    const main = window_();
+    await main.engine.start("me");
+    try {
+      await vi.waitFor(() => expect(main.watching()).toBe(true));
+      await op("a");
+      await vi.waitFor(() => expect(main.server.callsTo("sync:push")).toHaveLength(1), {
+        timeout: PUSH_EVERY_MS + 1_000,
+      });
+      const first = Date.now();
+      // Typed on: queued straight after that push.
+      await op("b");
+      await new Promise((resolve) => setTimeout(resolve, PUSH_EVERY_MS / 2));
+      expect(main.server.callsTo("sync:push")).toHaveLength(1);
+      await vi.waitFor(() => expect(main.server.callsTo("sync:push")).toHaveLength(2), {
+        timeout: PUSH_EVERY_MS + 1_000,
+      });
+      expect(Date.now() - first).toBeGreaterThanOrEqual(PUSH_EVERY_MS / 2);
+      expect(await db().outbox.count()).toBe(0);
+    } finally {
+      main.engine.stop();
     }
   });
 

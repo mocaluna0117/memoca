@@ -125,9 +125,31 @@ export function useSyncEngine(): () => SyncEngine | null {
 
 /** Where syncing stands, drawn again only when it changes. */
 export function useSyncStatus(): SyncStatus {
+  const store = useSyncStatusStore();
+  return useSyncExternalStore(store.subscribe, store.get, serverStatus);
+}
+
+/**
+ * One thing of the status, drawn again only when that changes: the status
+ * changes several times with each flush of a note being typed in (waiting,
+ * sending, sent, the server's echo taken in), and most of what shows it
+ * shows one part of it. `select` gives a value compared as it is (a
+ * string, a number, a boolean).
+ */
+export function useSyncStatusOf<T>(select: (status: SyncStatus) => T): T {
+  const store = useSyncStatusStore();
+  return useSyncExternalStore(
+    store.subscribe,
+    () => select(store.get()),
+    () => select(serverStatus()),
+  );
+}
+
+/** The status's store itself, to follow its changes without drawing anything again. */
+export function useSyncStatusStore(): StatusStore {
   const store = useContext(SyncStatusContext);
   if (!store) throw new Error("useSyncStatus must be used inside SyncProvider");
-  return useSyncExternalStore(store.subscribe, store.get, serverStatus);
+  return store;
 }
 
 /**

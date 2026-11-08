@@ -17,11 +17,22 @@ const h = vi.hoisted(() => ({
   } as SyncStatus,
   /** Edits in the outbox, as the badge counts them. */
   queued: 0,
+  /** Told of a new status, as the provider's store tells those following it. */
+  listeners: new Set<() => void>(),
 }));
-vi.mock("@/components/providers/sync-provider", () => ({
-  useSyncStatus: () => h.status,
-  useSync: () => ({ engine: () => null }),
-}));
+vi.mock("@/components/providers/sync-provider", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const subscribe = (listener: () => void) => {
+    h.listeners.add(listener);
+    return () => h.listeners.delete(listener);
+  };
+  return {
+    useSyncStatus: () => useSyncExternalStore(subscribe, () => h.status),
+    useSyncStatusOf: <T,>(select: (status: SyncStatus) => T) =>
+      useSyncExternalStore(subscribe, () => select(h.status)),
+    useSync: () => ({ engine: () => null }),
+  };
+});
 vi.mock("@/lib/hooks/data", () => ({ useOutboxCount: () => h.queued }));
 
 import { SyncBadge } from "@/components/shell/sync-badge";
@@ -47,6 +58,9 @@ afterEach(() => {
 function badge(status: Partial<SyncStatus>, queued = 0) {
   h.status = { ...h.status, ...status };
   h.queued = queued;
+  act(() => {
+    for (const listener of h.listeners) listener();
+  });
   act(() =>
     root.render(
       <TooltipProvider>
@@ -84,3 +98,4 @@ test("with nothing waiting, the badge says all is synced", () => {
   const shown = badge({ heldForVault: false });
   expect(shown.getAttribute("aria-label")).toBe(t.sync.idle);
 });
+

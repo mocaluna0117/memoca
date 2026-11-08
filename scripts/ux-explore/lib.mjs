@@ -269,3 +269,206 @@ export class Run {
     return actual;
   }
 }
+
+/* ------------------------------------------------------------ CPU profiles */
+
+/**
+ * Starts a CPU profile and marks, in it, where the page's clock stands: a
+ * short busy loop of a known name, run at a known performance.now(). Its
+ * samples line the profile up with times the page records (long tasks).
+ */
+export async function startProfile(cdp, page) {
+  await cdp.send("Profiler.enable");
+  await cdp.send("Profiler.setSamplingInterval", { interval: 200 });
+  await cdp.send("Profiler.start");
+  const mark = await page.evaluate(`(function __uxMark() {
+    const at = performance.now();
+    while (performance.now() - at < 12) {}
+    return at;
+  })()`);
+  return { mark };
+}
+
+/** Stops the profile started by {@link startProfile}: it, with the page time its own time 0 stands for. */
+export async function stopProfile(cdp, started) {
+  const { profile } = await cdp.send("Profiler.stop");
+  const byId = new Map(profile.nodes.map((node) => [node.id, node]));
+  let at = 0;
+  let markAt = null;
+  for (let index = 0; index < profile.samples.length; index += 1) {
+    at += (profile.timeDeltas[index] ?? 0) / 1000;
+    if (byId.get(profile.samples[index])?.callFrame.functionName === "__uxMark") {
+      markAt = at;
+      break;
+    }
+  }
+  return { profile, origin: markAt === null ? null : started.mark - markAt };
+}
+
+/** The chunk a frame's script is, by its URL. */
+const chunkOf = (node) => {
+  const { url, functionName } = node.callFrame;
+  if (!url) return functionName.startsWith("(") ? functionName : "(native)";
+  return url.replace(/^.*\/_next\/static\/chunks\//, "chunk:").replace(/\?.*$/, "");
+};
+
+/**
+ * Self time by function and by chunk, the longest first; `within`, only of
+ * samples in those windows of page time (needs the profile's `origin`).
+ */
+export function summarise({ profile, origin }, { top = 25, within = null } = {}) {
+  const byId = new Map(profile.nodes.map((node) => [node.id, node]));
+  const self = new Map();
+  let at = 0;
+  for (let index = 0; index < profile.samples.length; index += 1) {
+    const ms = (profile.timeDeltas[index] ?? 0) / 1000;
+    at += ms;
+    if (within) {
+      if (origin === null) break;
+      const page = origin + at;
+      if (!within.some(([from, to]) => page >= from && page <= to)) continue;
+    }
+    const node = byId.get(profile.samples[index]);
+    if (node.callFrame.functionName === "__uxMark") continue;
+    self.set(node, (self.get(node) ?? 0) + ms);
+  }
+  const byFunction = new Map();
+  const byChunk = new Map();
+  let busy = 0;
+  for (const [node, ms] of self) {
+    const { functionName, url, lineNumber, columnNumber } = node.callFrame;
+    if (functionName === "(idle)" || functionName === "(program)") continue;
+    busy += ms;
+    const key = `${functionName || "(anonymous)"} ${url ? `${url.split("/").pop()}:${lineNumber}:${columnNumber}` : ""}`;
+    byFunction.set(key, (byFunction.get(key) ?? 0) + ms);
+    byChunk.set(chunkOf(node), (byChunk.get(chunkOf(node)) ?? 0) + ms);
+  }
+  const sorted = (map, count) =>
+    [...map].sort((a, b) => b[1] - a[1]).slice(0, count).map(([name, ms]) => `${ms.toFixed(1).padStart(8)}ms  ${name}`);
+  return { busyMs: Math.round(busy), functions: sorted(byFunction, top), chunks: sorted(byChunk, 12) };
+}
+
+/** Long tasks the page recorded since `from` (page time), as windows. */
+export async function longTasksSince(page, from) {
+  return page.evaluate(
+    (since) => window.__ux.longtasks.filter((task) => task.start >= since).map((task) => [task.start, task.start + task.duration]),
+    from,
+  );
+}
+
+/** Prints a summary, and what ran inside the long tasks, if any. */
+export function printProfile(name, profiled, extra, hitches = []) {
+  const summary = summarise(profiled);
+  console.log(`\n=== ${name}: busy ${summary.busyMs}ms ${extra ?? ""}`);
+  console.log("-- chunks");
+  for (const line of summary.chunks) console.log(line);
+  console.log("-- functions");
+  for (const line of summary.functions) console.log(line);
+  if (hitches.length > 0) {
+    console.log(`--- long tasks: ${JSON.stringify(hitches.map(([from, to]) => Math.round(to - from)))}`);
+    const inside = summarise(profiled, { top: 15, within: hitches.map(([from, to]) => [from - 2, to + 2]) });
+    console.log(`--- inside them: busy ${inside.busyMs}ms`);
+    for (const line of inside.functions) console.log(line);
+  }
+}
+
+/* ------------------------------------------------------------- renders */
+
+/**
+ * Counts each React component's renders, by its name (readable in a build
+ * made with `next build --no-mangling`), as React DevTools learns of them:
+ * through the hook it looks for, installed before React loads. A fiber
+ * rendered in a commit has the PerformedWork flag.
+ */
+export const RENDERS_INIT = `
+(() => {
+  const counts = new Map();
+  /** Those drawn again with the same props: by a state, a context or a store of their own (where an update starts). */
+  const starts = new Map();
+  let counting = false;
+  const nameOf = (fiber) => {
+    const type = fiber.type;
+    if (!type || typeof type === "string") return null;
+    return type.displayName || type.name || type.render?.displayName || type.render?.name || type.type?.displayName || type.type?.name || null;
+  };
+  const walk = (fiber) => {
+    for (let at = fiber; at; at = at.sibling) {
+      if (counting && (at.flags & 1) === 1 && (at.tag === 0 || at.tag === 1 || at.tag === 11 || at.tag === 14 || at.tag === 15)) {
+        const name = nameOf(at);
+        if (name) {
+          counts.set(name, (counts.get(name) ?? 0) + 1);
+          if (at.alternate && at.alternate.memoizedProps === at.memoizedProps) {
+            // Which hook changed: the index of the first whose state is not the one before.
+            let hook = at.memoizedState, before = at.alternate.memoizedState, index = 0, changed = -1;
+            while (hook && before) {
+              if (hook.memoizedState !== before.memoizedState) { changed = index; break; }
+              hook = hook.next; before = before.next; index += 1;
+            }
+            const key = name + "#" + (changed < 0 ? "context" : changed);
+            starts.set(key, (starts.get(key) ?? 0) + 1);
+          }
+        }
+      }
+      // A subtree left as it was (its children the same fibers as before) was not drawn this time.
+      if (at.child && !(at.alternate && at.alternate.child === at.child)) walk(at.child);
+    }
+  };
+  window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+    supportsFiber: true,
+    renderers: new Map(),
+    inject(renderer) { this.renderers.set(1, renderer); return 1; },
+    onCommitFiberRoot(_id, root) { if (counting) walk(root.current); },
+    onCommitFiberUnmount() {},
+    onPostCommitFiberRoot() {},
+    checkDCE() {},
+  };
+  window.__uxRenders = {
+    start() { counts.clear(); starts.clear(); counting = true; },
+    stop() { counting = false; return [...counts].sort((a, b) => b[1] - a[1]); },
+    starts() { return [...starts].sort((a, b) => b[1] - a[1]); },
+  };
+})();`;
+
+/**
+ * Fills this device with `count` notes more, as a person who has used
+ * Memoca a while has: copies of a note made in the app (its row as the app
+ * wrote it), each with a name and a first line of its own, written straight
+ * into the local database. On this device only (they are never sent), for
+ * what the lists and the queries behind them cost. The page is loaded again
+ * after, for what it reads to be read afresh.
+ */
+export async function seedNotes(page, count) {
+  await createNote(page, "見本のメモ", "見本の本文です。");
+  await page.waitForTimeout(1500);
+  await page.evaluate(async (count) => {
+    const databases = await indexedDB.databases();
+    const found = databases.find((entry) => entry.name?.startsWith("memoca"));
+    const opened = await new Promise((resolve, reject) => {
+      const request = indexedDB.open(found.name);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const all = await new Promise((resolve, reject) => {
+      const request = opened.transaction("notes", "readonly").objectStore("notes").getAll();
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const model = all.find((note) => note.title === "見本のメモ");
+    const store = opened.transaction("notes", "readwrite").objectStore("notes");
+    const now = Date.now();
+    for (let index = 0; index < count; index += 1) {
+      store.put({
+        ...model,
+        noteId: `seed-${index}-${Math.random().toString(36).slice(2, 10)}`,
+        title: `メモ ${index + 1}`,
+        preview: `${index + 1} 番目のメモの一行目です。少し長めに書いておきます。`,
+        sortKey: `${model.sortKey}${String(index).padStart(4, "0")}`,
+        updatedAt: now - index * 60_000,
+      });
+    }
+    await new Promise((resolve) => (store.transaction.oncomplete = resolve));
+    opened.close();
+  }, count);
+  await page.reload();
+  await page.getByRole("heading", { name: "すべてのメモ" }).first().waitFor({ timeout: 30_000 }).catch(() => {});
+}

@@ -1,8 +1,107 @@
 diff --git a/dist/y-prosemirror.cjs b/dist/y-prosemirror.cjs
-index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..543d0c89160b7b85d2e611f70053da234fa8ebe5 100644
+index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..661d0599c60aedeb57a1250cd5d482cfc53df672 100644
 --- a/dist/y-prosemirror.cjs
 +++ b/dist/y-prosemirror.cjs
-@@ -1182,8 +1182,14 @@ const attributesToMarks = (attrs, schema) => {
+@@ -297,12 +297,18 @@ const ySyncPlugin = (yXmlFragment, {
+                   um.stopCapturing();
+                 }
+               }
+-              binding.mux(() => {
+-                /** @type {Y.Doc} */ (pluginState.doc).transact((tr) => {
+-                  tr.meta.set('addToHistory', pluginState.addToHistory);
+-                  binding._prosemirrorChanged(view.state.doc);
+-                }, ySyncPluginKey);
+-              });
++              // Memoca: what was typed, written by the binding itself (see beforeAllTransactions).
++              binding._memocaLocal = true;
++              try {
++                binding.mux(() => {
++                  /** @type {Y.Doc} */ (pluginState.doc).transact((tr) => {
++                    tr.meta.set('addToHistory', pluginState.addToHistory);
++                    binding._prosemirrorChanged(view.state.doc);
++                  }, ySyncPluginKey);
++                });
++              } finally {
++                binding._memocaLocal = false;
++              }
+             }
+           }
+         },
+@@ -407,7 +413,10 @@ class ProsemirrorBinding {
+      */
+     this.beforeTransactionSelection = null;
+     this.beforeAllTransactions = () => {
+-      if (this.beforeTransactionSelection === null && this.prosemirrorView != null) {
++      // Memoca: not for the binding's own, writing what was typed: nothing
++      // reads it then (its own changes are not rendered back), and it walks
++      // the document from its start to the caret, every key.
++      if (this.beforeTransactionSelection === null && this.prosemirrorView != null && !this._memocaLocal) {
+         this.beforeTransactionSelection = getRelativeSelection(
+           this,
+           this.prosemirrorView.state
+@@ -722,10 +731,14 @@ class ProsemirrorBinding {
+   _prosemirrorChanged (doc) {
+     this.doc.transact(() => {
+       updateYFragment(this.doc, this.type, doc, this);
+-      this.beforeTransactionSelection = getRelativeSelection(
+-        this,
+-        this.prosemirrorView.state
+-      );
++      // Memoca: let go of as the transaction ends, unread, when it is the
++      // binding's own (see beforeAllTransactions).
++      if (!this._memocaLocal) {
++        this.beforeTransactionSelection = getRelativeSelection(
++          this,
++          this.prosemirrorView.state
++        );
++      }
+     }, ySyncPluginKey);
+   }
+ 
+@@ -1047,7 +1060,13 @@ const equalYTextPText = (ytext, ptexts) => {
+  * @param {Y.XmlElement|Y.XmlText|Y.XmlHook} ytype
+  * @param {any|Array<any>} pnode
+  */
+-const equalYTypePNode = (ytype, pnode) => {
++// Memoca: `mapping`, where given, is the binding's: a child it maps to the
++// very node it is compared with is that node, as the scans in
++// updateYFragment already take it, and is not compared all through. A note's
++// blocks are all in one block group, a new node with every edit, compared
++// whole from the root down: typing at the end of a long note compared every
++// block, twice, with every key.
++const equalYTypePNode = (ytype, pnode, mapping) => {
+   if (
+     ytype instanceof Y__namespace.XmlElement && !(pnode instanceof Array) &&
+     matchNodeName(ytype, pnode)
+@@ -1056,7 +1075,8 @@ const equalYTypePNode = (ytype, pnode) => {
+     return ytype._length === normalizedContent.length &&
+       equalAttrs(ytype.getAttributes(), pnode.attrs) &&
+       ytype.toArray().every((ychild, i) =>
+-        equalYTypePNode(ychild, normalizedContent[i])
++        (mapping != null && mappedIdentity(mapping.get(ychild), normalizedContent[i])) ||
++        equalYTypePNode(ychild, normalizedContent[i], mapping)
+       )
+   }
+   return ytype instanceof Y__namespace.XmlText && pnode instanceof Array &&
+@@ -1094,7 +1114,7 @@ const computeChildEqualityFactor = (ytype, pnode, meta) => {
+     const leftP = pChildren[left];
+     if (mappedIdentity(meta.mapping.get(leftY), leftP)) {
+       foundMappedChild = true; // definite (good) match!
+-    } else if (!equalYTypePNode(leftY, leftP)) {
++    } else if (!equalYTypePNode(leftY, leftP, meta.mapping)) {
+       break
+     }
+   }
+@@ -1103,7 +1123,7 @@ const computeChildEqualityFactor = (ytype, pnode, meta) => {
+     const rightP = pChildren[pChildCnt - right - 1];
+     if (mappedIdentity(meta.mapping.get(rightY), rightP)) {
+       foundMappedChild = true;
+-    } else if (!equalYTypePNode(rightY, rightP)) {
++    } else if (!equalYTypePNode(rightY, rightP, meta.mapping)) {
+       break
+     }
+   }
+@@ -1182,8 +1202,14 @@ const attributesToMarks = (attrs, schema) => {
     */
    const marks = [];
    for (const markName in attrs) {
@@ -18,7 +117,59 @@ index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..543d0c89160b7b85d2e611f70053da23
    }
    return marks
  };
-@@ -2166,6 +2172,16 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+@@ -1257,7 +1283,7 @@ const updateYFragment = (y, yDomFragment, pNode, meta) => {
+     const leftY = yChildren[left];
+     const leftP = pChildren[left];
+     if (!mappedIdentity(meta.mapping.get(leftY), leftP)) {
+-      if (equalYTypePNode(leftY, leftP)) {
++      if (equalYTypePNode(leftY, leftP, meta.mapping)) {
+         // update mapping
+         meta.mapping.set(leftY, leftP);
+       } else {
+@@ -1270,7 +1296,7 @@ const updateYFragment = (y, yDomFragment, pNode, meta) => {
+     const rightY = yChildren[yChildCnt - right - 1];
+     const rightP = pChildren[pChildCnt - right - 1];
+     if (!mappedIdentity(meta.mapping.get(rightY), rightP)) {
+-      if (equalYTypePNode(rightY, rightP)) {
++      if (equalYTypePNode(rightY, rightP, meta.mapping)) {
+         // update mapping
+         meta.mapping.set(rightY, rightP);
+       } else {
+@@ -2121,6 +2147,18 @@ const defaultDeleteFilter = (item, protectedNodes) => !(item instanceof Y.Item)
+  * @param {any[]} [options.trackedOrigins]
+  * @param {import('yjs').UndoManager | null} [options.undoManager]
+  */
++/**
++ * Memoca: whether the undo manager's next change starts a step of its own
++ * rather than joining the last (Y.UndoManager: within captureTimeout of the
++ * last, it joins it).
++ *
++ * @param {any} undoManager
++ */
++const startsStep = (undoManager) =>
++  undoManager.undoStack.length === 0 ||
++  undoManager.lastChange === 0 ||
++  Date.now() - undoManager.lastChange >= undoManager.captureTimeout;
++
+ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins = [], undoManager = null } = {}) => new prosemirrorState.Plugin({
+   key: yUndoPluginKey,
+   state: {
+@@ -2147,7 +2185,13 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+       if (binding) {
+         return {
+           undoManager,
+-          prevSel: getRelativeSelection(binding, oldState),
++          // Memoca: read only where the undo manager will start a new step,
++          // the one it is kept for (stack-item-added): it walks the document
++          // from its start to the caret, and this runs with every
++          // transaction, each key and each move of the caret.
++          prevSel: startsStep(undoManager) || val.prevSel == null
++            ? getRelativeSelection(binding, oldState)
++            : val.prevSel,
+           hasUndoOps,
+           hasRedoOps
+         }
+@@ -2166,6 +2210,16 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
    view: view => {
      const ystate = ySyncPluginKey.getState(view.state);
      const undoManager = yUndoPluginKey.getState(view.state).undoManager;
@@ -35,7 +186,7 @@ index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..543d0c89160b7b85d2e611f70053da23
      undoManager.on('stack-item-added', ({ stackItem }) => {
        const binding = ystate.binding;
        if (binding) {
-@@ -2181,6 +2197,7 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
+@@ -2181,6 +2235,7 @@ const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins =
      return {
        destroy: () => {
          undoManager.destroy();
@@ -44,10 +195,109 @@ index de4d1e6609bba2ffbc2a57048023cdf5bad44b18..543d0c89160b7b85d2e611f70053da23
      }
    }
 diff --git a/src/plugins/sync-plugin.js b/src/plugins/sync-plugin.js
-index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..9c3edc413bfb7a9e1821b79b945bec9a93f123e5 100644
+index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..81339bbd1fe82cc3c7ed24b85c15014426e41d23 100644
 --- a/src/plugins/sync-plugin.js
 +++ b/src/plugins/sync-plugin.js
-@@ -1108,8 +1108,14 @@ export const attributesToMarks = (attrs, schema) => {
+@@ -223,12 +223,18 @@ export const ySyncPlugin = (yXmlFragment, {
+                   um.stopCapturing()
+                 }
+               }
+-              binding.mux(() => {
+-                /** @type {Y.Doc} */ (pluginState.doc).transact((tr) => {
+-                  tr.meta.set('addToHistory', pluginState.addToHistory)
+-                  binding._prosemirrorChanged(view.state.doc)
+-                }, ySyncPluginKey)
+-              })
++              // Memoca: what was typed, written by the binding itself (see beforeAllTransactions).
++              binding._memocaLocal = true
++              try {
++                binding.mux(() => {
++                  /** @type {Y.Doc} */ (pluginState.doc).transact((tr) => {
++                    tr.meta.set('addToHistory', pluginState.addToHistory)
++                    binding._prosemirrorChanged(view.state.doc)
++                  }, ySyncPluginKey)
++                })
++              } finally {
++                binding._memocaLocal = false
++              }
+             }
+           }
+         },
+@@ -333,7 +339,10 @@ export class ProsemirrorBinding {
+      */
+     this.beforeTransactionSelection = null
+     this.beforeAllTransactions = () => {
+-      if (this.beforeTransactionSelection === null && this.prosemirrorView != null) {
++      // Memoca: not for the binding's own, writing what was typed: nothing
++      // reads it then (its own changes are not rendered back), and it walks
++      // the document from its start to the caret, every key.
++      if (this.beforeTransactionSelection === null && this.prosemirrorView != null && !this._memocaLocal) {
+         this.beforeTransactionSelection = getRelativeSelection(
+           this,
+           this.prosemirrorView.state
+@@ -648,10 +657,14 @@ export class ProsemirrorBinding {
+   _prosemirrorChanged (doc) {
+     this.doc.transact(() => {
+       updateYFragment(this.doc, this.type, doc, this)
+-      this.beforeTransactionSelection = getRelativeSelection(
+-        this,
+-        this.prosemirrorView.state
+-      )
++      // Memoca: let go of as the transaction ends, unread, when it is the
++      // binding's own (see beforeAllTransactions).
++      if (!this._memocaLocal) {
++        this.beforeTransactionSelection = getRelativeSelection(
++          this,
++          this.prosemirrorView.state
++        )
++      }
+     }, ySyncPluginKey)
+   }
+ 
+@@ -973,7 +986,13 @@ const equalYTextPText = (ytext, ptexts) => {
+  * @param {Y.XmlElement|Y.XmlText|Y.XmlHook} ytype
+  * @param {any|Array<any>} pnode
+  */
+-const equalYTypePNode = (ytype, pnode) => {
++// Memoca: `mapping`, where given, is the binding's: a child it maps to the
++// very node it is compared with is that node, as the scans in
++// updateYFragment already take it, and is not compared all through. A note's
++// blocks are all in one block group, a new node with every edit, compared
++// whole from the root down: typing at the end of a long note compared every
++// block, twice, with every key.
++const equalYTypePNode = (ytype, pnode, mapping) => {
+   if (
+     ytype instanceof Y.XmlElement && !(pnode instanceof Array) &&
+     matchNodeName(ytype, pnode)
+@@ -982,7 +1001,8 @@ const equalYTypePNode = (ytype, pnode) => {
+     return ytype._length === normalizedContent.length &&
+       equalAttrs(ytype.getAttributes(), pnode.attrs) &&
+       ytype.toArray().every((ychild, i) =>
+-        equalYTypePNode(ychild, normalizedContent[i])
++        (mapping != null && mappedIdentity(mapping.get(ychild), normalizedContent[i])) ||
++        equalYTypePNode(ychild, normalizedContent[i], mapping)
+       )
+   }
+   return ytype instanceof Y.XmlText && pnode instanceof Array &&
+@@ -1020,7 +1040,7 @@ const computeChildEqualityFactor = (ytype, pnode, meta) => {
+     const leftP = pChildren[left]
+     if (mappedIdentity(meta.mapping.get(leftY), leftP)) {
+       foundMappedChild = true // definite (good) match!
+-    } else if (!equalYTypePNode(leftY, leftP)) {
++    } else if (!equalYTypePNode(leftY, leftP, meta.mapping)) {
+       break
+     }
+   }
+@@ -1029,7 +1049,7 @@ const computeChildEqualityFactor = (ytype, pnode, meta) => {
+     const rightP = pChildren[pChildCnt - right - 1]
+     if (mappedIdentity(meta.mapping.get(rightY), rightP)) {
+       foundMappedChild = true
+-    } else if (!equalYTypePNode(rightY, rightP)) {
++    } else if (!equalYTypePNode(rightY, rightP, meta.mapping)) {
+       break
+     }
+   }
+@@ -1108,8 +1128,14 @@ export const attributesToMarks = (attrs, schema) => {
     */
    const marks = []
    for (const markName in attrs) {
@@ -63,11 +313,63 @@ index dccfb76918c8c70fe5a5b12372cdabcc9d8c58dd..9c3edc413bfb7a9e1821b79b945bec9a
    }
    return marks
  }
+@@ -1183,7 +1209,7 @@ export const updateYFragment = (y, yDomFragment, pNode, meta) => {
+     const leftY = yChildren[left]
+     const leftP = pChildren[left]
+     if (!mappedIdentity(meta.mapping.get(leftY), leftP)) {
+-      if (equalYTypePNode(leftY, leftP)) {
++      if (equalYTypePNode(leftY, leftP, meta.mapping)) {
+         // update mapping
+         meta.mapping.set(leftY, leftP)
+       } else {
+@@ -1196,7 +1222,7 @@ export const updateYFragment = (y, yDomFragment, pNode, meta) => {
+     const rightY = yChildren[yChildCnt - right - 1]
+     const rightP = pChildren[pChildCnt - right - 1]
+     if (!mappedIdentity(meta.mapping.get(rightY), rightP)) {
+-      if (equalYTypePNode(rightY, rightP)) {
++      if (equalYTypePNode(rightY, rightP, meta.mapping)) {
+         // update mapping
+         meta.mapping.set(rightY, rightP)
+       } else {
 diff --git a/src/plugins/undo-plugin.js b/src/plugins/undo-plugin.js
-index 7c9448ba4215a9904390468d8d22d5d7b6656435..ad35c61d5e3d5a27965b90af9faa7cee041a99ba 100644
+index 7c9448ba4215a9904390468d8d22d5d7b6656435..1d8a4bf2a7952760c80d6108da0b86a8ad0f8bd5 100644
 --- a/src/plugins/undo-plugin.js
 +++ b/src/plugins/undo-plugin.js
-@@ -104,6 +104,16 @@ export const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOri
+@@ -59,6 +59,18 @@ export const defaultDeleteFilter = (item, protectedNodes) => !(item instanceof I
+  * @param {any[]} [options.trackedOrigins]
+  * @param {import('yjs').UndoManager | null} [options.undoManager]
+  */
++/**
++ * Memoca: whether the undo manager's next change starts a step of its own
++ * rather than joining the last (Y.UndoManager: within captureTimeout of the
++ * last, it joins it).
++ *
++ * @param {any} undoManager
++ */
++const startsStep = (undoManager) =>
++  undoManager.undoStack.length === 0 ||
++  undoManager.lastChange === 0 ||
++  Date.now() - undoManager.lastChange >= undoManager.captureTimeout
++
+ export const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOrigins = [], undoManager = null } = {}) => new Plugin({
+   key: yUndoPluginKey,
+   state: {
+@@ -85,7 +97,13 @@ export const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOri
+       if (binding) {
+         return {
+           undoManager,
+-          prevSel: getRelativeSelection(binding, oldState),
++          // Memoca: read only where the undo manager will start a new step,
++          // the one it is kept for (stack-item-added): it walks the document
++          // from its start to the caret, and this runs with every
++          // transaction, each key and each move of the caret.
++          prevSel: startsStep(undoManager) || val.prevSel == null
++            ? getRelativeSelection(binding, oldState)
++            : val.prevSel,
+           hasUndoOps,
+           hasRedoOps
+         }
+@@ -104,6 +122,16 @@ export const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOri
    view: view => {
      const ystate = ySyncPluginKey.getState(view.state)
      const undoManager = yUndoPluginKey.getState(view.state).undoManager
@@ -84,7 +386,7 @@ index 7c9448ba4215a9904390468d8d22d5d7b6656435..ad35c61d5e3d5a27965b90af9faa7cee
      undoManager.on('stack-item-added', ({ stackItem }) => {
        const binding = ystate.binding
        if (binding) {
-@@ -119,6 +129,7 @@ export const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOri
+@@ -119,6 +147,7 @@ export const yUndoPlugin = ({ protectedNodes = defaultProtectedNodes, trackedOri
      return {
        destroy: () => {
          undoManager.destroy()

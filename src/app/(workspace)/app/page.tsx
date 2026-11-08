@@ -6,7 +6,7 @@ import { NoteList } from "@/components/notes/note-list";
 import { NotePane } from "@/components/notes/note-pane";
 import { PANE_WIDTH_CLASS, PaneResizer, paneWidthStyle } from "@/components/shell/pane-resizer";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useFolder, useNote } from "@/lib/hooks/data";
+import { useFolder, useNoteFolder } from "@/lib/hooks/data";
 import { useMediaQuery } from "@/lib/hooks/use-client-value";
 import { useFolderName } from "@/lib/hooks/use-decrypted";
 import { NOTE_LIST, usePaneWidth } from "@/lib/hooks/use-pane-width";
@@ -34,10 +34,11 @@ function Workspace() {
   // sidebar, in no folder, opened from there.
   const [mode] = useSidebarMode();
   const phone = useMediaQuery("(max-width: 767px)");
-  const open = useNote(selection.noteId);
+  // Its folder alone: the whole note is written with every flush of it being
+  // typed in, and this, drawn again with it, drew the open note again too.
+  const openFolder = useNoteFolder(selection.noteId);
   const listShown =
-    mode === "list" ||
-    (selection.folderId === null && (selection.pinned || open?.folderId !== null));
+    mode === "list" || (selection.folderId === null && (selection.pinned || openFolder !== null));
 
   return (
     <div className="flex flex-1 md:min-h-0">
