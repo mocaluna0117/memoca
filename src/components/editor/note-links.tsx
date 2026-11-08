@@ -1,6 +1,7 @@
 "use client";
 
 import { type BlockNoteEditor, createExtension } from "@blocknote/core";
+import { isQuickTodo } from "@/lib/quick/todo-id";
 import { SuggestionMenu } from "@blocknote/core/extensions";
 import { SuggestionMenuController } from "@blocknote/react";
 import { FileText, Link2 } from "lucide-react";
@@ -17,7 +18,14 @@ const LINK_TRIGGER_JA = "「「";
 async function notesFor(noteId: string, query: string) {
   const wanted = query.trim().toLowerCase();
   const notes = (await db().notes.orderBy("updatedAt").reverse().toArray())
-    .filter((note) => note.noteId !== noteId && !note.deletedAt && !note.purged && !note.locked)
+    .filter(
+      (note) =>
+        note.noteId !== noteId &&
+        !note.deletedAt &&
+        !note.purged &&
+        !note.locked &&
+        !isQuickTodo(note.noteId),
+    )
     .map((note) => ({ note, name: noteName(note.title, note.preview).text }))
     .filter(({ name }) => !wanted || name.toLowerCase().includes(wanted));
   return notes.slice(0, 20);

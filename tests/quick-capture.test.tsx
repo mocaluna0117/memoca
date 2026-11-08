@@ -1,4 +1,5 @@
 import "fake-indexeddb/auto";
+import type React from "react";
 import { act } from "react";
 import { type Root, createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
@@ -109,6 +110,15 @@ vi.mock("@/components/notes/quick-editor", async () => {
   }
   return { QuickEditor };
 });
+// The Todo's tab, as a stand-in: what it is is tested in the browser (e2e/quick-todo.spec.ts).
+vi.mock("@/components/notes/quick-todo", () => ({
+  TodoCapture: ({ strip }: { strip: React.ReactNode }) => (
+    <main>
+      {strip}
+      <p data-todo-stand-in="">Todo</p>
+    </main>
+  ),
+}));
 // The folders to choose from, as buttons: which may be chosen is the quick
 // note's own rule (tests/quick-folder.test.ts).
 vi.mock("@/components/folders/folder-picker", () => ({
@@ -1277,3 +1287,47 @@ describe("the quick note, as it opens", () => {
     expect(document.activeElement).toBe(field());
   });
 });
+
+describe("the quick note's Todo tab", () => {
+  const tabs = () =>
+    Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent);
+  const todoButton = () => host.querySelector<HTMLButtonElement>('button[aria-label="Todo を開く"]')!;
+  const standIn = () => host.querySelector("[data-todo-stand-in]");
+  async function press(element: HTMLElement) {
+    await act(async () => element.click());
+    await settle();
+  }
+
+  test("opened by its button, goes first and is shown; opened again, it is shown, not added twice", async () => {
+    await render();
+    await type("書きかけ");
+    await press(todoButton());
+    expect(tabs()).toEqual(["Todo", "書きかけ"]);
+    expect(standIn()).not.toBeNull();
+    // Back to the other: its draft as it was.
+    await press(host.querySelector<HTMLButtonElement>('[role="tab"]:not([aria-selected="true"])')!);
+    expect(field().value).toBe("書きかけ");
+    await press(todoButton());
+    expect(tabs()).toEqual(["Todo", "書きかけ"]);
+    expect(standIn()).not.toBeNull();
+  });
+
+  test("closed, nothing is asked: what is in it is kept, in the account", async () => {
+    await render();
+    await press(todoButton());
+    await press(host.querySelector<HTMLButtonElement>('button[aria-label="Todo のタブを閉じる"]')!);
+    expect(document.querySelector('[role="alertdialog"]')).toBeNull();
+    expect(tabs()).toEqual(["新しいメモ"]);
+  });
+
+  test("what is shared never goes into it: a tab of its own", async () => {
+    await render();
+    await press(todoButton());
+    await act(async () => root.unmount());
+    root = createRoot(host);
+    await render("window=1&text=共有された文");
+    expect(field().value).toBe("共有された文");
+    expect(tabs()).toEqual(["Todo", "新しいメモ", "共有された文"]);
+  });
+});
+

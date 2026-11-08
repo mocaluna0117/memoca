@@ -1,6 +1,6 @@
 "use client";
 
-import { Plus, X } from "lucide-react";
+import { ListChecks, Plus, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import {
   AlertDialog,
@@ -18,7 +18,14 @@ import { quickLines } from "@/lib/quick/text";
 import { cn } from "@/lib/utils";
 
 /** A tab as the strip shows it: what is in it, as far as it is known, and whether all of it is saved. */
-export type QuickTab = { id: string; text: string; images: number; unsaved: boolean };
+export type QuickTab = {
+  id: string;
+  text: string;
+  images: number;
+  unsaved: boolean;
+  /** The Todo's tab (lib/quick/todo): its own kind, always saved. */
+  todo?: boolean;
+};
 
 /** A tab's name: its first line, or what it holds, or that it is new. */
 export function tabName(tab: Pick<QuickTab, "text" | "images">): string {
@@ -43,6 +50,7 @@ export function QuickTabs({
   onShow,
   onOpen,
   onClose,
+  onOpenTodo,
 }: {
   tabs: QuickTab[];
   active: string;
@@ -51,6 +59,8 @@ export function QuickTabs({
   onShow: (id: string) => void;
   onOpen: () => void;
   onClose: (id: string) => void;
+  /** The Todo's tab opened, or shown if it is open. */
+  onOpenTodo: () => void;
 }) {
   const strip = useRef<HTMLDivElement>(null);
   // The tab shown is in sight, one opened at the end included.
@@ -66,7 +76,7 @@ export function QuickTabs({
         ref={strip}
         role="tablist"
         aria-label={t.quick.tabs}
-        className="flex min-w-0 flex-1 items-end gap-0.5 overflow-x-auto [scrollbar-width:none]"
+        className="flex min-w-0 flex-1 [scrollbar-width:none] items-end gap-0.5 overflow-x-auto"
       >
         {tabs.map((tab) => {
           const selected = tab.id === active;
@@ -88,8 +98,11 @@ export function QuickTabs({
                   role="tab"
                   aria-selected={selected}
                   onClick={() => onShow(tab.id)}
-                  className="min-w-0 truncate py-1.5 pl-2.5 pr-1 text-left outline-none focus-visible:underline"
+                  className="min-w-0 truncate py-1.5 pr-1 pl-2.5 text-left outline-none focus-visible:underline"
                 >
+                  {tab.todo ? (
+                    <ListChecks className="mr-1 inline size-3.5 align-[-2px]" aria-hidden />
+                  ) : null}
                   {name}
                 </button>
               </Tip>
@@ -101,7 +114,9 @@ export function QuickTabs({
                     onClick={() => onClose(tab.id)}
                     className={cn(
                       "mr-1 flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted",
-                      selected ? "opacity-70" : "opacity-0 group-hover:opacity-70 focus-visible:opacity-70 pointer-coarse:opacity-70",
+                      selected
+                        ? "opacity-70"
+                        : "opacity-0 group-hover:opacity-70 focus-visible:opacity-70 pointer-coarse:opacity-70",
                     )}
                   >
                     <X className="size-3" aria-hidden />
@@ -124,6 +139,18 @@ export function QuickTabs({
           onClick={onOpen}
         >
           <Plus className="size-4" aria-hidden />
+        </Button>
+      </Tip>
+      <Tip label={t.quick.openTodo}>
+        <Button
+          variant="ghost"
+          size="icon"
+          className="mb-0.5 size-7 shrink-0"
+          aria-label={t.quick.openTodo}
+          aria-pressed={tabs.some((tab) => tab.todo && tab.id === active)}
+          onClick={onOpenTodo}
+        >
+          <ListChecks className="size-4" aria-hidden />
         </Button>
       </Tip>
     </div>

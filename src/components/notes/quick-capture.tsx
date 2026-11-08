@@ -27,6 +27,7 @@ import {
 import * as Y from "yjs";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { QuickTips, Tip } from "@/components/notes/quick-tip";
+import { TodoCapture } from "@/components/notes/quick-todo";
 import { QuickEditor, type QuickEditorHandle } from "@/components/notes/quick-editor";
 import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
@@ -58,6 +59,7 @@ import {
   loadTabs,
   markSaved,
   openTab,
+  openTodoTab,
   showTab,
   unsaved,
   useQuickTabs,
@@ -78,6 +80,7 @@ import {
 } from "@/lib/quick/folder";
 import { SAVE_KEYS } from "@/lib/quick/keys";
 import { useQuickMode } from "@/lib/quick/mode";
+import { TODO_TAB_ID } from "@/lib/quick/todo-id";
 import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, holdsShared, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
@@ -285,8 +288,10 @@ function Tabbed({
       }
       if (shared) {
         const there = await loadDraft(userKey, tabs.active);
-        // Into the tab shown if it is empty (or holds it already).
-        const busy = there && there.text.trim() !== "" && !holdsShared(there.text, shared);
+        // Into the tab shown if it is empty (or holds it already); never the Todo's.
+        const busy =
+          tabs.active === TODO_TAB_ID ||
+          (there && there.text.trim() !== "" && !holdsShared(there.text, shared));
         const tab = busy ? ((await openTab(userKey)) ?? tabs.active) : tabs.active;
         if (current) setShare({ tab, text: shared });
       }
@@ -308,6 +313,9 @@ function Tabbed({
 
   const active = live?.tabs.active ?? null;
   const tabs: QuickTab[] = (live?.tabs.ids ?? []).map((id) => {
+    // The Todo's: written as it is typed, never anything to save.
+    if (id === TODO_TAB_ID)
+      return { id, text: t.quick.todo, images: 0, unsaved: false, todo: true };
     if (typed?.id === id) return typed;
     const draft = live?.drafts.get(id);
     const images = draft?.images ?? [];
@@ -334,6 +342,11 @@ function Tabbed({
   const open = () => {
     moving();
     void openTab(userKey);
+  };
+  const openTodo = () => {
+    if (active === TODO_TAB_ID) return;
+    moving();
+    void openTodoTab(userKey);
   };
   /** Closes a tab: at once if there is nothing in it, asked about first if there is. */
   const close = async (id: string) => {
@@ -382,31 +395,39 @@ function Tabbed({
 
   if (!ready || !live || !active) return null;
   const asked = closing ? tabs.find((tab) => tab.id === closing) : undefined;
+  const strip = (
+    <QuickTabs
+      tabs={tabs}
+      active={active}
+      canOpen={tabs.length < MAX_TABS}
+      onShow={show}
+      onOpen={open}
+      onClose={(id) => void close(id)}
+      onOpenTodo={openTodo}
+    />
+  );
   return (
     <>
-      <Capture
-        key={active}
-        handle={capture}
-        tabId={active}
-        userKey={userKey}
-        folder={folder}
-        onPickFolder={() => setPicking(true)}
-        allowance={allowance}
-        shared={share?.tab === active ? share.text : ""}
-        initialStatus={notice}
-        escapeEnabled={closing === null && !picking}
-        onText={(text, images, changed) => setTyped({ id: active, text, images, unsaved: changed })}
-        strip={
-          <QuickTabs
-            tabs={tabs}
-            active={active}
-            canOpen={tabs.length < MAX_TABS}
-            onShow={show}
-            onOpen={open}
-            onClose={(id) => void close(id)}
-          />
-        }
-      />
+      {active === TODO_TAB_ID ? (
+        <TodoCapture strip={strip} escapeEnabled={closing === null && !picking} />
+      ) : (
+        <Capture
+          key={active}
+          handle={capture}
+          tabId={active}
+          userKey={userKey}
+          folder={folder}
+          onPickFolder={() => setPicking(true)}
+          allowance={allowance}
+          shared={share?.tab === active ? share.text : ""}
+          initialStatus={notice}
+          escapeEnabled={closing === null && !picking}
+          onText={(text, images, changed) =>
+            setTyped({ id: active, text, images, unsaved: changed })
+          }
+          strip={strip}
+        />
+      )}
       <CloseTabDialog
         name={asked ? tabName(asked) : ""}
         open={asked !== undefined}

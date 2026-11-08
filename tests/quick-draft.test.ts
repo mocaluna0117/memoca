@@ -248,3 +248,19 @@ describe("keepDraft, told how to read what it holds", () => {
     kept.dispose();
   });
 });
+
+describe("the Todo's tab", () => {
+  test("opened, it goes first and is shown; opened again, it is shown, not added twice", async () => {
+    const { loadTabs, openTab, openTodoTab, showTab } = await import("@/lib/quick/draft");
+    const { TODO_TAB_ID } = await import("@/lib/quick/todo-id");
+    const first = (await loadTabs(ME)).active;
+    await openTab(ME);
+    const opened = await openTodoTab(ME);
+    expect(opened.ids[0]).toBe(TODO_TAB_ID);
+    expect(opened.active).toBe(TODO_TAB_ID);
+    await showTab(ME, first);
+    const again = await openTodoTab(ME);
+    expect(again.ids.filter((id) => id === TODO_TAB_ID)).toHaveLength(1);
+    expect(again.active).toBe(TODO_TAB_ID);
+  });
+});

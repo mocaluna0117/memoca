@@ -1345,6 +1345,28 @@ export class SyncEngine {
   }
 
   /** Warms the cache with the notes the person is most likely to open. */
+  /**
+   * A note's body fetched now, if this device has none of it (or one under
+   * another key, or behind a snapshot): for one that is not to be shown
+   * empty and written into before its body is here (the quick note's Todo,
+   * whose first line would otherwise be a second list beside the one the
+   * server has).
+   */
+  async ensureBody(noteId: string): Promise<void> {
+    const database = db();
+    const note = await database.notes.get(noteId);
+    if (!note || note.purged) return;
+    const body = await database.bodies.get(noteId);
+    if (
+      !body ||
+      body.keyEpoch !== note.keyEpoch ||
+      body.throughSeq < note.snapshotSeq ||
+      body.throughSeq < note.lastUpdateSeq
+    ) {
+      await this.fetchBodies([noteId]);
+    }
+  }
+
   async prefetchBodies(): Promise<void> {
     const database = db();
     const notes = await database.notes

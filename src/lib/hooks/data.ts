@@ -14,6 +14,7 @@ import type { Folder, FolderNode, Note, Stamp } from "@/lib/types";
 import { LOCKED_LABEL } from "@/lib/hooks/use-decrypted";
 import { noteName } from "@/lib/note-name";
 import { TEMPLATES_FOLDER_ID } from "@/lib/sync/mutations";
+import { isQuickTodo } from "@/lib/quick/todo-id";
 
 const EMPTY: never[] = [];
 
@@ -132,7 +133,10 @@ export function useTopLevelNotes(): Note[] {
   // read through `filter`, one by one, the whole table was walked a row at
   // a time with every write to it, twice a second as a note was typed in.
   const notes = useSharedRows(
-    async () => (await db().notes.toArray()).filter((note) => note.folderId === null),
+    async () =>
+      (await db().notes.toArray()).filter(
+        (note) => note.folderId === null && !isQuickTodo(note.noteId),
+      ),
     [],
     noteKey,
   );
@@ -252,7 +256,11 @@ export type TrashEntry =
  */
 export function useTrash(): TrashEntry[] {
   const folders = useFolders();
-  const notes = useSharedRows(() => db().notes.toArray(), [], noteKey);
+  const notes = useSharedRows(
+    async () => (await db().notes.toArray()).filter((note) => !isQuickTodo(note.noteId)),
+    [],
+    noteKey,
+  );
 
   return useMemo(() => {
     const byId = new Map(folders.map((f) => [f.folderId, f]));

@@ -1,4 +1,5 @@
 import { orderNotes } from "@/lib/note-order";
+import { isQuickTodo } from "@/lib/quick/todo-id";
 import type { Folder, FolderNode, Note } from "@/lib/types";
 import { sortByKey } from "@/lib/sortkey";
 
@@ -128,6 +129,8 @@ export function visibleNotes(notes: Note[], trashedFolders: Set<string>): Note[]
     (note) =>
       !note.purged &&
       note.deletedAt === null &&
+      // The quick note's Todo is a note only to sync it (lib/quick/todo).
+      !isQuickTodo(note.noteId) &&
       (note.folderId === null || !trashedFolders.has(note.folderId)),
   );
 }

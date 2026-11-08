@@ -6,6 +6,7 @@ import { db, getMeta, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { copiedBlob } from "@/lib/media/blob-copy";
 import { quickLines } from "@/lib/quick/text";
+import { TODO_TAB_ID } from "@/lib/quick/todo-id";
 
 /**
  * A text as it is compared where there is no body to tell by: its lines
@@ -360,6 +361,19 @@ export async function openTab(userKey: string): Promise<string | null> {
     return { ...tabs, ids: [...tabs.ids, made], active: made };
   });
   return made;
+}
+
+/**
+ * The Todo's tab shown: put first, if it is not open, there being one Todo
+ * (lib/quick/todo). Not counted against MAX_TABS.
+ */
+export function openTodoTab(userKey: string): Promise<QuickTabs> {
+  return changeTabs(userKey, (tabs) => {
+    if (tabs.ids.includes(TODO_TAB_ID)) {
+      return tabs.active === TODO_TAB_ID ? tabs : { ...tabs, active: TODO_TAB_ID };
+    }
+    return { ...tabs, ids: [TODO_TAB_ID, ...tabs.ids], active: TODO_TAB_ID };
+  });
 }
 
 /** Shows a tab. */
