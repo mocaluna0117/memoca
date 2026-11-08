@@ -14,7 +14,15 @@ import {
 } from "@blocknote/react";
 import { BlockNoteView } from "@blocknote/shadcn";
 import { useTheme } from "next-themes";
-import { type Ref, useImperativeHandle, useLayoutEffect, useMemo, useRef } from "react";
+import {
+  type Ref,
+  memo,
+  useEffect,
+  useImperativeHandle,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 import { createPortal } from "react-dom";
 import type * as Y from "yjs";
 import { MemocaFormattingToolbar } from "@/components/editor/image-crop";
@@ -29,6 +37,7 @@ import { turningLines } from "@/components/editor/slash-turn-line";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { toggles } from "@/components/editor/toggles";
 import { openLinkApart } from "@/lib/open-link";
+import { SAVE_KEYS } from "@/lib/quick/keys";
 import { bodyFragment } from "@/lib/sync/ydoc";
 import { t } from "@/lib/i18n/ja";
 
@@ -46,9 +55,6 @@ export type QuickEditorHandle = {
  */
 const FILE_ITEMS = new Set(["image", "video", "audio", "file"]);
 
-/** Both keys the save is on, for whatever keyboard: ⌘ on a Mac, Ctrl elsewhere. */
-export const SAVE_KEYS = "Meta+Enter Control+Enter";
-
 /**
  * The quick note's editor: a note's, on the tab's own document, with what
  * makes its lines lists, checks, toggles and headings (the / menu, `- ` and
@@ -63,13 +69,14 @@ export const SAVE_KEYS = "Meta+Enter Control+Enter";
  * it). On a phone, the bar of block actions goes into `barSlot`, at the
  * page's foot, above the keyboard.
  */
-export function QuickEditor({
+export const QuickEditor = memo(function QuickEditor({
   doc,
   handle,
   onSave,
   onFiles,
   onEscape,
   barSlot,
+  autoFocus = false,
   className,
 }: {
   doc: Y.Doc;
@@ -80,6 +87,8 @@ export function QuickEditor({
   onEscape?: () => void;
   /** Where the bar of block actions goes on a phone; none, no bar. */
   barSlot: HTMLElement | null;
+  /** Into it as it is shown, after what is written. */
+  autoFocus?: boolean;
   className?: string;
 }) {
   const { resolvedTheme } = useTheme();
@@ -105,7 +114,14 @@ export function QuickEditor({
         animations: false,
         links: { onClick: (event: MouseEvent) => openLinkApart(event) },
         disableExtensions: DISABLED_EXTENSIONS,
-        extensions: [japaneseLists, quoteShortcuts, listKeys(), toggles(), stuckToggles, imeCommit()],
+        extensions: [
+          japaneseLists,
+          quoteShortcuts,
+          listKeys(),
+          toggles(),
+          stuckToggles,
+          imeCommit(),
+        ],
         domAttributes: {
           editor: { "aria-label": t.quick.field, "aria-keyshortcuts": SAVE_KEYS },
         },
@@ -147,6 +163,22 @@ export function QuickEditor({
     }),
     [editor],
   );
+
+  // Shown: ready to type into, after what is written.
+  useEffect(() => {
+    if (!autoFocus) return;
+    const last = editor.document.at(-1);
+    if (last) {
+      try {
+        editor.setTextCursorPosition(last, "end");
+      } catch {
+        // A block with no line of text (a table): left where it is.
+      }
+    }
+    editor.focus();
+    // As it is first shown only.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div
@@ -205,4 +237,4 @@ export function QuickEditor({
       </BlockNoteView>
     </div>
   );
-}
+});

@@ -6,25 +6,50 @@ import { useSyncExternalStore } from "react";
 export type VisibleArea = { height: number; top: number };
 
 let last: VisibleArea | null = null;
+/** The window's own height, as the page is laid out in it, read with the rest. */
+let layout = 0;
+/** The viewport it was read from, and whether it has said it moved since. */
+let readFrom: VisualViewport | null = null;
+let stale = true;
 
+/**
+ * What is seen, read again only once the viewport has said it moved: read,
+ * it has the browser lay the page out first, which a key just typed has
+ * left to do, and React reads it each time what uses it is drawn.
+ */
 function read(): VisibleArea | null {
   const viewport = window.visualViewport;
+  if (!stale && viewport === readFrom) return last;
+  stale = false;
+  readFrom = viewport;
   // Zoomed in, what is seen is a part of the page by choice: left as it is.
-  if (!viewport || viewport.scale > 1.01) return null;
+  if (!viewport || viewport.scale > 1.01) return (last = null);
+  layout = document.documentElement.clientHeight;
   if (!last || last.height !== viewport.height || last.top !== viewport.offsetTop) {
     last = { height: viewport.height, top: viewport.offsetTop };
   }
   return last;
 }
 
+/** The window's height as the page is laid out in it, read when what is seen last was. */
+export function layoutHeight(): number {
+  return layout;
+}
+
 function subscribe(onChange: () => void): () => void {
   const viewport = window.visualViewport;
   if (!viewport) return () => {};
-  viewport.addEventListener("resize", onChange);
-  viewport.addEventListener("scroll", onChange);
+  // Read again from now: it may have moved while nothing followed it.
+  stale = true;
+  const moved = () => {
+    stale = true;
+    onChange();
+  };
+  viewport.addEventListener("resize", moved);
+  viewport.addEventListener("scroll", moved);
   return () => {
-    viewport.removeEventListener("resize", onChange);
-    viewport.removeEventListener("scroll", onChange);
+    viewport.removeEventListener("resize", moved);
+    viewport.removeEventListener("scroll", moved);
   };
 }
 

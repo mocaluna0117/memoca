@@ -26,11 +26,7 @@ import {
 } from "react";
 import * as Y from "yjs";
 import { FolderPicker } from "@/components/folders/folder-picker";
-import {
-  QuickEditor,
-  type QuickEditorHandle,
-  SAVE_KEYS,
-} from "@/components/notes/quick-editor";
+import { QuickEditor, type QuickEditorHandle } from "@/components/notes/quick-editor";
 import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
 import { newBuildOut } from "@/lib/build";
@@ -39,7 +35,7 @@ import { useFolders } from "@/lib/hooks/data";
 import { toast } from "sonner";
 import { t } from "@/lib/i18n/ja";
 import { useClientValue } from "@/lib/hooks/use-client-value";
-import { useVisibleArea } from "@/lib/hooks/use-visible-area";
+import { layoutHeight, useVisibleArea } from "@/lib/hooks/use-visible-area";
 import { useModKeyLabel } from "@/lib/platform";
 import { type Allowance, prepareUpload, stageUpload } from "@/lib/media/attachments";
 import { uploadRefusal } from "@/lib/media/refusal";
@@ -79,12 +75,13 @@ import {
   rememberQuickFolder,
   rememberedQuickFolder,
 } from "@/lib/quick/folder";
+import { SAVE_KEYS } from "@/lib/quick/keys";
 import { useQuickMode } from "@/lib/quick/mode";
 import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, holdsShared, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
 import { createNote, moveNote } from "@/lib/sync/mutations";
-import { extractText } from "@/lib/sync/ydoc";
+import { bodyFragment, extractText } from "@/lib/sync/ydoc";
 import type { Folder } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -104,7 +101,18 @@ type CaptureHandle = {
   discard: () => void;
   /** Into its editor, the caret where it was. */
   focus: () => void;
+  /** Whether anything in it is not saved, as it is now (the tabs are told a moment later). */
+  holds: () => boolean;
+  /** Tells the tabs now what it holds, rather than a moment later. */
+  tellNow: () => void;
 };
+
+/**
+ * How long the tabs wait to be told what is typed: a tab's name follows its
+ * first line, which every key in it changes, and each telling draws the
+ * tabs and the header again. The save button follows at once.
+ */
+export const TAB_NAME_DELAY_MS = 150;
 
 /** The folder a quick note is saved into: its id (none, the top level), its name, and whether it is Inbox. */
 type QuickFolder = { id: string | null; name: string; inbox: boolean };
@@ -328,7 +336,10 @@ function Tabbed({
   const close = async (id: string) => {
     const tab = tabs.find((each) => each.id === id);
     if (!tab || tabs.length < 2) return;
-    if (!holds(tab)) {
+    // The tab shown, as it is now: the tabs are told what is typed a moment later.
+    if (id === active) capture.current?.tellNow();
+    const live = id === active ? (capture.current?.holds() ?? holds(tab)) : holds(tab);
+    if (!live) {
       moving();
       if (id === active) capture.current?.discard();
       await closeTab(userKey, id);
@@ -496,6 +507,7 @@ function Capture({
   };
   // Whether any of it is not saved: what the save button follows.
   const [changed, setChanged] = useState(false);
+  const changedRef = useRef(false);
   // What the tab was last saved as: saved again, that note is written over.
   const savedRef = useRef<SavedAs | null>(null);
   /** The folder it is saved into, as it is when a save starts. */
@@ -517,23 +529,52 @@ function Capture({
    * as what they show of it changes, not on every key, which would render
    * them all again.
    */
-  const report = () => {
-    const { text, key } = textOf(doc);
+  const report = (seen = textOf(doc), atOnce = true) => {
+    const { text, key } = seen;
     const images = imagesRef.current.length;
     const now = {
       name: tabName({ text, images }),
       images,
       changed: unsaved({ text, key, images: imagesRef.current, saved: savedRef.current }),
     };
-    setChanged(now.changed);
+    // Only as it changes: even the same value set draws it again, now and then.
+    if (changedRef.current !== now.changed) {
+      changedRef.current = now.changed;
+      setChanged(now.changed);
+    }
     const last = reported.current;
     if (last && last.name === now.name && last.images === images && last.changed === now.changed) {
       return now;
     }
     reported.current = now;
-    onText(text, images, now.changed);
+    tell([text, images, now.changed], atOnce);
     return now;
   };
+  /** What the tabs are still to be told, and when. */
+  const telling = useRef<{
+    timer: ReturnType<typeof setTimeout> | null;
+    told: [string, number, boolean] | null;
+  }>({ timer: null, told: null });
+  const onTextRef = useRef(onText);
+  useLayoutEffect(() => {
+    onTextRef.current = onText;
+  });
+  const tellNow = () => {
+    const pending = telling.current;
+    if (pending.timer) clearTimeout(pending.timer);
+    pending.timer = null;
+    const told = pending.told;
+    pending.told = null;
+    if (told) onTextRef.current(...told);
+  };
+  /** Tells the tabs: at once, or (as it is typed) a moment later, the latest only. */
+  const tell = (told: [string, number, boolean], atOnce: boolean) => {
+    telling.current.told = told;
+    if (atOnce) return tellNow();
+    telling.current.timer ??= setTimeout(tellNow, TAB_NAME_DELAY_MS);
+  };
+  // Told before it goes: another tab shown, its last name is not lost.
+  useEffect(() => () => tellNow(), []);
   /** Its text as last seen: what is said goes once it is written in. */
   const lastText = useRef("");
   const scroller = useRef<HTMLDivElement>(null);
@@ -554,8 +595,7 @@ function Capture({
   // With a keyboard up the home indicator is under it: nothing to clear. (The
   // root's height is the layout viewport's, which neither iOS's keyboard nor
   // Chrome's, resizing only what is seen, makes shorter.)
-  const keyboard =
-    !windowed && area !== null && area.height < document.documentElement.clientHeight - 100;
+  const keyboard = !windowed && area !== null && area.height < layoutHeight() - 100;
   const draft = useRef<ReturnType<typeof keepDraft> | null>(null);
   /** A save under way, for closing to wait for. */
   const inFlight = useRef<Promise<void> | null>(null);
@@ -665,24 +705,26 @@ function Capture({
   // the tab before it was saved.
   const onEdit = useEffectEvent(() => {
     draft.current?.update(() => contentOf(doc));
+    const seen = textOf(doc);
     const wasChanged = reported.current?.changed ?? false;
-    const { changed: nowChanged } = report();
-    const { text } = textOf(doc);
-    const written = text !== lastText.current || (nowChanged && !wasChanged);
-    lastText.current = text;
+    const { changed: nowChanged } = report(seen, false);
+    const written = seen.text !== lastText.current || (nowChanged && !wasChanged);
+    lastText.current = seen.text;
     if (written && statusRef.current) say(null);
   });
   useEffect(() => {
     if (!loaded) return;
+    // Its body observed, not the document's updates: with something
+    // listening for those, Yjs writes each change out as one, every key.
+    const body = bodyFragment(doc);
     const listener = () => onEdit();
-    doc.on("update", listener);
-    return () => doc.off("update", listener);
+    body.observeDeep(listener);
+    return () => body.unobserveDeep(listener);
   }, [doc, loaded]);
 
   useEffect(() => {
-    if (!loaded) return;
-    editor.current?.focus(true);
-    if (!windowed) return;
+    // Into the editor as it is shown: the editor's own (autoFocus).
+    if (!loaded || !windowed) return;
     // Shown again by the shell, or brought forward: ready to type into.
     const refocus = () => editor.current?.focus();
     window.addEventListener("focus", refocus);
@@ -952,6 +994,26 @@ function Capture({
     if (inFlight.current === run) inFlight.current = null;
   };
 
+  // What the editor is handed: the same functions all along, so that what
+  // draws the header and the tabs again does not draw the editor again.
+  const latest = useRef<{ save: () => void; files: (files: File[]) => void; escape: () => void }>({
+    save: () => {},
+    files: () => {},
+    escape: () => {},
+  });
+  useLayoutEffect(() => {
+    latest.current = {
+      save: () => void save(),
+      files: addFiles,
+      escape: () => {
+        if (escapeEnabled) void close();
+      },
+    };
+  });
+  const onSave = useCallback(() => latest.current.save(), []);
+  const onFiles = useCallback((files: File[]) => latest.current.files(files), []);
+  const onEscape = useCallback(() => latest.current.escape(), []);
+
   useImperativeHandle(handle, () => ({
     save: async () => {
       await save();
@@ -967,6 +1029,8 @@ function Capture({
       draft.current?.cancel();
     },
     focus: () => editor.current?.focus(),
+    holds: () => unsaved({ ...textOf(doc), images: imagesRef.current, saved: savedRef.current }),
+    tellNow,
   }));
 
   const link = "text-foreground underline underline-offset-2";
@@ -1023,7 +1087,10 @@ function Capture({
             </Button>
           )}
           <h1
-            className={cn("min-w-0 flex-1 truncate text-sm font-medium", windowed && "pl-2 select-none")}
+            className={cn(
+              "min-w-0 flex-1 truncate text-sm font-medium",
+              windowed && "pl-2 select-none",
+            )}
             data-tauri-drag-region={windowed || undefined}
           >
             {t.nav.quick}
@@ -1121,12 +1188,13 @@ function Capture({
       >
         {loaded ? (
           <QuickEditor
+            autoFocus
             doc={doc}
             handle={editor}
-            onSave={() => void save()}
-            onFiles={addFiles}
+            onSave={onSave}
+            onFiles={onFiles}
             // The editor would take it to let go of the focus: the window goes, as from anywhere in it.
-            onEscape={windowed ? () => escapeEnabled && void close() : undefined}
+            onEscape={windowed ? onEscape : undefined}
             barSlot={windowed ? null : barSlot}
           />
         ) : null}

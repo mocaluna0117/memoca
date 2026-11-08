@@ -76,3 +76,17 @@ describe("the part of the window that can be seen", () => {
     expect(seen.length).toBe(before);
   });
 });
+
+describe("what is seen, read", () => {
+  test("only once the viewport says it moved: not each time what uses it is drawn", async () => {
+    let reads = 0;
+    const height = { get: () => (reads += 1, 800), configurable: true };
+    Object.defineProperty(viewport, "height", height);
+    await act(async () => root.render(<Probe key="again" />));
+    const before = reads;
+    for (let draw = 0; draw < 5; draw += 1) await act(async () => root.render(<Probe key="again" />));
+    expect(reads).toBe(before);
+    await move({}, "resize");
+    expect(reads).toBeGreaterThan(before);
+  });
+});

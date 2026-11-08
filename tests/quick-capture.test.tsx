@@ -71,8 +71,10 @@ vi.mock("@/components/notes/quick-editor", async () => {
     handle,
     onSave,
     onFiles,
+    autoFocus,
   }: {
     doc: Y.Doc;
+    autoFocus?: boolean;
     handle: React.Ref<{ focus: () => void; focused: () => boolean }>;
     onSave: () => void;
     onFiles: (files: File[]) => void;
@@ -86,6 +88,7 @@ vi.mock("@/components/notes/quick-editor", async () => {
       <textarea
         ref={field}
         aria-label="即席メモ"
+        autoFocus={autoFocus}
         defaultValue={linesOf(doc).join("\n")}
         onChange={(event) => write(doc, event.target.value)}
         onKeyDown={(event) => {
@@ -104,7 +107,7 @@ vi.mock("@/components/notes/quick-editor", async () => {
       />
     );
   }
-  return { QuickEditor, SAVE_KEYS: "Meta+Enter Control+Enter" };
+  return { QuickEditor };
 });
 // The folders to choose from, as buttons: which may be chosen is the quick
 // note's own rule (tests/quick-folder.test.ts).
@@ -148,7 +151,7 @@ vi.mock("@/lib/media/attachments", async (original) => ({
   stageUpload: h.stage,
 }));
 
-import { QuickCapture } from "@/components/notes/quick-capture";
+import { QuickCapture, TAB_NAME_DELAY_MS } from "@/components/notes/quick-capture";
 import { QuotaError } from "@/lib/media/attachments";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -208,6 +211,10 @@ async function type(value: string) {
   await act(async () => {
     setter.call(field(), value);
     field().dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  // The tabs are told what is typed a moment later.
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(TAB_NAME_DELAY_MS);
   });
 }
 
@@ -1219,5 +1226,54 @@ describe("the quick note, written as a note is", () => {
     expect(kept?.body?.byteLength).toBeGreaterThan(0);
     expect(kept?.saved?.key).toBe(kept?.key);
     expect(button("保存").disabled).toBe(true);
+  });
+});
+
+describe("the quick note's tabs, told what is typed", () => {
+  const tabs = () =>
+    Array.from(host.querySelectorAll('[role="tab"]')).map((tab) => tab.textContent);
+
+  test("a moment later, the latest only; the save button at once", async () => {
+    await render();
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    for (const value of ["一", "一二", "一二三"]) {
+      await act(async () => {
+        setter.call(field(), value);
+        field().dispatchEvent(new Event("input", { bubbles: true }));
+      });
+    }
+    expect(tabs()).toEqual(["新しいメモ"]);
+    expect(button("保存").disabled).toBe(false);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(TAB_NAME_DELAY_MS);
+    });
+    expect(tabs()).toEqual(["一二三"]);
+  });
+
+  test("closed at once after typing, a tab with something in it is still asked about", async () => {
+    await render();
+    await type("一つ目");
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="新しいタブ"]')!.click(),
+    );
+    await settle();
+    const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!;
+    await act(async () => {
+      setter.call(field(), "二つ目");
+      field().dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    // Its × before the tabs were told (the tab still named as a new one): asked, not let go of.
+    await act(async () =>
+      host.querySelector<HTMLButtonElement>('button[aria-label="新しいメモ のタブを閉じる"]')!.click(),
+    );
+    await settle();
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain("二つ目");
+  });
+});
+
+describe("the quick note, as it opens", () => {
+  test("is ready to type into", async () => {
+    await render();
+    expect(document.activeElement).toBe(field());
   });
 });
