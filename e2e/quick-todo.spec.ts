@@ -11,6 +11,28 @@ const items = (page: Page) =>
         `[${(item as HTMLElement).dataset.checked === "true" ? "x" : " "}] ${item.querySelector(".bn-inline-content")?.textContent ?? ""}`,
     ),
   );
+/** The Todo as it reads, with an item's details under it, a step in: "  ・説明". */
+const lines = (page: Page) =>
+  todo(page).evaluate((root) => {
+    const out: string[] = [];
+    const walk = (group: Element, depth: number) => {
+      for (const outer of group.children) {
+        const content = outer.querySelector(":scope > .bn-block > .bn-block-content") as HTMLElement | null;
+        if (!content) continue;
+        const text = content.querySelector(".bn-inline-content")?.textContent ?? "";
+        const line =
+          content.dataset.contentType === "checkListItem"
+            ? `[${content.dataset.checked === "true" ? "x" : " "}] ${text}`
+            : `・${text}`;
+        out.push(`${"  ".repeat(depth)}${line}`);
+        const inner = outer.querySelector(":scope > .bn-block > .bn-block-group");
+        if (inner) walk(inner, depth + 1);
+      }
+    };
+    const top = root.querySelector(".bn-block-group");
+    if (top) walk(top, 0);
+    return out;
+  });
 /** Ticks the item of this text by its box. */
 const tick = (page: Page, text: string) =>
   todo(page)
@@ -64,6 +86,67 @@ test.describe("the quick note's Todo", () => {
     await page.keyboard.press("ControlOrMeta+Enter");
     await page.keyboard.press("ControlOrMeta+Enter");
     await expect.poll(() => items(page)).toEqual(["[ ] 三つ目", "[x] 二つ目", "[x] 一つ目"]);
+  });
+
+  test("under an item, lines of its details, with no box: they go with it as it is ticked", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "a keyboard's Shift + Enter and Tab");
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    await openTodo(page);
+    await write(page, "富士フイルム");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("https://example.com/winter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("11/30 正午");
+    // Out of the details, to the next item.
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("カプコン");
+    await expect.poll(() => lines(page)).toEqual([
+      "[ ] 富士フイルム",
+      "  ・https://example.com/winter",
+      "  ・11/30 正午",
+      "[ ] カプコン",
+    ]);
+    // A line of details has no box, and is smaller than an item.
+    const detail = todo(page).locator(".bn-block-content", { hasText: "11/30 正午" });
+    await expect(detail.locator('input[type="checkbox"]')).toHaveCount(0);
+
+    await page.keyboard.press("Tab");
+    await expect.poll(() => lines(page)).toEqual([
+      "[ ] 富士フイルム",
+      "  ・https://example.com/winter",
+      "  ・11/30 正午",
+      "  ・カプコン",
+    ]);
+    await page.keyboard.press("Shift+Tab");
+    await expect.poll(() => lines(page)).toEqual([
+      "[ ] 富士フイルム",
+      "  ・https://example.com/winter",
+      "  ・11/30 正午",
+      "[ ] カプコン",
+    ]);
+
+    await tick(page, "富士フイルム");
+    await expect.poll(() => lines(page)).toEqual([
+      "[ ] カプコン",
+      "[x] 富士フイルム",
+      "  ・https://example.com/winter",
+      "  ・11/30 正午",
+    ]);
+    await page.screenshot({ path: testInfo.outputPath("todo-details.png") });
+  });
+
+  test("on a phone, a button makes the caret's line a detail, and an item again", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "mobile", "a phone's screen, with no Tab");
+    await signUp(page);
+    await page.goto("/quick");
+    await openTodo(page);
+    await write(page, "株式会社デジタルガレージ", "適性検査 11/13");
+    await page.getByRole("button", { name: "補足行にする" }).click();
+    await expect.poll(() => lines(page)).toEqual(["[ ] 株式会社デジタルガレージ", "  ・適性検査 11/13"]);
+    await page.getByRole("button", { name: "項目にする" }).click();
+    await expect.poll(() => lines(page)).toEqual(["[ ] 株式会社デジタルガレージ", "[ ] 適性検査 11/13"]);
   });
 
   test("its tab, and what is in it, are there when the quick note opens again", async ({ page }) => {

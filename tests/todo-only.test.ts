@@ -22,13 +22,28 @@ afterEach(() => {
 const view = () => editor.prosemirrorView!;
 const textOf = (block: { content?: unknown }) =>
   Array.isArray(block.content) ? (block.content as { text?: string }[]).map((run) => run.text ?? "").join("") : "";
-/** The list as it reads: "[x] 卵" for one done, "[ ] 牛乳" for one to do. */
-const list = () =>
-  editor.document.map((block) =>
-    block.type === "checkListItem"
-      ? `[${(block.props as { checked: boolean }).checked ? "x" : " "}] ${textOf(block)}`
-      : `${block.type}: ${textOf(block)}`,
-  );
+type Shown = { type: string; props: unknown; content?: unknown; children: Shown[] };
+const lineOf = (block: Shown): string =>
+  block.type === "checkListItem"
+    ? `[${(block.props as { checked: boolean }).checked ? "x" : " "}] ${textOf(block)}`
+    : block.type === "paragraph"
+      ? `・${textOf(block)}`
+      : `${block.type}: ${textOf(block)}`;
+/**
+ * The list as it reads: "[x] 卵" for one done, "[ ] 牛乳" for one to do, and
+ * under an item, its details, a step in: "  ・説明".
+ */
+const list = () => {
+  const lines: string[] = [];
+  const walk = (blocks: Shown[], depth: number) => {
+    for (const block of blocks) {
+      lines.push(`${"  ".repeat(depth)}${lineOf(block)}`);
+      walk(block.children, depth + 1);
+    }
+  };
+  walk(editor.document as unknown as Shown[], 0);
+  return lines;
+};
 const items = (...lines: string[]) =>
   editor.replaceBlocks(
     editor.document,
@@ -39,11 +54,11 @@ const items = (...lines: string[]) =>
     })),
   );
 const blockWith = (text: string) => editor.document.find((block) => textOf(block) === text)!;
-/** The caret into the item of this text, at `offset`. */
+/** The caret into the line (an item's, or a detail's) of this text, at `offset`. */
 function caretIn(text: string, offset: number) {
   let found = -1;
   view().state.doc.descendants((node, pos) => {
-    if (found < 0 && node.type.name === "checkListItem" && node.textContent === text) found = pos + 1;
+    if (found < 0 && node.isTextblock && node.textContent === text) found = pos + 1;
     return found < 0;
   });
   view().dispatch(view().state.tr.setSelection(TextSelection.create(view().state.doc, found + offset)));
@@ -54,6 +69,14 @@ const caret = () => {
 };
 const press = (key: string, init: KeyboardEventInit = {}) =>
   view().dom.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true, ...init }));
+const type = (text: string) => view().dispatch(view().state.tr.insertText(text));
+/** An item, and lines of its details. */
+const withDetails = (line: string, ...details: string[]) => ({
+  type: "checkListItem" as const,
+  props: { checked: line.startsWith("[x]") },
+  content: line.slice(4),
+  children: details.map((detail) => ({ type: "paragraph" as const, content: detail })),
+});
 
 describe("the Todo's blocks", () => {
   test("a line of text, pasted or made, becomes an item, its text kept", () => {
@@ -74,6 +97,120 @@ describe("the Todo's blocks", () => {
     editor.replaceBlocks(editor.document, [{ type: "paragraph" }]);
     view().dispatch(view().state.tr.setMeta(TODO_TIDY, true));
     expect(list()).toEqual(["[ ] "]);
+  });
+});
+
+describe("an item's details", () => {
+  test("tick boxes in an item, as they were before details were, are its details now, however far in", () => {
+    editor.replaceBlocks(editor.document, [
+      {
+        type: "checkListItem",
+        content: "株式会社デジタルガレージ",
+        children: [
+          {
+            type: "checkListItem",
+            props: { checked: true },
+            content: "適性検査",
+            children: [{ type: "heading", content: "11/13 23:59" }],
+          },
+          { type: "image", props: { url: "https://example.com/a.png" } },
+        ],
+      },
+      { type: "checkListItem", content: "TOPPAN" },
+    ]);
+    expect(list()).toEqual(["[ ] 株式会社デジタルガレージ", "  ・適性検査", "  ・11/13 23:59", "[ ] TOPPAN"]);
+  });
+
+  test("Shift + Enter starts a line of them under the item, what is after the caret going into it", () => {
+    editor.replaceBlocks(editor.document, [withDetails("[ ] 富士フイルム", "11/30 正午")]);
+    caretIn("富士フイルム", 6);
+    press("Enter", { shiftKey: true });
+    type("https://fujifilm.example/");
+    expect(list()).toEqual(["[ ] 富士フイルム", "  ・https://fujifilm.example/", "  ・11/30 正午"]);
+    caretIn("富士フイルム", 2);
+    press("Enter", { shiftKey: true });
+    expect(list()).toEqual(["[ ] 富士", "  ・フイルム", "  ・https://fujifilm.example/", "  ・11/30 正午"]);
+    expect(caret()).toEqual({ text: "フイルム", offset: 0 });
+  });
+
+  test("Enter in one goes on to the next; in an empty one, out of them, to a new item", () => {
+    editor.replaceBlocks(editor.document, [withDetails("[ ] 富士フイルム", "説明"), withDetails("[ ] カプコン")]);
+    caretIn("説明", 2);
+    press("Enter");
+    type("URL");
+    expect(list()).toEqual(["[ ] 富士フイルム", "  ・説明", "  ・URL", "[ ] カプコン"]);
+    press("Enter");
+    press("Enter");
+    type("TOPPAN");
+    expect(list()).toEqual(["[ ] 富士フイルム", "  ・説明", "  ・URL", "[ ] TOPPAN", "[ ] カプコン"]);
+  });
+
+  test("Enter in an item with them: the new item after them, or (at its start) an empty one above", () => {
+    editor.replaceBlocks(editor.document, [withDetails("[ ] 富士フイルム", "説明")]);
+    caretIn("富士フイルム", 6);
+    press("Enter");
+    type("カプコン");
+    expect(list()).toEqual(["[ ] 富士フイルム", "  ・説明", "[ ] カプコン"]);
+    caretIn("富士フイルム", 0);
+    press("Enter");
+    expect(list()).toEqual(["[ ] ", "[ ] 富士フイルム", "  ・説明", "[ ] カプコン"]);
+    expect(caret()).toEqual({ text: "富士フイルム", offset: 0 });
+  });
+
+  test("Tab makes an item one of them, of the item above; Shift + Tab makes one an item again", () => {
+    editor.replaceBlocks(editor.document, [
+      withDetails("[ ] 株式会社デジタルガレージ", "説明"),
+      withDetails("[ ] 適性検査", "11/13"),
+      withDetails("[ ] TOPPAN"),
+    ]);
+    caretIn("適性検査", 2);
+    press("Tab");
+    expect(list()).toEqual(["[ ] 株式会社デジタルガレージ", "  ・説明", "  ・適性検査", "  ・11/13", "[ ] TOPPAN"]);
+    expect(caret()).toEqual({ text: "適性検査", offset: 2 });
+    caretIn("説明", 1);
+    press("Tab", { shiftKey: true });
+    // Those after it going with it, as its own.
+    expect(list()).toEqual(["[ ] 株式会社デジタルガレージ", "[ ] 説明", "  ・適性検査", "  ・11/13", "[ ] TOPPAN"]);
+    expect(caret()).toEqual({ text: "説明", offset: 1 });
+  });
+
+  test("Tab in the first item, or in a line of details, leaves the list as it is", () => {
+    editor.replaceBlocks(editor.document, [withDetails("[ ] 牛乳", "説明")]);
+    caretIn("牛乳", 0);
+    press("Tab");
+    caretIn("説明", 0);
+    press("Tab");
+    caretIn("牛乳", 0);
+    press("Tab", { shiftKey: true });
+    expect(list()).toEqual(["[ ] 牛乳", "  ・説明"]);
+  });
+
+  test("Backspace at one's start joins it to the line above; an empty one goes", () => {
+    editor.replaceBlocks(editor.document, [withDetails("[ ] 富士", "フイルム", "", "URL")]);
+    caretIn("", 0);
+    press("Backspace");
+    expect(list()).toEqual(["[ ] 富士", "  ・フイルム", "  ・URL"]);
+    expect(caret()).toEqual({ text: "フイルム", offset: 4 });
+    caretIn("フイルム", 0);
+    press("Backspace");
+    expect(list()).toEqual(["[ ] 富士フイルム", "  ・URL"]);
+    expect(caret()).toEqual({ text: "富士フイルム", offset: 2 });
+  });
+
+  test("Backspace at an item's start joins it to the last of the details above; its own go on after", () => {
+    editor.replaceBlocks(editor.document, [withDetails("[ ] 富士", "説明"), withDetails("[ ] と URL", "11/30")]);
+    caretIn("と URL", 0);
+    press("Backspace");
+    expect(list()).toEqual(["[ ] 富士", "  ・説明と URL", "  ・11/30"]);
+    expect(caret()).toEqual({ text: "説明と URL", offset: 2 });
+  });
+
+  test("go with their item as it is ticked; ⌘ + Enter in one ticks its item", () => {
+    editor.replaceBlocks(editor.document, [withDetails("[ ] 富士", "説明"), withDetails("[ ] カプコン", "URL")]);
+    caretIn("説明", 1);
+    press("Enter", { ctrlKey: true });
+    expect(list()).toEqual(["[ ] カプコン", "  ・URL", "[x] 富士", "  ・説明"]);
+    expect(caret()).toEqual({ text: "カプコン", offset: 0 });
   });
 });
 

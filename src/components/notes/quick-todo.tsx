@@ -27,7 +27,7 @@ import { imeCommit } from "@/components/editor/ime-commit";
 import { listKeys } from "@/components/editor/list-keys";
 import { DISABLED_EXTENSIONS } from "@/components/editor/quotes";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
-import { TODO_TIDY, todoOnly } from "@/components/editor/todo-only";
+import { TODO_TIDY, lineAt, makeDetail, makeItem, todoOnly } from "@/components/editor/todo-only";
 import { Tip } from "@/components/notes/quick-tip";
 import { Button } from "@/components/ui/button";
 import { newBuildOut } from "@/lib/build";
@@ -146,7 +146,12 @@ type TodoEditorHandle = {
   focus: () => void;
   /** Takes the done out of the list: undone by ⌘ + Z. */
   clearDone: () => void;
+  /** The caret's line made a line of details (an item's), or an item (a detail's), as Tab and Shift + Tab do. */
+  turnLine: () => void;
 };
+
+/** What the line the caret is in can be made, for the button that does it: null in none, or in the first item. */
+type Turn = "toDetail" | "toItem" | null;
 
 /**
  * The quick note's Todo tab: one list of the account's, synced as a note is
@@ -172,6 +177,7 @@ export function TodoCapture({
   const [loaded, setLoaded] = useState<{ noteId: string; doc: Y.Doc } | null>(null);
   const [failed, setFailed] = useState(false);
   const [done, setDone] = useState(0);
+  const [turn, setTurn] = useState<Turn>(null);
   const editor = useRef<TodoEditorHandle>(null);
   const noteId = loaded?.noteId ?? null;
   const status = useSyncStatusStore();
@@ -354,7 +360,12 @@ export function TodoCapture({
         }
       >
         {loaded ? (
-          <TodoEditor doc={loaded.doc} handle={editor} onEscape={windowed ? onEscape : undefined} />
+          <TodoEditor
+            doc={loaded.doc}
+            handle={editor}
+            onEscape={windowed ? onEscape : undefined}
+            onTurn={setTurn}
+          />
         ) : failed ? (
           <p role="alert" className="px-4 py-6 text-sm text-muted-foreground">
             {t.quick.todoFailed}
@@ -378,6 +389,19 @@ export function TodoCapture({
         <p className="min-w-0 flex-1 truncate pointer-coarse:hidden">
           {t.quick.todoHint(modKey, windowed)}
         </p>
+        {/* On a phone, with no Tab: the caret's line made a detail, or an item. */}
+        {turn ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 shrink-0 px-2 text-xs pointer-fine:hidden"
+            // The caret stays in the editor, and the keyboard up.
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => editor.current?.turnLine()}
+          >
+            {turn === "toDetail" ? t.quick.toDetail : t.quick.toItem}
+          </Button>
+        ) : null}
         {done > 0 ? (
           <Button
             variant="ghost"
@@ -402,11 +426,14 @@ const TodoEditor = memo(function TodoEditor({
   doc,
   handle,
   onEscape,
+  onTurn,
 }: {
   doc: Y.Doc;
   handle: Ref<TodoEditorHandle>;
   /** Esc: none, the editor's own. */
   onEscape?: () => void;
+  /** What the caret's line can be made, told as the caret moves. */
+  onTurn: (turn: Turn) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const options = useMemo(
@@ -420,6 +447,8 @@ const TodoEditor = memo(function TodoEditor({
             ...DICTIONARY.placeholders,
             emptyDocument: t.quick.todoPlaceholder,
             checkListItem: t.quick.todoItemPlaceholder,
+            // Every other line is a line of an item's details.
+            default: t.quick.todoDetailPlaceholder,
           },
         },
         animations: false,
@@ -470,9 +499,38 @@ const TodoEditor = memo(function TodoEditor({
         if (finished.length > 0) plain.removeBlocks(finished);
         toEnd();
       },
+      turnLine: () => {
+        const view = plain.prosemirrorView;
+        if (!view) return;
+        const tr = makeDetail(view.state) ?? makeItem(view.state);
+        if (tr) view.dispatch(tr);
+      },
     }),
     [plain, toEnd],
   );
+
+  useEffect(() => {
+    // What the caret's line can be made, for the button on a phone.
+    const tell = () => {
+      const view = plain.prosemirrorView;
+      const line = view && view.hasFocus() ? lineAt(view.state) : null;
+      onTurn(!line ? null : line.kind === "detail" ? "toItem" : line.index > 0 ? "toDetail" : null);
+    };
+    tell();
+    const off = plain.onSelectionChange(tell);
+    // A line made a detail may leave the caret at the same place by number,
+    // which is no change of the selection to BlockNote.
+    const offChange = plain.onChange(tell);
+    const dom = plain.prosemirrorView?.dom;
+    dom?.addEventListener("focus", tell);
+    dom?.addEventListener("blur", tell);
+    return () => {
+      off?.();
+      offChange?.();
+      dom?.removeEventListener("focus", tell);
+      dom?.removeEventListener("blur", tell);
+    };
+  }, [plain, onTurn]);
 
   useEffect(() => {
     // Its blocks put right as it is shown (the editor's own first, empty line
@@ -491,15 +549,11 @@ const TodoEditor = memo(function TodoEditor({
         // one moved by a click or by ⌘ + →, just before, may not have reached
         // the editor yet (selectionchange comes after), and Enter would split
         // the item where the caret was.
-        if (event.key === "Enter" || event.key === "Backspace" || event.key === "Delete") {
+        if (event.key === "Enter" || event.key === "Backspace" || event.key === "Delete" || event.key === "Tab") {
           const view = plain.prosemirrorView as unknown as { domObserver?: { flush?: () => void } } | undefined;
           view?.domObserver?.flush?.();
         }
-        // One list, flat: no items inside items.
-        if (event.key === "Tab") {
-          event.preventDefault();
-          event.stopPropagation();
-        } else if (event.key === "Escape" && onEscape) {
+        if (event.key === "Escape" && onEscape) {
           event.preventDefault();
           event.stopPropagation();
           onEscape();
@@ -521,6 +575,9 @@ const TodoEditor = memo(function TodoEditor({
         formattingToolbar={false}
         slashMenu={false}
         sideMenu={false}
+        // Its menu opens on ":" (a URL's "https:" too), and takes the next
+        // Enter to close itself: the line would not end.
+        emojiPicker={false}
       />
     </div>
   );

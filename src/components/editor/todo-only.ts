@@ -1,11 +1,13 @@
 import { createExtension } from "@blocknote/core";
-import { Fragment, type Node } from "prosemirror-model";
+import { Fragment, type Node, type ResolvedPos } from "prosemirror-model";
 import { type EditorState, Plugin, TextSelection, type Transaction } from "prosemirror-state";
 import { uuidv4 } from "uuidv7";
 import { ySyncPluginKey } from "y-prosemirror";
 
-/** The one kind of block the Todo holds. */
+/** The one kind of block the Todo's items are. */
 const CHECK = "checkListItem";
+/** The kind a line of an item's details is: text, with no tick box. */
+const DETAIL = "paragraph";
 
 /**
  * The id BlockNote gives a new editor's first block, the same on every
@@ -28,49 +30,84 @@ function topBlocks(doc: Node): { node: Node; pos: number }[] {
 
 const isContainer = (node: Node) => node.type.name === "blockContainer";
 const itemOf = (container: Node) => container.firstChild;
+/** An item's details: the block group under its line, if it has one. */
+const detailsOf = (container: Node): Node | null => (container.childCount > 1 ? container.child(1) : null);
 const isChecked = (container: Node) =>
   isContainer(container) && itemOf(container)?.type.name === CHECK && itemOf(container)?.attrs.checked === true;
 
 /**
- * Every block a Todo item: a line of text (a paragraph pasted, a heading)
- * made one, its text kept; anything else (an image, a table, a divider)
- * taken out. One left empty has an empty item put in it.
+ * An item's details, as they are to be: every line under it, however far
+ * in it was, one step in and a line of text (a tick box pasted or written
+ * there, an item that was one before details were, made one), in the order
+ * they read. Anything not text (an image) is left out. Those already as
+ * they are to be are the same nodes, to tell nothing changed.
+ */
+function flatDetails(group: Node): Node[] {
+  const { schema } = group.type;
+  const container = schema.nodes.blockContainer!;
+  const detail = schema.nodes[DETAIL]!;
+  const lines: Node[] = [];
+  const walk = (inner: Node) =>
+    inner.forEach((child) => {
+      if (!isContainer(child)) return;
+      const line = itemOf(child);
+      const id = child.attrs.id === FIRST_ID ? uuidv4() : child.attrs.id;
+      if (line?.isTextblock) {
+        const kept = line.type === detail && child.childCount === 1 && id === child.attrs.id;
+        lines.push(kept ? child : container.create({ ...child.attrs, id }, detail.create(line.attrs, line.content)));
+      }
+      const deeper = detailsOf(child);
+      if (deeper) walk(deeper);
+    });
+  walk(group);
+  return lines;
+}
+
+/**
+ * Every block at the list's top a Todo item, and every block under one a
+ * line of its details: a line of text (a paragraph pasted, a heading) made
+ * one, its text kept; anything else (an image, a table, a divider) taken
+ * out. A list left empty has an empty item put in it.
  */
 function itemsOnly(tr: Transaction): void {
   const { schema } = tr.doc.type;
   const check = schema.nodes[CHECK];
-  if (!check) return;
-  const removals: { from: number; to: number }[] = [];
-  tr.doc.descendants((node, pos, parent) => {
-    if (node.type.name === "blockGroup") return true;
-    // A block's own line, and the text in it: nothing below to look at.
-    if (parent?.type.name !== "blockGroup") return false;
-    if (!isContainer(node)) {
-      // A row of columns, say: not an item.
-      removals.push({ from: pos, to: pos + node.nodeSize });
-      return false;
+  const container = schema.nodes.blockContainer;
+  const groupType = schema.nodes.blockGroup;
+  if (!check || !container || !groupType) return;
+  // From the foot up: what is changed further down leaves where the blocks
+  // above start as it was.
+  const tops = topBlocks(tr.doc);
+  for (let at = tops.length - 1; at >= 0; at -= 1) {
+    const { node, pos } = tops[at]!;
+    const item = isContainer(node) ? itemOf(node) : null;
+    if (!item?.isTextblock) {
+      // A row of columns, an image: not an item.
+      tr.delete(pos, pos + node.nodeSize);
+      continue;
     }
+    const group = detailsOf(node);
+    if (group) {
+      const lines = flatDetails(group);
+      const same = lines.length === group.childCount && lines.every((line, index) => line === group.child(index));
+      if (!same) {
+        const groupPos = pos + 1 + item.nodeSize;
+        if (lines.length === 0) tr.delete(groupPos, groupPos + group.nodeSize);
+        else tr.replaceWith(groupPos, groupPos + group.nodeSize, groupType.create(group.attrs, lines));
+      }
+    }
+    if (item.type !== check) tr.setNodeMarkup(pos + 1, check, { ...item.attrs, checked: false });
     if (node.attrs.id === FIRST_ID) tr.setNodeMarkup(pos, undefined, { ...node.attrs, id: uuidv4() });
-    const item = itemOf(node);
-    if (item && item.type !== check) {
-      if (item.isTextblock) tr.setNodeMarkup(pos + 1, check, { checked: false });
-      else removals.push({ from: pos, to: pos + node.nodeSize });
-    }
-    // On into the blocks inside it, if it has any.
-    return true;
-  });
-  for (const { from, to } of removals.reverse()) tr.delete(from, to);
-  const group = tr.doc.firstChild;
-  if (group && group.childCount === 0) {
-    const container = schema.nodes.blockContainer;
-    if (container) tr.insert(1, container.create(null, check.create({ checked: false })));
   }
+  const group = tr.doc.firstChild;
+  if (group && group.childCount === 0) tr.insert(1, container.create(null, check.create({ checked: false })));
 }
 
 /**
  * The items done after those to do, each as it was among its own (a stable
  * partition): one just ticked goes to the top of the done, one unticked to
- * the foot of those to do. The caret stays in the item it was in.
+ * the foot of those to do. The caret stays in the item it was in. An
+ * item's details go with it.
  */
 function doneLast(tr: Transaction): void {
   const group = tr.doc.firstChild;
@@ -111,11 +148,11 @@ function ticks(doc: Node): Map<string, boolean> {
 }
 
 /**
- * What the Todo does with a change: every block an item, and, where an item
- * was ticked or unticked, the done after those to do. Not with a change of
- * Yjs's own (another device's, an undo): that device has put its blocks
- * right already, and an undo of a tick goes back where it was, not sorted
- * again on top of it.
+ * What the Todo does with a change: every block an item or a line of one's
+ * details, and, where an item was ticked or unticked, the done after those
+ * to do. Not with a change of Yjs's own (another device's, an undo): that
+ * device has put its blocks right already, and an undo of a tick goes back
+ * where it was, not sorted again on top of it.
  */
 export function tidyTodo(transactions: readonly Transaction[], before: EditorState, after: EditorState) {
   if (transactions.some((tr) => tr.getMeta(ySyncPluginKey))) return null;
@@ -130,55 +167,285 @@ export function tidyTodo(transactions: readonly Transaction[], before: EditorSta
   return tr.docChanged ? tr : null;
 }
 
-/** The caret's item and where it is in the list, if the caret is alone at a place in an item. */
-function caretItem(state: EditorState) {
+/** The line the caret is alone in: an item's, or a line of one's details (and its item). */
+type Line =
+  | { kind: "item"; $from: ResolvedPos; text: Node; containerPos: number; container: Node; index: number }
+  | {
+      kind: "detail";
+      $from: ResolvedPos;
+      text: Node;
+      containerPos: number;
+      container: Node;
+      /** Its item: where it starts, and where it is in the list. */
+      itemPos: number;
+      item: Node;
+      index: number;
+      /** Where it is among its item's details. */
+      at: number;
+    };
+
+/** The caret's line, if the caret is alone at a place in one. */
+export function lineAt(state: EditorState): Line | null {
   const { selection } = state;
   if (!(selection instanceof TextSelection) || !selection.empty) return null;
   const { $from } = selection;
-  if ($from.parent.type.name !== CHECK || $from.depth < 2) return null;
-  const containerPos = $from.before($from.depth - 1);
-  const index = topBlocks(state.doc).findIndex((block) => block.pos === containerPos);
-  return { $from, item: $from.parent, itemPos: $from.before($from.depth), containerPos, index };
+  const text = $from.parent;
+  if (!text.isTextblock) return null;
+  // The list's group, its block, the block's line: an item's.
+  if ($from.depth === 3) {
+    return { kind: "item", $from, text, containerPos: $from.before(2), container: $from.node(2), index: $from.index(1) };
+  }
+  // …and the block's details, a block in them, its line: a detail's.
+  if ($from.depth === 5) {
+    return {
+      kind: "detail",
+      $from,
+      text,
+      containerPos: $from.before(4),
+      container: $from.node(4),
+      itemPos: $from.before(2),
+      item: $from.node(2),
+      index: $from.index(1),
+      at: $from.index(3),
+    };
+  }
+  return null;
+}
+
+const newItem = (state: EditorState, content?: Fragment) =>
+  state.schema.nodes.blockContainer!.create(
+    { id: uuidv4() },
+    state.schema.nodes[CHECK]!.create({ checked: false }, content),
+  );
+const newDetail = (state: EditorState, content?: Fragment) =>
+  state.schema.nodes.blockContainer!.create({ id: uuidv4() }, state.schema.nodes[DETAIL]!.create(null, content));
+
+/**
+ * Shift + Enter: a line of details, under the item (the first of its
+ * details) or after the line of details the caret is in, what is after the
+ * caret going into it.
+ */
+export function addDetail(state: EditorState): Transaction | null {
+  const line = lineAt(state);
+  if (!line) return null;
+  const tr = state.tr;
+  const after = line.text.content.cut(line.$from.parentOffset);
+  if (after.size > 0) tr.delete(line.$from.pos, line.$from.end());
+  const added = newDetail(state, after);
+  let start: number;
+  if (line.kind === "detail") {
+    const at = tr.mapping.map(line.containerPos + line.container.nodeSize);
+    tr.insert(at, added);
+    start = at + 2;
+  } else {
+    const container = tr.doc.nodeAt(line.containerPos)!;
+    if (detailsOf(container)) {
+      const at = line.containerPos + 1 + itemOf(container)!.nodeSize + 1;
+      tr.insert(at, added);
+      start = at + 2;
+    } else {
+      const at = line.containerPos + container.nodeSize - 1;
+      tr.insert(at, state.schema.nodes.blockGroup!.create(null, added));
+      start = at + 3;
+    }
+  }
+  return tr.setSelection(TextSelection.create(tr.doc, start)).scrollIntoView();
 }
 
 /**
+ * Enter in a line of details: the next line of them, what is after the
+ * caret going into it; in an empty one, out of the details, the line gone
+ * and a new item after the item.
+ */
+function enterInDetail(state: EditorState, line: Extract<Line, { kind: "detail" }>): Transaction {
+  if (line.text.content.size > 0) return addDetail(state)!;
+  const tr = state.tr;
+  const group = detailsOf(line.item)!;
+  const groupPos = line.itemPos + 1 + itemOf(line.item)!.nodeSize;
+  if (group.childCount === 1) tr.delete(groupPos, groupPos + group.nodeSize);
+  else tr.delete(line.containerPos, line.containerPos + line.container.nodeSize);
+  const end = tr.mapping.map(line.itemPos + line.item.nodeSize);
+  tr.insert(end, newItem(state));
+  return tr.setSelection(TextSelection.create(tr.doc, end + 2)).scrollIntoView();
+}
+
+/**
+ * Enter in an item with details: the new item after them, what is after
+ * the caret going into it, the details staying with the item they are of.
+ * At the start of the line, the new, empty item goes above.
+ */
+function enterInItemWithDetails(state: EditorState, line: Extract<Line, { kind: "item" }>): Transaction {
+  const tr = state.tr;
+  if (line.$from.parentOffset === 0) return tr.insert(line.containerPos, newItem(state)).scrollIntoView();
+  const after = line.text.content.cut(line.$from.parentOffset);
+  if (after.size > 0) tr.delete(line.$from.pos, line.$from.end());
+  const end = tr.mapping.map(line.containerPos + line.container.nodeSize);
+  tr.insert(end, newItem(state, after));
+  return tr.setSelection(TextSelection.create(tr.doc, end + 2)).scrollIntoView();
+}
+
+/**
+ * Tab: the item made a line of the details of the item above, the last of
+ * them; its own details going on after it. Null in the first item, or in a
+ * line of details already.
+ */
+export function makeDetail(state: EditorState): Transaction | null {
+  const line = lineAt(state);
+  if (!line || line.kind !== "item" || line.index === 0) return null;
+  const above = state.doc.firstChild!.child(line.index - 1);
+  if (!isContainer(above) || !itemOf(above)?.isTextblock) return null;
+  const abovePos = line.containerPos - above.nodeSize;
+  const { schema } = state;
+  const moved = schema.nodes.blockContainer!.create(
+    line.container.attrs,
+    schema.nodes[DETAIL]!.create(line.text.attrs, line.text.content),
+  );
+  const own = detailsOf(line.container);
+  const lines = own ? Fragment.from(moved).append(own.content) : Fragment.from(moved);
+  const tr = state.tr.delete(line.containerPos, line.containerPos + line.container.nodeSize);
+  let start: number;
+  if (detailsOf(above)) {
+    const at = abovePos + above.nodeSize - 2;
+    tr.insert(at, lines);
+    start = at + 2;
+  } else {
+    const at = abovePos + above.nodeSize - 1;
+    tr.insert(at, schema.nodes.blockGroup!.create(null, lines));
+    start = at + 3;
+  }
+  return tr.setSelection(TextSelection.create(tr.doc, start + line.$from.parentOffset)).scrollIntoView();
+}
+
+/**
+ * Shift + Tab: the line of details made an item, after its item; the lines
+ * of details after it going with it, as its own. Null in an item.
+ */
+export function makeItem(state: EditorState): Transaction | null {
+  const line = lineAt(state);
+  if (!line || line.kind !== "detail") return null;
+  const { schema } = state;
+  const group = detailsOf(line.item)!;
+  const groupPos = line.itemPos + 1 + itemOf(line.item)!.nodeSize;
+  const after: Node[] = [];
+  for (let at = line.at + 1; at < group.childCount; at += 1) after.push(group.child(at));
+  const check = schema.nodes[CHECK]!.create({ ...line.text.attrs, checked: false }, line.text.content);
+  const made = schema.nodes.blockContainer!.create(
+    line.container.attrs,
+    after.length > 0 ? [check, schema.nodes.blockGroup!.create(null, after)] : [check],
+  );
+  const tr = state.tr;
+  if (line.at === 0) tr.delete(groupPos, groupPos + group.nodeSize);
+  else tr.delete(line.containerPos, groupPos + group.nodeSize - 1);
+  const end = tr.mapping.map(line.itemPos + line.item.nodeSize);
+  tr.insert(end, made);
+  return tr.setSelection(TextSelection.create(tr.doc, end + 2 + line.$from.parentOffset)).scrollIntoView();
+}
+
+/** Where the text of a block's own line ends. */
+const textEnd = (containerPos: number, container: Node) => containerPos + 2 + itemOf(container)!.content.size;
+
+/**
+ * Backspace at the start of a line: joined to the line above it, as text is
+ * (an empty one goes), the caret where they meet. The line above an item is
+ * the last of the details of the item above, if it has any; an item's own
+ * details go on after them. In the first item, nothing. Null where the
+ * caret is not at a line's start.
+ */
+export function joinUp(state: EditorState): Transaction | null | "nothing" {
+  const line = lineAt(state);
+  if (!line || line.$from.parentOffset !== 0) return null;
+  const tr = state.tr;
+  if (line.kind === "detail") {
+    const group = detailsOf(line.item)!;
+    const target =
+      line.at > 0
+        ? textEnd(line.containerPos - group.child(line.at - 1).nodeSize, group.child(line.at - 1))
+        : textEnd(line.itemPos, line.item);
+    if (group.childCount === 1) {
+      const groupPos = line.itemPos + 1 + itemOf(line.item)!.nodeSize;
+      tr.delete(groupPos, groupPos + group.nodeSize);
+    } else {
+      tr.delete(line.containerPos, line.containerPos + line.container.nodeSize);
+    }
+    if (line.text.content.size > 0) tr.insert(target, line.text.content);
+    return tr.setSelection(TextSelection.create(tr.doc, target)).scrollIntoView();
+  }
+  if (line.index === 0) return "nothing";
+  const above = state.doc.firstChild!.child(line.index - 1);
+  if (!isContainer(above) || !itemOf(above)?.isTextblock) return "nothing";
+  const abovePos = line.containerPos - above.nodeSize;
+  const aboveDetails = detailsOf(above);
+  const target = aboveDetails
+    ? textEnd(abovePos + above.nodeSize - 2 - aboveDetails.lastChild!.nodeSize, aboveDetails.lastChild!)
+    : textEnd(abovePos, above);
+  // From the foot up, so that each step leaves where the next is as it was.
+  tr.delete(line.containerPos, line.containerPos + line.container.nodeSize);
+  const own = detailsOf(line.container);
+  if (own) {
+    if (aboveDetails) tr.insert(abovePos + above.nodeSize - 2, own.content);
+    else tr.insert(abovePos + above.nodeSize - 1, own);
+  }
+  if (line.text.content.size > 0) tr.insert(target, line.text.content);
+  return tr.setSelection(TextSelection.create(tr.doc, target)).scrollIntoView();
+}
+
+/** Reads where the caret is in the page now: a click just before a key may not have reached the editor's state yet. */
+const flushDom = (view: unknown) =>
+  (view as { domObserver?: { flush?: () => void } } | undefined)?.domObserver?.flush?.();
+
+/**
  * The quick note's Todo: every line a tick box, the done going to the foot
- * (see {@link tidyTodo}). And its keys: Enter in an empty item does nothing
- * (BlockNote would make it a line of text, put back as an item at once);
- * Backspace at an item's start joins it to the one above (an empty one goes);
- * ⌘ + Enter ticks the item, or unticks it, the caret going on to the next
- * to do, for the next ⌘ + Enter.
+ * (see {@link tidyTodo}), and under an item, lines of its details (an
+ * explanation, a link), with no tick box. And its keys: Enter in an empty
+ * item does nothing (BlockNote would make it a line of text, put back as
+ * an item at once); Shift + Enter starts a line of details; Tab makes an
+ * item a line of the details of the one above, Shift + Tab a line of
+ * details an item; Backspace at a line's start joins it to the line above;
+ * ⌘ + Enter ticks the item (the one of the details the caret is in), or
+ * unticks it, the caret going on to the next to do, for the next ⌘ + Enter.
  */
 export const todoOnly = createExtension(({ editor }) => {
   const view = () => editor.prosemirrorView;
+  /** Runs a change of the caret's line, if there is one to make. */
+  const run = (make: (state: EditorState) => Transaction | null) => {
+    const current = view();
+    if (!current) return false;
+    const tr = make(current.state);
+    if (tr) current.dispatch(tr);
+    return Boolean(tr);
+  };
   return {
     key: "memocaTodoOnly",
-    runsBefore: ["check-list-item-shortcuts"],
+    runsBefore: ["check-list-item-shortcuts", "memocaListKeys"],
     keyboardShortcuts: {
       Enter: () => {
         const state = view()?.state;
-        const at = state && caretItem(state);
-        return Boolean(at && at.item.content.size === 0);
+        const line = state && lineAt(state);
+        if (!state || !line) return false;
+        if (line.kind === "detail") return run((now) => enterInDetail(now, line));
+        if (line.text.content.size === 0) return true;
+        if (detailsOf(line.container)) return run((now) => enterInItemWithDetails(now, line));
+        return false;
+      },
+      "Shift-Enter": () => run(addDetail),
+      // Kept in the Todo either way: the browser would take the caret out
+      // of it, to the next button.
+      Tab: () => {
+        flushDom(view());
+        run(makeDetail);
+        return true;
+      },
+      "Shift-Tab": () => {
+        flushDom(view());
+        run(makeItem);
+        return true;
       },
       Backspace: () => {
         const current = view();
-        const at = current && caretItem(current.state);
-        if (!current || !at || at.$from.parentOffset !== 0) return false;
-        if (at.index <= 0) return true;
-        const above = topBlocks(current.state.doc)[at.index - 1]!;
-        const aboveItem = itemOf(above.node);
-        if (!aboveItem?.isTextblock) return true;
-        // The end of the item above: inside it, after its text.
-        const end = above.pos + 1 + aboveItem.nodeSize - 1;
-        const tr = current.state.tr;
-        if (at.item.content.size === 0) {
-          const container = current.state.doc.nodeAt(at.containerPos)!;
-          tr.delete(at.containerPos, at.containerPos + container.nodeSize);
-        } else {
-          tr.delete(end, at.itemPos + 1);
-        }
-        tr.setSelection(TextSelection.create(tr.doc, end)).scrollIntoView();
-        current.dispatch(tr);
+        if (!current) return false;
+        const tr = joinUp(current.state);
+        if (tr === null) return false;
+        if (tr !== "nothing") current.dispatch(tr);
         return true;
       },
       "Mod-Enter": () => {
@@ -186,13 +453,14 @@ export const todoOnly = createExtension(({ editor }) => {
         // Where the caret is in the page now: a click just before this key
         // may not have reached the editor's state yet (selectionchange comes
         // after), and the wrong item would be ticked.
-        (current as unknown as { domObserver?: { flush?: () => void } } | undefined)?.domObserver?.flush?.();
-        const at = current && caretItem(current.state);
+        flushDom(current);
+        const at = current && lineAt(current.state);
         if (!current || !at) return false;
-        const checked = at.item.attrs.checked === true;
-        current.dispatch(
-          current.state.tr.setNodeMarkup(at.itemPos, undefined, { ...at.item.attrs, checked: !checked }),
-        );
+        const itemPos = (at.kind === "detail" ? at.itemPos : at.containerPos) + 1;
+        const item = current.state.doc.nodeAt(itemPos);
+        if (item?.type.name !== CHECK) return false;
+        const checked = item.attrs.checked === true;
+        current.dispatch(current.state.tr.setNodeMarkup(itemPos, undefined, { ...item.attrs, checked: !checked }));
         if (checked) return true;
         // Ticked, it has gone to the done: the caret to what took its place,
         // or the foot of those to do.
@@ -200,8 +468,7 @@ export const todoOnly = createExtension(({ editor }) => {
         const todo = blocks.filter((block) => !isChecked(block.node));
         const next = blocks[at.index] && !isChecked(blocks[at.index]!.node) ? blocks[at.index]! : todo.at(-1);
         if (!next) return true;
-        const item = itemOf(next.node)!;
-        const place = next === blocks[at.index] ? next.pos + 2 : next.pos + 1 + item.nodeSize - 1;
+        const place = next === blocks[at.index] ? next.pos + 2 : textEnd(next.pos, next.node);
         const state = current.state;
         current.dispatch(state.tr.setSelection(TextSelection.create(state.doc, place)).scrollIntoView());
         return true;

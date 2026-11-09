@@ -258,17 +258,26 @@
 .memoca-quick-editor .bn-editor {
   padding: 1rem 1rem 1.5rem;
 }
-/* The quick note's Todo: what is done, at its foot, faded, with a line over
-   the first of it saying so (todo-only keeps the done after those to do). */
-.memoca-todo .bn-block-content[data-content-type="checkListItem"][data-checked="true"] {
+/* The quick note's Todo: what is done, at its foot, faded (its details
+   too), with a line over the first of it saying so (todo-only keeps the
+   done after those to do). Of the list's own blocks, at its top: not the
+   lines of an item's details, a block group of their own. */
+.memoca-todo .bn-block-content[data-content-type="checkListItem"][data-checked="true"],
+.memoca-todo
+  .bn-editor
+  > .bn-block-group
+  > .bn-block-outer:has(> .bn-block > .bn-block-content[data-checked="true"])
+  .bn-block-group {
   opacity: 0.5;
 }
 .memoca-todo
-  .bn-block-group
+  .bn-editor
+  > .bn-block-group
   > .bn-block-outer:not(:has(> .bn-block > .bn-block-content[data-checked="true"]))
   + .bn-block-outer:has(> .bn-block > .bn-block-content[data-checked="true"])::before,
 .memoca-todo
-  .bn-block-group
+  .bn-editor
+  > .bn-block-group
   > .bn-block-outer:first-child:has(> .bn-block > .bn-block-content[data-checked="true"])::before {
   content: "完了";
   display: block;
@@ -278,6 +287,16 @@
   font-size: 0.75rem;
   color: var(--muted-foreground);
   user-select: none;
+}
+/* An item's details: under its text, where its text starts (BlockNote's
+   step in is the tick box's width), smaller and paler, with no line down
+   their side as a block's own blocks have. */
+.memoca-todo .bn-editor .bn-block-group .bn-block .bn-block-group > .bn-block-outer:not([data-prev-depth-changed])::before {
+  display: none;
+}
+.memoca-todo .bn-block-group .bn-block-group .bn-block-content[data-content-type="paragraph"] {
+  font-size: 0.875em;
+  color: var(--muted-foreground);
 }
 
 /* On the window's own background, as the field was: not a box of the

@@ -113,8 +113,11 @@ export const ja = {
     todoField: "Todo",
     todoPlaceholder: "やることを書いて、Enter で次の項目へ",
     todoItemPlaceholder: "やること",
+    todoDetailPlaceholder: "補足（説明や URL）",
     todoHint: (modKey: string, windowed: boolean) =>
-      `Enter で次の項目 ・ ${modKey} + Enter で完了${windowed ? " ・ Esc で閉じる" : ""}`,
+      `Shift + Enter で補足 ・ Tab で上の項目の補足に ・ ${modKey} + Enter で完了${windowed ? " ・ Esc で閉じる" : ""}`,
+    toDetail: "補足行にする",
+    toItem: "項目にする",
     clearDone: (count: number) => `完了 ${count} 件を消す`,
     todoLoading: "Todo を読み込んでいます…",
     todoFailed: "Todo を開けませんでした。もう一度お試しください。",
