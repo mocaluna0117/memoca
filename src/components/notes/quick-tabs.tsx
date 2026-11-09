@@ -63,6 +63,32 @@ export function QuickTabs({
   onOpenTodo: () => void;
 }) {
   const strip = useRef<HTMLDivElement>(null);
+  // A mouse's wheel turned over the tabs, more than fit, scrolls them
+  // sideways: only a trackpad (or Shift and the wheel) could, and with a
+  // mouse alone the tabs out of sight were out of reach. A sideways swipe,
+  // and Shift with the wheel, are left to the browser, which scrolls them
+  // already. Not passive, to keep the turn from going on to the page.
+  useEffect(() => {
+    const element = strip.current;
+    if (!element) return;
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || event.shiftKey) return;
+      if (Math.abs(event.deltaX) >= Math.abs(event.deltaY)) return;
+      if (element.scrollWidth <= element.clientWidth) return;
+      // In lines (Firefox's mouse) or pages, made pixels.
+      const by =
+        event.deltaMode === 1
+          ? event.deltaY * 16
+          : event.deltaMode === 2
+            ? event.deltaY * element.clientWidth
+            : event.deltaY;
+      const before = element.scrollLeft;
+      element.scrollLeft = before + by;
+      if (element.scrollLeft !== before) event.preventDefault();
+    };
+    element.addEventListener("wheel", onWheel, { passive: false });
+    return () => element.removeEventListener("wheel", onWheel);
+  }, []);
   // The tab shown is in sight, one opened at the end included.
   useEffect(() => {
     strip.current

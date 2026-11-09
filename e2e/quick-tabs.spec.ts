@@ -113,6 +113,29 @@ test.describe("the quick note's tabs, in a window of its own", () => {
   });
 });
 
+test.describe("the quick note's tabs, more than fit", () => {
+  test("are scrolled sideways by a mouse's wheel, as by a trackpad", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "a mouse's wheel");
+    await signUp(page);
+    await page.setViewportSize({ width: 380, height: 460 });
+    await page.goto("/quick?window=1");
+    for (let made = 0; made < 8; made += 1) {
+      await page.getByRole("button", { name: "新しいタブ" }).click();
+    }
+    const strip = page.getByRole("tablist");
+    const left = () => strip.evaluate((element) => element.scrollLeft);
+    // The last opened is in sight: the strip scrolled to its end.
+    await expect.poll(left).toBeGreaterThan(0);
+    const end = await left();
+    await strip.hover();
+    await page.mouse.wheel(0, -300);
+    await expect.poll(left).toBeLessThan(end);
+    const back = await left();
+    await page.mouse.wheel(0, 200);
+    await expect.poll(left).toBeGreaterThan(back);
+  });
+});
+
 test.describe("the quick note's tabs, on a phone", () => {
   test.beforeEach(({}, testInfo) => {
     test.skip(testInfo.project.name !== "mobile", "the page of a phone");
