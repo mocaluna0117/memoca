@@ -1,7 +1,7 @@
 "use client";
 
 import { showExportCover } from "./export-cover";
-import { A4, type PageImage, writePdf } from "./pdf-writer";
+import { A4, type PageImage, type PageLink, writePdf } from "./pdf-writer";
 import { type ProgressPart, trackProgress } from "./progress";
 
 /** The margin round each sheet, in points: about 14 mm. */
@@ -57,7 +57,8 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
  * ends where a block (a line, an item, an image) does, so no line is cut in
  * two; only a block taller than a sheet is. In the light theme, whichever is on: a sheet of paper is white.
  * Its text is a picture: it reads exactly as the note does, but cannot be
- * selected.
+ * selected. Its links are pressed as on the screen: each has a link of the
+ * PDF's own over its picture (see linksOf).
  *
  * Made under a cover that says how far it has come, from the steps done
  * ({@link STEPS}): 100% once the file is made, before it is saved. Cancelled
@@ -180,6 +181,64 @@ function breaksOf(body: HTMLElement): { breaks: number[]; end: number } {
   return { breaks: sorted, end: (sorted.at(-1) ?? 0) + padding };
 }
 
+/** Where a link may go from a PDF: a web page, an address to write to, a number to call. */
+const LINKABLE = new Set(["http:", "https:", "mailto:", "tel:"]);
+
+/** Where a link goes, as a PDF keeps it (ASCII, as a URL is written out); null for one it cannot open. */
+export function linkTarget(href: string): string | null {
+  try {
+    const url = new URL(href);
+    return LINKABLE.has(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+/** A link drawn in the note: where it goes, and each piece of it, a line each, in pixels from the note's top left. */
+type DrawnLink = { url: string; x: number; y: number; width: number; height: number };
+
+/** The note's links as they are drawn (a link over two lines is two pieces), a note's link to another note's too. */
+function linksOf(body: HTMLElement): DrawnLink[] {
+  const origin = body.getBoundingClientRect();
+  const drawn: DrawnLink[] = [];
+  for (const anchor of body.querySelectorAll<HTMLAnchorElement>("a[href]")) {
+    if (anchor.closest(NOT_OF_THE_NOTE)) continue;
+    const url = linkTarget(anchor.href);
+    if (!url) continue;
+    for (const rect of anchor.getClientRects()) {
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      drawn.push({ url, x: rect.left - origin.left, y: rect.top - origin.top, width: rect.width, height: rect.height });
+    }
+  }
+  return drawn;
+}
+
+/**
+ * The links on one sheet, in points from its top left: those of the slice
+ * [from, to) of the note, drawn `top` pixels down (under the title, on the
+ * first), cut to the slice where one is on two sheets.
+ */
+export function linksOnSheet(
+  links: readonly DrawnLink[],
+  [from, to]: readonly [number, number],
+  { top, pixelsPerPoint, margin }: { top: number; pixelsPerPoint: number; margin: number },
+): PageLink[] {
+  return links.flatMap((link) => {
+    const upper = Math.max(link.y, from);
+    const lower = Math.min(link.y + link.height, to);
+    if (lower <= upper) return [];
+    return [
+      {
+        url: link.url,
+        x: margin + link.x / pixelsPerPoint,
+        y: margin + (top + upper - from) / pixelsPerPoint,
+        width: link.width / pixelsPerPoint,
+        height: (lower - upper) / pixelsPerPoint,
+      },
+    ];
+  });
+}
+
 /** The slices of the note a sheet each, as [from, to) in pixels. */
 export function paginate(
   breaks: readonly number[],
@@ -270,6 +329,7 @@ async function draw(
   const heading = titleHeight(title, field, width);
 
   const { breaks, end } = breaksOf(body);
+  const links = linksOf(body);
   const slices = paginate(breaks, end, { first: sheet - heading, rest: sheet });
   progress.starting.to(0.75);
 
@@ -317,7 +377,9 @@ async function draw(
       ctx.scale(scale, scale);
       if (index === 0) drawTitle(ctx, title, field, width);
       ctx.drawImage(slice, 0, top, width, height);
-      pages.push(await encode(page, (top + height) / pixelsPerPoint, encoding));
+      const image = await encode(page, (top + height) / pixelsPerPoint, encoding);
+      image.links = linksOnSheet(links, [from, to], { top, pixelsPerPoint, margin: MARGIN });
+      pages.push(image);
       slice.width = 0;
       page.width = 0;
     }

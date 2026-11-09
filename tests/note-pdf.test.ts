@@ -82,3 +82,66 @@ describe("where a note's sheets end", async () => {
     expect(() => paginate([], 16, { first: 0, rest: 0 })).toThrow(RangeError);
   });
 });
+
+describe("a note's links in its PDF", async () => {
+  const { linkTarget, linksOnSheet } = await import("@/lib/export/note-pdf");
+  const picture = () => ({
+    width: 2,
+    height: 2,
+    encoding: "deflate" as const,
+    data: new Uint8Array(deflateSync(new Uint8Array(12))),
+    place: { x: 40, y: 40, width: A4.width - 80, height: 300 },
+  });
+
+  test("each a link of the PDF's own over its picture, read by pdf.js as one to press", async () => {
+    const page = {
+      ...picture(),
+      links: [
+        { url: "https://example.com/a?q=(1)", x: 50, y: 100, width: 120, height: 14 },
+        { url: "mailto:me@example.com", x: 50, y: 130, width: 80, height: 14 },
+      ],
+    };
+    const blob = writePdf([page, picture()], { title: "リンク" });
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    // Its cross-reference table still to the byte, with the links' objects in it.
+    const text = Buffer.from(bytes).toString("latin1");
+    const xref = Number(/startxref\n(\d+)/.exec(text)![1]);
+    expect(text.slice(xref, xref + 4)).toBe("xref");
+    const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const doc = await pdfjs.getDocument({ data: bytes }).promise;
+    const links = (await (await doc.getPage(1)).getAnnotations()) as { subtype: string; url?: string; rect: number[] }[];
+    expect(links.map((link) => [link.subtype, link.url])).toEqual([
+      ["Link", "https://example.com/a?q=(1)"],
+      ["Link", "mailto:me@example.com"],
+    ]);
+    // From the page's foot, as a PDF counts: 100 points down is 842 - 100 up.
+    expect(links[0]!.rect.map(Math.round)).toEqual([50, Math.round(A4.height - 114), 170, Math.round(A4.height - 100)]);
+    expect(await (await doc.getPage(2)).getAnnotations()).toEqual([]);
+    await doc.loadingTask.destroy();
+  });
+
+  test("go to a web page, an address or a number: nothing else (a script) is a link of the PDF's", () => {
+    expect(linkTarget("https://example.com/日本語")).toBe("https://example.com/%E6%97%A5%E6%9C%AC%E8%AA%9E");
+    expect(linkTarget("http://example.com")).toBe("http://example.com/");
+    expect(linkTarget("mailto:me@example.com")).toBe("mailto:me@example.com");
+    expect(linkTarget("tel:0312345678")).toBe("tel:0312345678");
+    expect(linkTarget("javascript:alert(1)")).toBeNull();
+    expect(linkTarget("memoca://attachment/1")).toBeNull();
+    expect(linkTarget("not a url")).toBeNull();
+  });
+
+  test("on each sheet where they are drawn, under the title on the first, one over two sheets cut in two", () => {
+    const links = [
+      { url: "https://a.example/", x: 10, y: 20, width: 100, height: 20 },
+      { url: "https://b.example/", x: 0, y: 290, width: 50, height: 20 },
+    ];
+    // Two pixels a point, 40 points of margin, a 30-pixel title over the first.
+    const first = linksOnSheet(links, [0, 300], { top: 30, pixelsPerPoint: 2, margin: 40 });
+    expect(first).toEqual([
+      { url: "https://a.example/", x: 45, y: 65, width: 50, height: 10 },
+      { url: "https://b.example/", x: 40, y: 200, width: 25, height: 5 },
+    ]);
+    const second = linksOnSheet(links, [300, 600], { top: 0, pixelsPerPoint: 2, margin: 40 });
+    expect(second).toEqual([{ url: "https://b.example/", x: 40, y: 40, width: 25, height: 5 }]);
+  });
+});

@@ -155,3 +155,34 @@ test("a PDF being made can be cancelled from its cover: nothing is saved, the ap
   expect((await saving).suggestedFilename()).toBe("やめるメモ.pdf");
   await expect(page.locator(".memoca-export-cover")).toHaveCount(0);
 });
+
+test("a note's links are links in its PDF: pressed, they open where they go", async ({ page }, testInfo) => {
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "リンクのあるメモ");
+  await editor(page).click();
+  // Made a link as it is typed, with the space after it.
+  await page.keyboard.type("募集ページ https://example.com/winter ");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("次の行");
+  await expect(editor(page).locator('a[href="https://example.com/winter"]')).toBeVisible();
+  await waitForSynced(page);
+
+  const saving = page.waitForEvent("download", { timeout: 60_000 });
+  await page.getByRole("button", { name: "メモの操作" }).filter({ visible: true }).click();
+  await page.getByRole("menuitem", { name: "PDF で書き出す" }).click();
+  const saved = await saving;
+  const path = testInfo.outputPath("links.pdf");
+  await saved.saveAs(path);
+  const text = (await readFile(path)).toString("latin1");
+  const link = /\/Subtype \/Link \/Rect \[([\d. ]+)\] .*?\/URI \(([^)]*)\)/.exec(text);
+  expect(link?.[2]).toBe("https://example.com/winter");
+  // On the sheet, near its top, where the first line is: right of the
+  // margin, under the title, and as wide as a few words.
+  const [x1, y1, x2, y2] = link![1]!.split(" ").map(Number) as [number, number, number, number];
+  expect(x1).toBeGreaterThan(40);
+  expect(x2 - x1).toBeGreaterThan(40);
+  expect(y2).toBeGreaterThan(842 - 200);
+  expect(y2).toBeLessThan(842 - 40);
+  expect(y2 - y1).toBeGreaterThan(5);
+});

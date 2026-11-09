@@ -1,7 +1,9 @@
 /**
  * Writes a PDF of pictures, one a page: what a note looks like, drawn by the
  * browser, put on A4 sheets. Written by hand, as the format for this is
- * small: a page tree, and on each page one image placed in its margins.
+ * small: a page tree, and on each page one image placed in its margins, and
+ * over the picture of each of the note's links, a link to where it goes
+ * (the picture alone has nothing to press).
  */
 
 /** A4 in points (1/72 inch). */
@@ -17,7 +19,15 @@ export type PageImage = {
   data: Uint8Array;
   /** Where on the page, in points from its top left, and how large. */
   place: { x: number; y: number; width: number; height: number };
+  /** The note's links on it: where each is drawn, in points from the page's top left, and where it goes. */
+  links?: PageLink[];
 };
+
+/** A link on a page: pressed, it opens `url`. */
+export type PageLink = { url: string; x: number; y: number; width: number; height: number };
+
+/** A string as a PDF writes one in brackets: its backslashes and brackets escaped. */
+const literal = (text: string) => `(${text.replace(/[\\()]/g, (character) => `\\${character}`)})`;
 
 const encoder = new TextEncoder();
 
@@ -56,8 +66,12 @@ export function writePdf(
     write(`${id} 0 obj\n`);
   };
 
-  // 1 catalog, 2 page tree, 3 information, then three objects a page.
+  // 1 catalog, 2 page tree, 3 information, then three objects a page, then
+  // the pages' links, one object each.
   const pageId = (index: number) => 4 + index * 3;
+  const linkIds: number[][] = [];
+  let nextId = pageId(pages.length);
+  for (const page of pages) linkIds.push((page.links ?? []).map(() => nextId++));
   write("%PDF-1.4\n%âãÏÓ\n");
   begin(1);
   write("<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
@@ -72,9 +86,10 @@ export function writePdf(
     const id = pageId(index);
     const { x, y, width, height } = page.place;
     const content = `${fill} q ${num(width)} 0 0 ${num(height)} ${num(x)} ${num(A4.height - y - height)} cm /Page Do Q`;
+    const annots = linkIds[index]!.length > 0 ? ` /Annots [${linkIds[index]!.map((link) => `${link} 0 R`).join(" ")}]` : "";
     begin(id);
     write(
-      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${A4.width} ${A4.height}] /Contents ${id + 1} 0 R /Resources << /XObject << /Page ${id + 2} 0 R >> >> >>\nendobj\n`,
+      `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${A4.width} ${A4.height}] /Contents ${id + 1} 0 R /Resources << /XObject << /Page ${id + 2} 0 R >> >>${annots} >>\nendobj\n`,
     );
     begin(id + 1);
     write(`<< /Length ${content.length} >>\nstream\n${content}\nendstream\nendobj\n`);
@@ -87,7 +102,17 @@ export function writePdf(
     write("\nendstream\nendobj\n");
   });
 
-  const count = pageId(pages.length);
+  pages.forEach((page, index) => {
+    (page.links ?? []).forEach((link, at) => {
+      const rect = [link.x, A4.height - link.y - link.height, link.x + link.width, A4.height - link.y].map(num);
+      begin(linkIds[index]![at]!);
+      write(
+        `<< /Type /Annot /Subtype /Link /Rect [${rect.join(" ")}] /Border [0 0 0] /F 4 /A << /S /URI /URI ${literal(link.url)} >> >>\nendobj\n`,
+      );
+    });
+  });
+
+  const count = nextId;
   const xref = length;
   let table = `xref\n0 ${count}\n0000000000 65535 f \n`;
   for (let id = 1; id < count; id += 1) table += `${String(offsets[id]).padStart(10, "0")} 00000 n \n`;

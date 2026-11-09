@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-11-09-pdf-links",
+    date: "2026-11-09",
+    title: "PDF に書き出したメモのリンクを押せるように",
+    details: [
+      "「PDF で書き出す」で作った PDF の中のリンクを押しても、開けませんでした。メモの中のリンク（Web ページ、メールアドレス、ほかのメモへのリンク）を押すと、そのリンク先が開くようにしました。",
+      "ほかのメモへのリンクは、ブラウザで Memoca のそのメモを開きます。",
+    ],
+  },
+  {
     id: "2026-11-09-quick-to-todo",
     date: "2026-11-09",
     title: "即席メモの行を Todo に移せるように",
