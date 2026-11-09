@@ -150,6 +150,8 @@ export class SyncEngine {
   private versionTimer: ReturnType<typeof setTimeout> | null = null;
   /** The uploads of versions under way: a history listed waits for them. */
   private versionUploads: Promise<void> = Promise.resolve();
+  /** The notes a version of is being uploaded: not read again meanwhile (it is not saved as due yet). */
+  private versionsUploading = new Set<string>();
   private checkingGhosts = false;
   /** Whether every note's name has been settled since this engine started (see receive). */
   private settledTitles = false;
@@ -437,9 +439,14 @@ export class SyncEngine {
     this.versionTimer = null;
     const due = this.versionsDue.splice(0);
     if (due.length === 0) return this.versionUploads;
-    const upload = import("./versions").then(async ({ keepVersion }) => {
-      await Promise.all(due.map(({ noteId, state }) => keepVersion(this.client, noteId, state)));
-    });
+    for (const { noteId } of due) this.versionsUploading.add(noteId);
+    const upload = import("./versions")
+      .then(async ({ keepVersion }) => {
+        await Promise.all(due.map(({ noteId, state }) => keepVersion(this.client, noteId, state)));
+      })
+      .finally(() => {
+        for (const { noteId } of due) this.versionsUploading.delete(noteId);
+      });
     // Those under way already are waited for too, by whoever waits for these.
     this.versionUploads = Promise.all([this.versionUploads, upload]).then(
       () => undefined,
@@ -837,6 +844,7 @@ export class SyncEngine {
           // One read already, waiting for the edits to pause: that is the
           // note as it was before them, and it is not read again.
           if (this.versionsDue.some((due) => due.noteId === entry.entityId)) continue;
+          if (this.versionsUploading.has(entry.entityId)) continue;
           const state = await stateBeforeEdits(entry.entityId);
           if (state) before.set(entry.entityId, state);
         }

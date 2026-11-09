@@ -367,14 +367,22 @@ describe("a version of a note, due as its edits are sent", () => {
       await vi.waitFor(() => expect(main.server.callsTo("sync:push")).toHaveLength(1), {
         timeout: PUSH_EVERY_MS + 1_000,
       });
+      // The push through, its version read and waiting for the edits to pause.
+      await vi.waitFor(async () => expect(await db().outbox.count()).toBe(0));
       await op("b");
+      const hidden = Date.now();
       setVisibility("hidden");
       await vi.waitFor(() => expect(main.server.callsTo("versions:save")).toHaveLength(1), {
-        timeout: VERSION_QUIET_MS / 2,
+        timeout: VERSION_QUIET_MS * 2,
       });
+      // Not after the pause it would otherwise have waited for.
+      expect(Date.now() - hidden).toBeLessThan(VERSION_QUIET_MS);
+      // Nor read again and kept twice, by the push the hiding sends.
+      await new Promise((resolve) => setTimeout(resolve, VERSION_QUIET_MS + 500));
+      expect(main.server.callsTo("versions:save")).toHaveLength(1);
     } finally {
       main.engine.stop();
     }
-  });
+  }, 15_000);
 });
 
