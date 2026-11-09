@@ -60,3 +60,39 @@ export function showUploadPreview(
     setTimeout(() => URL.revokeObjectURL(url), REVOKE_AFTER_MS);
   };
 }
+
+/**
+ * Puts right the block a refused file leaves. BlockNote makes one before the
+ * file is handed over (for a paste or a drop), or uses the empty one the
+ * person picked a file for, and in either case shows it loading until a file
+ * arrives, which now never happens. One made for this file becomes the empty
+ * line it was made from; the person's own goes back to its button, to try
+ * again. A file that was to replace another leaves that one as it was.
+ */
+export function settleRefusedBlock(
+  editor: BlockNoteEditor | null,
+  blockId: string | undefined,
+  file: File,
+) {
+  const block = editor && blockId ? editor.getBlock(blockId) : undefined;
+  if (!editor || !block) return;
+  const props = block.props as { url?: string; name?: string };
+  if (props.url) return;
+  const fresh = props.name === file.name ? { type: "paragraph" } : { type: block.type };
+  try {
+    editor.replaceBlocks([block.id], [fresh as never]);
+  } catch {
+    // Gone meanwhile: nothing left to put right.
+  }
+}
+
+/**
+ * Resolves once what was just put on the screen has been drawn: a frame
+ * alone comes before the paint, and a task after it lands after it. Or
+ * after a moment, where no frame comes (the page hidden).
+ */
+export const paintFrame = () =>
+  new Promise<void>((resolve) => {
+    requestAnimationFrame(() => setTimeout(resolve, 0));
+    setTimeout(resolve, 100);
+  });

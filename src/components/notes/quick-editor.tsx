@@ -18,6 +18,7 @@ import { useTheme } from "next-themes";
 import {
   type Ref,
   memo,
+  useCallback,
   useEffect,
   useImperativeHandle,
   useLayoutEffect,
@@ -26,6 +27,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { atWordStart, slashMenuOpens } from "@/components/editor/menu-start";
+import { paintFrame, settleRefusedBlock, showUploadPreview } from "@/components/editor/upload-preview";
 import type * as Y from "yjs";
 import { MemocaFormattingToolbar } from "@/components/editor/image-crop";
 import { imeCommit } from "@/components/editor/ime-commit";
@@ -58,14 +60,29 @@ export type QuickEditorHandle = {
   remove: (ids: string[]) => void;
   /** Puts blocks back: after the block of `after`'s id, or at the top. */
   putBack: (blocks: Block[], after: string | null) => void;
+  /** Images (chosen by the button) put in where the caret is, each made ready as one pasted is. */
+  insertImages: (files: File[]) => void;
+};
+
+/**
+ * What the quick note does with its images, there being no note yet for
+ * them to go up into: makes a file ready (or turns it away, saying why),
+ * keeping it in the tab's draft, and gives the reference its block shows
+ * it by (lib/quick/body quickImageRef); and gives what shows one.
+ */
+export type QuickImages = {
+  /** Files are coming in (a paste, a drop, the button): what was said of those before is over. */
+  begin: () => void;
+  prepare: (file: File, blockId?: string) => Promise<string>;
+  shown: (ref: string) => string | undefined;
 };
 
 /** A block of the quick note's, as BlockNote gives one. */
 type Block = BlockNoteEditor["document"][number];
 
 /**
- * The / menu's blocks that are a file: the quick note's images are added to
- * it apart (its strip of them), and go into the note under its text.
+ * The / menu's blocks that are a file: the quick note's images come in by
+ * a paste, a drop or its button, and nothing else goes up from it.
  */
 const FILE_ITEMS = new Set(["image", "video", "audio", "file"]);
 
@@ -76,8 +93,9 @@ const FILE_ITEMS = new Set(["image", "video", "audio", "file"]);
  * file blocks, no links to notes and no + or handle beside a block. What it
  * holds is copied into the note as it is saved (lib/quick/body).
  *
- * Files pasted or dropped into it are handed to `onFiles`, for the strip of
- * images; ⌘ + Enter (Ctrl + Enter) is `onSave`, before anything of the
+ * An image pasted or dropped into it goes in where it was put, as into a
+ * note: shown at once, dimmed, while `images` makes it ready, and then as
+ * it is; a file turned away leaves no block. ⌘ + Enter (Ctrl + Enter) is `onSave`, before anything of the
  * editor's own on those keys; and Esc, but for closing the / menu, is
  * `onEscape` where there is one (the editor's own takes the focus out of
  * it). On a phone, the bar of block actions goes into `barSlot`, at the
@@ -87,7 +105,7 @@ export const QuickEditor = memo(function QuickEditor({
   doc,
   handle,
   onSave,
-  onFiles,
+  images,
   onEscape,
   barSlot,
   autoFocus = false,
@@ -96,7 +114,7 @@ export const QuickEditor = memo(function QuickEditor({
   doc: Y.Doc;
   handle: Ref<QuickEditorHandle>;
   onSave: () => void;
-  onFiles: (files: File[]) => void;
+  images: QuickImages;
   /** Esc, the / menu not open: none, the editor's own. */
   onEscape?: () => void;
   /** Where the bar of block actions goes on a phone; none, no bar. */
@@ -106,11 +124,13 @@ export const QuickEditor = memo(function QuickEditor({
   className?: string;
 }) {
   const { resolvedTheme } = useTheme();
-  // Read when a file arrives: the editor keeps the options it was made with.
-  const latest = useRef(onFiles);
+  // Read when a file arrives, or an image is shown: the editor keeps the
+  // options it was made with.
+  const latest = useRef(images);
   useLayoutEffect(() => {
-    latest.current = onFiles;
+    latest.current = images;
   });
+  const editorRef = useRef<BlockNoteEditor | null>(null);
   const options = useMemo(
     () =>
       withCollaboration({
@@ -139,14 +159,28 @@ export const QuickEditor = memo(function QuickEditor({
         domAttributes: {
           editor: { "aria-label": t.quick.field, "aria-keyshortcuts": SAVE_KEYS },
         },
-        // Files to the strip of images; text, with them or not, into the
-        // editor (an image copied from a page comes with its address).
+        // An image where it is put, made ready by the quick note (see
+        // QuickImages): BlockNote shows it loading meanwhile, and the
+        // original, dimmed, over that (showUploadPreview).
+        uploadFile: async (file: File, blockId?: string) => {
+          const release = showUploadPreview(editorRef.current, blockId, file);
+          try {
+            await paintFrame();
+            return await latest.current.prepare(file, blockId);
+          } catch (error) {
+            settleRefusedBlock(editorRef.current, blockId, file);
+            throw error;
+          } finally {
+            release();
+          }
+        },
+        resolveFileUrl: async (url: string) => latest.current.shown(url) ?? url,
+        // Files where they are pasted, as into a note (BlockNote's own, with
+        // the upload above); text into the editor, a link as one.
         pasteHandler: ({ event, editor: pasting, defaultPasteHandler }) => {
-          const data = event.clipboardData;
-          const files = data ? [...data.files] : [];
-          if (files.length > 0) {
-            latest.current(files);
-            if (!data?.types.includes("text/plain")) return true;
+          if ((event.clipboardData?.files.length ?? 0) > 0) {
+            latest.current.begin();
+            return defaultPasteHandler();
           }
           return pasteLink(event, pasting as unknown as BlockNoteEditor) || defaultPasteHandler();
         },
@@ -156,6 +190,36 @@ export const QuickEditor = memo(function QuickEditor({
   const editor = useCreateBlockNote(options, [doc]);
   // As Memoca's own parts take it: they need none of the columns' types.
   const plain = editor as unknown as BlockNoteEditor;
+  useLayoutEffect(() => {
+    editorRef.current = plain;
+  }, [plain]);
+  /**
+   * Images put in where the caret is, one after another (in its line, if it
+   * is empty, or after it), each made ready as one pasted is: BlockNote's
+   * own upload, which shows it loading.
+   */
+  const insertImages = useCallback(
+    async (files: File[]) => {
+      latest.current.begin();
+      let at: { id: string; type: string; content?: unknown } = plain.getTextCursorPosition().block;
+      for (const file of files) {
+        const block = { type: "image", props: { name: file.name } } as never;
+        const empty = at.type === "paragraph" && Array.isArray(at.content) && at.content.length === 0;
+        const made = empty
+          ? plain.replaceBlocks([at.id], [block]).insertedBlocks[0]
+          : plain.insertBlocks([block], at.id, "after")[0];
+        if (!made) return;
+        at = made;
+        try {
+          const url = await plain.uploadFile!(file, made.id);
+          plain.updateBlock(made.id, { props: { url: url as string, name: file.name } } as never);
+        } catch {
+          // Turned away: said, and its block put right (see uploadFile).
+        }
+      }
+    },
+    [plain],
+  );
 
   useImperativeHandle(
     handle,
@@ -206,8 +270,9 @@ export const QuickEditor = memo(function QuickEditor({
         else if (anchor) plain.insertBlocks(blocks, anchor, "after");
         else if (document[0]) plain.insertBlocks(blocks, document[0], "before");
       },
+      insertImages: (files) => void insertImages(files),
     }),
-    [editor, plain],
+    [editor, plain, insertImages],
   );
 
   // Shown: ready to type into, after what is written.
@@ -251,11 +316,17 @@ export const QuickEditor = memo(function QuickEditor({
         if (event.dataTransfer.types.includes("Files")) event.preventDefault();
       }}
       onDropCapture={(event) => {
+        // Into the editor's own text: BlockNote's, where it is dropped.
+        // Beside it (its margins): where the caret is, not opened as a page.
         const files = [...event.dataTransfer.files];
         if (files.length === 0) return;
+        if ((event.target as HTMLElement).closest?.(".ProseMirror")) {
+          latest.current.begin();
+          return;
+        }
         event.preventDefault();
         event.stopPropagation();
-        onFiles(files);
+        void insertImages(files);
       }}
     >
       <BlockNoteView

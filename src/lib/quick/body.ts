@@ -23,6 +23,82 @@ const IMAGE_PROPS = {
   previewWidth: null,
 } as const;
 
+/**
+ * What an image of a quick note is put in its body by, until it is saved:
+ * the draft's image of that key (lib/quick/draft), there being no note yet
+ * for it to go up into. Saved, the note has the image's own `memoca://`
+ * reference in its place (see copyQuickBody).
+ */
+const QUICK_IMAGE = "memoca-quick://image/";
+
+/** An image of the draft's, as its block in the quick note's body refers to it. */
+export const quickImageRef = (key: string) => `${QUICK_IMAGE}${encodeURIComponent(key)}`;
+
+/** The draft's image a block refers to, if it refers to one. */
+export function quickImageKey(url: unknown): string | null {
+  if (typeof url !== "string" || !url.startsWith(QUICK_IMAGE)) return null;
+  try {
+    return decodeURIComponent(url.slice(QUICK_IMAGE.length)) || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Every image block of a body, however far in (in a toggle, under a list's item). */
+function imageBlocks(node: Y.XmlFragment | Y.XmlElement): Y.XmlElement[] {
+  const found: Y.XmlElement[] = [];
+  for (const child of node.toArray()) {
+    if (!(child instanceof Y.XmlElement)) continue;
+    if (child.nodeName === "image") found.push(child);
+    else found.push(...imageBlocks(child));
+  }
+  return found;
+}
+
+/** The block of this id in a body, however far in, if it is there. */
+export function blockOf(doc: Y.Doc, blockId: string): Y.XmlElement | null {
+  const find = (node: Y.XmlFragment | Y.XmlElement): Y.XmlElement | null => {
+    for (const child of node.toArray()) {
+      if (!(child instanceof Y.XmlElement)) continue;
+      if (child.nodeName === "blockContainer" && child.getAttribute("id") === blockId) return child;
+      const inner = find(child);
+      if (inner) return inner;
+    }
+    return null;
+  };
+  return find(bodyFragment(doc));
+}
+
+/**
+ * Gives the image block of this id the reference it shows its image by, as
+ * its image is made ready (its name too, if it has none): whether there was
+ * one to give it to (taken out meanwhile, there is not).
+ */
+export function setImageUrl(doc: Y.Doc, blockId: string, url: string, name: string): boolean {
+  const container = blockOf(doc, blockId);
+  const block = container?.get(0);
+  const image = block instanceof Y.XmlElement && block.nodeName === "image" ? block : null;
+  if (!image) return false;
+  doc.transact(() => {
+    if (image.getAttribute("url") !== url) image.setAttribute("url", url);
+    if (!image.getAttribute("name")) image.setAttribute("name", name);
+  });
+  return true;
+}
+
+/**
+ * The draft's images a quick note's body shows, in the order it shows them,
+ * each once: what the draft keeps, and what a save sends up.
+ */
+export function referencedImages(doc: Y.Doc): string[] {
+  const keys: string[] = [];
+  for (const image of imageBlocks(bodyFragment(doc))) {
+    const key = quickImageKey(image.getAttribute("url"));
+    if (key && !keys.includes(key)) keys.push(key);
+  }
+  return keys;
+}
+
 /** What a quick note is written as: a line of text, or an image by its `memoca://` reference. */
 export type QuickPart = { kind: "line"; text: string } | { kind: "image"; url: string; name: string };
 
@@ -103,11 +179,18 @@ function blank(container: Y.XmlElement): boolean {
 /**
  * Writes a quick note's body into a note's, the note's emptied first (saved
  * again, it is written over): each of its blocks as it is, lists, toggles,
- * headings and marks with them, and blank lines at either end left out (an
- * editor's body always ends in one). Then `extra` after them: its images.
- * All in one change to the note.
+ * headings, marks and images with them, and blank lines at either end left
+ * out (an editor's body always ends in one). Each image the draft's (see
+ * quickImageRef) with the reference it went up as, from `refs` by its key:
+ * one with none (not sent, or never made ready) goes. Then `extra` after
+ * them. All in one change to the note.
  */
-export function copyQuickBody(from: Y.Doc, into: Y.Doc, extra: QuickPart[]): void {
+export function copyQuickBody(
+  from: Y.Doc,
+  into: Y.Doc,
+  extra: QuickPart[],
+  refs: ReadonlyMap<string, string> = new Map(),
+): void {
   const source = bodyFragment(from);
   const target = bodyFragment(into);
   into.transact(() => {
@@ -116,6 +199,24 @@ export function copyQuickBody(from: Y.Doc, into: Y.Doc, extra: QuickPart[]): voi
       0,
       source.toArray().map((node) => (node as Y.XmlElement | Y.XmlText).clone()),
     );
+    for (const image of imageBlocks(target)) {
+      const key = quickImageKey(image.getAttribute("url"));
+      if (key === null) continue;
+      const ref = refs.get(key);
+      if (ref) {
+        image.setAttribute("url", ref);
+        continue;
+      }
+      // Its block goes with it: an image with nothing to show. A group of a
+      // block's own left empty goes too (BlockNote has none empty).
+      let gone: Y.XmlElement | null = image.parent instanceof Y.XmlElement ? image.parent : null;
+      while (gone) {
+        const parent = gone.parent;
+        if (!(parent instanceof Y.XmlElement)) break;
+        parent.delete(parent.toArray().indexOf(gone), 1);
+        gone = parent.nodeName === "blockGroup" && parent.length === 0 && parent.parent instanceof Y.XmlElement ? parent : null;
+      }
+    }
     const group = target
       .toArray()
       .find(

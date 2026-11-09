@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as Y from "yjs";
 import { db, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
-import { DRAFT_DELAY_MS, loadDraft, loadTabs } from "@/lib/quick/draft";
+import { DRAFT_DELAY_MS, keepDraft, loadDraft, loadTabs } from "@/lib/quick/draft";
 import { SHELL_HIDDEN } from "@/lib/quick/shell";
 import { bodyFragment } from "@/lib/sync/ydoc";
 
@@ -37,6 +37,10 @@ const h = vi.hoisted(() => ({
   prepare: vi.fn(),
   stage: vi.fn(),
   move: vi.fn(),
+  /** The document of the tab shown, as its editor has it. */
+  doc: null as unknown as import("yjs").Doc,
+  /** How many image blocks a paste has made, for each its own id. */
+  made: 0,
 }));
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace: h.replace, push: h.push }),
@@ -52,37 +56,65 @@ vi.mock("@/components/providers/sync-provider", () => ({
 vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote, moveNote: h.move }));
 // The editor, as a field of lines: each a paragraph of the tab's document,
 // with ids that follow from where it is, so that the same lines say the same.
+// Images, as the editor puts them: a block for each file pasted, shown
+// loading while the quick note makes it ready, given its reference by the
+// quick note once it is, and taken out again if it is turned away (as
+// settleRefusedBlock does). Kept after the lines as they are typed.
 vi.mock("@/components/notes/quick-editor", async () => {
   const React = await import("react");
-  const { appendParagraphs } = await import("@/lib/quick/body");
+  const { appendParagraphs, blockOf } = await import("@/lib/quick/body");
   const { bodyFragment: fragmentOf } = await import("@/lib/sync/ydoc");
+  const isImage = (container: unknown) =>
+    ((container as Y.XmlElement).toArray()[0] as Y.XmlElement | undefined)?.nodeName === "image";
+  const containersOf = (doc: Y.Doc) =>
+    ((fragmentOf(doc).get(0) as Y.XmlElement | undefined)?.toArray() ?? []) as Y.XmlElement[];
   const linesOf = (doc: Y.Doc) =>
-    ((fragmentOf(doc).get(0) as Y.XmlElement | undefined)?.toArray() ?? []).map((container) =>
-      ((container as Y.XmlElement).toArray()[0] as Y.XmlElement).toArray().map(String).join(""),
-    );
+    containersOf(doc)
+      .filter((container) => !isImage(container))
+      .map((container) => (container.toArray()[0] as Y.XmlElement).toArray().map(String).join(""));
   const write = (doc: Y.Doc, value: string) =>
     doc.transact(() => {
       const fragment = fragmentOf(doc);
+      const images = containersOf(doc).filter(isImage);
       if (fragment.length > 0) fragment.delete(0, fragment.length);
       appendParagraphs(doc, value.split("\n"));
       const group = fragment.get(0) as Y.XmlElement;
       group.toArray().forEach((container, at) => {
         (container as Y.XmlElement).setAttribute("id", `line-${at}`);
       });
+      group.insert(group.length, images);
     });
+  const addImage = (doc: Y.Doc, id: string, name: string) =>
+    doc.transact(() => {
+      if (fragmentOf(doc).length === 0) appendParagraphs(doc, [""]);
+      const group = fragmentOf(doc).get(0) as Y.XmlElement;
+      const container = new Y.XmlElement("blockContainer");
+      group.insert(group.length, [container]);
+      container.setAttribute("id", id);
+      const image = new Y.XmlElement("image");
+      container.insert(0, [image]);
+      image.setAttribute("name", name);
+      image.setAttribute("url", "");
+    });
+  const takeOut = (doc: Y.Doc, id: string) => {
+    const container = blockOf(doc, id);
+    const group = container?.parent;
+    if (container && group instanceof Y.XmlElement) group.delete(group.toArray().indexOf(container), 1);
+  };
   function QuickEditor({
     doc,
     handle,
     onSave,
-    onFiles,
+    images,
     autoFocus,
   }: {
     doc: Y.Doc;
     autoFocus?: boolean;
     handle: React.Ref<{ focus: () => void; focused: () => boolean }>;
     onSave: () => void;
-    onFiles: (files: File[]) => void;
+    images: { begin: () => void; prepare: (file: File, blockId?: string) => Promise<string> };
   }) {
+    h.doc = doc;
     const field = React.useRef<HTMLTextAreaElement>(null);
     React.useImperativeHandle(handle, () => ({
       focus: () => field.current?.focus(),
@@ -105,8 +137,13 @@ vi.mock("@/components/notes/quick-editor", async () => {
         onPaste={(event) => {
           const files = [...event.clipboardData.files];
           if (files.length === 0) return;
-          if (!event.clipboardData.types.includes("text/plain")) event.preventDefault();
-          onFiles(files);
+          event.preventDefault();
+          images.begin();
+          for (const file of files) {
+            const id = `image-${(h.made += 1)}`;
+            addImage(doc, id, file.name);
+            images.prepare(file, id).catch(() => takeOut(doc, id));
+          }
         }}
       />
     );
@@ -789,10 +826,35 @@ describe("the quick note's images", () => {
   let making: { resolve: (prepared: Prepared) => void; reject: (error: unknown) => void };
   const READY: Prepared = { blob: new Blob(["ready"]), mime: "image/webp", width: 40, height: 30 };
   const png = (name = "写真.png") => new File([new Uint8Array(4)], name, { type: "image/png" });
-  const thumbs = () => host.querySelectorAll("li img");
-  const busy = () => host.querySelector('li[aria-busy="true"]');
-  const remover = (name: string) =>
-    host.querySelector<HTMLButtonElement>(`button[aria-label="${name} を外す"]`)!;
+  /** The image blocks of the tab shown, however far in: their names, and whether each has its image yet. */
+  const blocks = () => {
+    const found: { name: string; shown: boolean }[] = [];
+    const walk = (node: Y.XmlFragment | Y.XmlElement) => {
+      for (const child of node.toArray()) {
+        if (!(child instanceof Y.XmlElement)) continue;
+        if (child.nodeName === "image") {
+          found.push({ name: String(child.getAttribute("name")), shown: Boolean(child.getAttribute("url")) });
+        } else walk(child);
+      }
+    };
+    walk(bodyFragment(h.doc));
+    return found;
+  };
+  /** Those shown with their images. */
+  const thumbs = () => blocks().filter((block) => block.shown);
+  /** The first one still being made ready, shown loading. */
+  const busy = () => blocks().find((block) => !block.shown) ?? null;
+  /** Takes the block of an image out, as a key would. */
+  const takeOut = async (name: string) => {
+    await act(async () => {
+      const group = bodyFragment(h.doc).get(0) as Y.XmlElement;
+      const at = group
+        .toArray()
+        .findIndex((container) => ((container as Y.XmlElement).get(0) as Y.XmlElement).getAttribute("name") === name);
+      group.delete(at, 1);
+    });
+    await settle();
+  };
   const newTab = () => host.querySelector<HTMLButtonElement>('button[aria-label="新しいタブ"]')!;
   const inDialog = (name: string) =>
     Array.from(document.querySelectorAll<HTMLButtonElement>('[role="alertdialog"] button')).find(
@@ -834,13 +896,29 @@ describe("the quick note's images", () => {
     delete window.memocaShell;
   });
 
+  test("a draft's images from before they went where they were pasted (a strip of them) come back after its lines", async () => {
+    // A draft as the strip left it: its text, and its images apart.
+    const tab = (await loadTabs(ME)).active;
+    const kept = keepDraft(ME, tab);
+    kept.update({ text: "前の下書き" });
+    kept.images([{ key: "old-1", name: "前の写真.png", blob: new Blob(["old"]), mime: "image/webp", width: 4, height: 3 }]);
+    kept.release();
+    await kept.flush(true);
+    kept.dispose();
+    await render();
+    expect(field().value).toBe("前の下書き");
+    expect(blocks()).toEqual([{ name: "前の写真.png", shown: true }]);
+    await pause();
+    expect((await draftOf(ME))?.images).toMatchObject([{ key: "old-1", name: "前の写真.png" }]);
+  });
+
   test("one pasted is shown at once, and is in the draft only once it is ready", async () => {
     await render();
     await type("写真つき");
     await paste(png());
     expect(h.prepare).toHaveBeenCalledOnce();
-    expect(busy()?.getAttribute("aria-label")).toBe("画像を準備しています");
-    expect(busy()?.querySelector("img")?.getAttribute("alt")).toBe("写真.png");
+    // Where it was put, loading.
+    expect(busy()?.name).toBe("写真.png");
     await pause();
     expect((await draftOf(ME))?.images ?? []).toEqual([]);
     await finish(() => making.resolve(READY));
@@ -885,9 +963,8 @@ describe("the quick note's images", () => {
   test("one taken out before it is ready stays out", async () => {
     await render();
     await paste(png());
-    await act(async () => remover("写真.png").click());
-    await settle();
-    expect(thumbs()).toHaveLength(0);
+    await takeOut("写真.png");
+    expect(blocks()).toHaveLength(0);
     await finish(() => making.resolve(READY));
     expect(thumbs()).toHaveLength(0);
     expect(status()).toBe("");
@@ -956,14 +1033,14 @@ describe("the quick note's images", () => {
   test("the limit, said of a batch, is still said once the first of them is ready", async () => {
     await render();
     await paste(...Array.from({ length: 11 }, (_, at) => png(`${at + 1}.png`)));
-    expect(thumbs()).toHaveLength(10);
+    expect(blocks()).toHaveLength(10);
     expect(status()).toContain("10 枚まで");
-    // Made ready one after another, each shown as it came meanwhile.
+    // Made ready one after another, each shown loading meanwhile.
     expect(h.prepare).toHaveBeenCalledOnce();
     await finish(() => making.resolve(READY));
     expect(status()).toContain("10 枚まで");
     expect(h.prepare).toHaveBeenCalledTimes(2);
-    expect(host.querySelectorAll('li[aria-busy="true"]')).toHaveLength(9);
+    expect(blocks().filter((block) => !block.shown)).toHaveLength(9);
   });
 
   test("a file that is not an image, pasted with a photo, is still said once the photo is ready", async () => {
@@ -1021,8 +1098,7 @@ describe("the quick note's images", () => {
     await render();
     await type("本文");
     await paste(png());
-    await act(async () => remover("写真.png").click());
-    await settle();
+    await takeOut("写真.png");
     await key({ key: "Enter", metaKey: true });
     expect(h.createNote).toHaveBeenCalledOnce();
     expect(h.stage).not.toHaveBeenCalled();

@@ -264,6 +264,34 @@ test.describe("the quick note's Todo", () => {
     await expect.poll(() => items(page)).toEqual(["[ ] "]);
   });
 
+  test("a quick note's lines moved into the Todo, its images staying in its tab", async ({ page }) => {
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    const field = quickField(page);
+    await writeQuick(field, "富士フイルム");
+    await field.evaluate(async (target) => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 40;
+      canvas.height = 30;
+      canvas.getContext("2d")!.fillRect(0, 0, 40, 30);
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((made) => resolve(made!), "image/png"));
+      const data = new DataTransfer();
+      data.items.add(new File([blob], "写真.png", { type: "image/png" }));
+      target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+    const image = field.locator('[data-content-type="image"] img.bn-visual-media');
+    await expect(image).toHaveCount(1, { timeout: 30_000 });
+
+    await page.getByRole("button", { name: "Todo に移す" }).click();
+    await page.getByText("Todo に 1 件移しました").waitFor();
+    await expect(page.getByText("画像はこのタブに残しています")).toBeVisible();
+    // The tab stays, with its image, its line gone into the Todo.
+    await expect(image).toHaveCount(1);
+    await expect.poll(() => quickText(field)).toBe("");
+    await openTodo(page);
+    await expect.poll(() => items(page)).toEqual(["[ ] 富士フイルム"]);
+  });
+
   test("the lines selected, alone, moved into the Todo; 元に戻す puts them back where they were", async ({
     page,
   }, testInfo) => {

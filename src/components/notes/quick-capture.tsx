@@ -9,7 +9,6 @@ import {
   ImagePlus,
   Inbox,
   ListPlus,
-  Loader2,
   X,
 } from "lucide-react";
 import { uuidv7 } from "uuidv7";
@@ -22,6 +21,7 @@ import {
   useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -29,7 +29,7 @@ import * as Y from "yjs";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { QuickTips, Tip } from "@/components/notes/quick-tip";
 import { TodoCapture } from "@/components/notes/quick-todo";
-import { QuickEditor, type QuickEditorHandle } from "@/components/notes/quick-editor";
+import { QuickEditor, type QuickEditorHandle, type QuickImages } from "@/components/notes/quick-editor";
 import {
   useStorageUsage,
   useSync,
@@ -48,11 +48,16 @@ import { useModKeyLabel } from "@/lib/platform";
 import { type Allowance, prepareUpload, stageUpload } from "@/lib/media/attachments";
 import { uploadRefusal } from "@/lib/media/refusal";
 import {
-  type QuickPart,
+  appendBlocks,
   appendParagraphs,
+  blockOf,
   copyQuickBody,
   prependParagraphs,
+  quickImageKey,
+  quickImageRef,
   quickKey,
+  referencedImages,
+  setImageUrl,
 } from "@/lib/quick/body";
 import {
   type DraftContent,
@@ -145,8 +150,10 @@ const contentOf = (doc: Y.Doc): DraftContent => ({
 /** An image added, with a URL of this tab's to show it by. */
 type QuickImage = DraftImage & {
   url: string;
-  /** Still being made ready (compressed) and checked: shown as it came, in no draft yet. */
+  /** Still being made ready (compressed) and checked: shown loading, in no draft yet. */
   preparing?: boolean;
+  /** Its block taken out while it was made ready: not put in anywhere. */
+  gone?: boolean;
 };
 
 /** The most images one quick note takes. */
@@ -540,7 +547,7 @@ function Capture({
   escapeEnabled: boolean;
   /** What it holds, as typed, and whether any of it is not saved. */
   onText: (text: string, images: number, unsaved: boolean) => void;
-  /** All of its lines moved into the Todo (and no images left): its draft as it was, and the items' ids. */
+  /** All of its lines moved into the Todo, and nothing else (no image) left: its draft as it was, and the items' ids. */
   onMovedAll: (kept: QuickDraft | null, ids: string[]) => void;
   /** The tabs, under the header. */
   strip: ReactNode;
@@ -597,11 +604,12 @@ function Capture({
    */
   const report = (seen = textOf(doc), atOnce = true) => {
     const { text, key } = seen;
-    const images = imagesRef.current.length;
+    const pictures = heldImages();
+    const images = pictures.length;
     const now = {
       name: tabName({ text, images }),
       images,
-      changed: unsaved({ text, key, images: imagesRef.current, saved: savedRef.current }),
+      changed: unsaved({ text, key, images: pictures, saved: savedRef.current }),
     };
     // Only as it changes: even the same value set draws it again, now and then.
     if (changedRef.current !== now.changed) {
@@ -668,10 +676,28 @@ function Capture({
   /** The note a save made and could not finish, for the next save to finish. */
   const unfinished = useRef<string | null>(null);
 
-  // Images added, each with a URL of this tab's to show it by, let go of
-  // once it is gone (removed, saved, or the page left).
-  const [images, setImages] = useState<QuickImage[]>([]);
+  // Images added, each with a URL of this tab's to show it by, let go of as
+  // the tab goes: every one added while it is shown, those taken out of what
+  // is written too (⌘ + Z puts one back). Those its body shows are its own
+  // (shownImages): what its draft keeps, and what a save sends up.
   const imagesRef = useRef<QuickImage[]>([]);
+  /** The images the body shows, in the order it shows them (lib/quick/body referencedImages). */
+  const shownImages = (from: Y.Doc = doc): QuickImage[] =>
+    referencedImages(from).flatMap((key) => imagesRef.current.filter((image) => image.key === key && ready(image)));
+  /** Those, and those still being made ready: what the tab holds, for its name and for closing it. */
+  const heldImages = (): QuickImage[] => [...shownImages(), ...imagesRef.current.filter((image) => image.preparing)];
+  /** The block each image still being made ready is shown loading in, by its key. */
+  const loadingIn = useRef(new Map<string, string>());
+  /** The keys of the images the draft was last told of. */
+  const toldImages = useRef("");
+  /** Tells the draft of the images the body shows, as they change. */
+  const keepImages = (kept = draft.current) => {
+    const pictures = shownImages();
+    const keys = pictures.map((image) => image.key).join(" ");
+    if (keys === toldImages.current) return;
+    toldImages.current = keys;
+    kept?.images(pictures.map(keep));
+  };
   const picker = useRef<HTMLInputElement>(null);
   /** The images a save staged already, by key: one tried again stages none twice. */
   const staged = useRef(new Map<string, string>());
@@ -688,17 +714,9 @@ function Capture({
   const mounted = useRef(false);
   /** Whether what is written was let go of (the tab closed unsaved): its draft is not written again. */
   const discarded = useRef(false);
-  const showImages = (next: QuickImage[]) => {
-    for (const image of imagesRef.current) {
-      if (!next.includes(image)) URL.revokeObjectURL(image.url);
-    }
-    imagesRef.current = next;
-    setImages(next);
-    report();
-  };
   useEffect(
     () => () => {
-      for (const image of imagesRef.current) URL.revokeObjectURL(image.url);
+      for (const image of imagesRef.current) if (image.url) URL.revokeObjectURL(image.url);
     },
     [],
   );
@@ -728,10 +746,18 @@ function Capture({
           prependParagraphs(doc, [...quickLines(shared), ...(extractText(doc) ? [""] : [])]);
         }
         const pictures = (left?.images ?? []).map(shown);
-        if (pictures.length > 0) {
-          showImages(pictures);
-          kept.images(imagesRef.current.filter(ready).map(keep));
+        imagesRef.current = pictures;
+        // A draft's images from before they were put where they were pasted
+        // (a strip of them, under the text): after what is written.
+        const there = referencedImages(doc);
+        const apart = pictures.filter((image) => !there.includes(image.key));
+        if (apart.length > 0) {
+          appendBlocks(
+            doc,
+            apart.map((image) => ({ kind: "image", url: quickImageRef(image.key), name: image.name })),
+          );
         }
+        if (pictures.length > 0) keepImages(kept);
       })
       .catch(() => undefined)
       .finally(() => {
@@ -753,7 +779,8 @@ function Capture({
       // then; not into one let go of already (its tab closed unsaved).
       if (jobs.size > 0 && !discarded.current) {
         void allReady(jobs).then(() => {
-          kept.images(imagesRef.current.filter(ready).map(keep));
+          kept.update(() => contentOf(doc));
+          keepImages(kept);
           kept.dispose();
         });
         return;
@@ -771,10 +798,22 @@ function Capture({
   // the tab before it was saved.
   const onEdit = useEffectEvent(() => {
     draft.current?.update(() => contentOf(doc));
+    keepImages();
+    // One taken out while it is made ready is not waited for any more.
+    for (const [key, blockId] of loadingIn.current) {
+      if (blockOf(doc, blockId)) continue;
+      loadingIn.current.delete(key);
+      preparing.current.delete(key);
+      imagesRef.current = imagesRef.current.map((each) =>
+        each.key === key ? { ...each, preparing: false, gone: true } : each,
+      );
+    }
     const seen = textOf(doc);
     const wasChanged = reported.current?.changed ?? false;
     const { changed: nowChanged } = report(seen, false);
-    const written = seen.text !== lastText.current || (nowChanged && !wasChanged);
+    // Why an image was turned away stays said as the others come in.
+    const typed = seen.text !== lastText.current;
+    const written = typed || (nowChanged && !wasChanged && statusRef.current?.kind !== "refused");
     lastText.current = seen.text;
     if (written && statusRef.current) say(null);
   });
@@ -797,92 +836,83 @@ function Capture({
     return () => window.removeEventListener("focus", refocus);
   }, [loaded, windowed]);
 
-  const editImages = (next: QuickImage[]) => {
-    showImages(next);
-    say(null);
-    draft.current?.images(next.filter(ready).map(keep));
-  };
-
   /**
-   * Adds files as images: each shown at once, as it came, while it is made
-   * ready (compressed) and checked as one added to a note is, one after
-   * another; one that cannot be is taken out and said so, the others kept.
-   * A save, the draft and the window's going wait for those still being
-   * made ready.
+   * Makes a file pasted, dropped or chosen ready as an image, as one added
+   * to a note is (compressed, and checked), one after another, keeping it
+   * among this tab's images; its block (`blockId`, which BlockNote shows
+   * loading meanwhile) is given the reference it shows it by, even once the
+   * tab is gone (its draft written then). One that cannot be is turned away,
+   * said why: BlockNote's block for it is put right. A save, the draft and
+   * the window's going wait for those still being made ready.
    */
-  const addFiles = (files: File[]) => {
-    // This tab's draft: written into even once the tab is gone (see the
-    // effect's cleanup), when draft.current is not it any more.
-    const kept = draft.current;
-    // What was said before is over. What this batch says stays said while
-    // its images are made ready: that does not go through editImages.
-    say(null);
-    for (const file of files) {
-      if (!isImage(file)) {
-        say({ kind: "refused", message: t.quick.imagesOnly });
-        continue;
-      }
-      if (imagesRef.current.length >= MAX_IMAGES) {
-        say({ kind: "refused", message: t.quick.tooManyImages(MAX_IMAGES) });
-        return;
-      }
-      const key = uuidv7();
-      const name = file.name || "image";
-      // Not through editImages: the draft is not written with the file as it came.
-      showImages([
-        ...imagesRef.current,
-        {
-          key,
-          name,
-          blob: file,
-          mime: file.type || "image/*",
-          width: 0,
-          height: 0,
-          url: URL.createObjectURL(file),
-          preparing: true,
-        },
-      ]);
-      const job = chain.current
-        .then(() => prepareUpload(file, allowance))
-        .then(
-          (prepared) => {
-            // Taken out meanwhile: nothing to put in its place.
-            if (!imagesRef.current.some((each) => each.key === key)) return;
-            const made: DraftImage = {
-              key,
-              name,
-              blob: prepared.blob,
-              mime: prepared.mime,
-              width: prepared.width,
-              height: prepared.height,
-            };
-            // The tab gone meanwhile: nothing shows it, so no URL to show it by.
-            const next = imagesRef.current.map((each) =>
-              each.key !== key ? each : mounted.current ? shown(made) : { ...made, url: each.url },
-            );
-            if (mounted.current) showImages(next);
-            else imagesRef.current = next;
-            if (!discarded.current) kept?.images(next.filter(ready).map(keep));
-          },
-          (error: unknown) => {
-            if (!imagesRef.current.some((each) => each.key === key)) return;
-            const next = imagesRef.current.filter((each) => each.key !== key);
-            if (!mounted.current) {
-              imagesRef.current = next;
-              return;
-            }
-            showImages(next);
-            refusals.current += 1;
-            say({ kind: "refused", message: uploadRefusal(error) });
-          },
-        )
-        .finally(() => preparing.current.delete(key));
-      preparing.current.set(key, job);
-      // The next waits for this one, however it ends.
-      chain.current = job.catch(() => undefined);
+  const prepare = (file: File, blockId?: string): Promise<string> => {
+    if (!isImage(file)) {
+      say({ kind: "refused", message: t.quick.imagesOnly });
+      return Promise.reject(new Error("not an image"));
     }
+    if (shownImages().length + preparing.current.size >= MAX_IMAGES) {
+      say({ kind: "refused", message: t.quick.tooManyImages(MAX_IMAGES) });
+      return Promise.reject(new Error("too many images"));
+    }
+    const key = uuidv7();
+    const name = file.name || "image";
+    imagesRef.current = [
+      ...imagesRef.current,
+      { key, name, blob: file, mime: file.type || "image/*", width: 0, height: 0, url: "", preparing: true },
+    ];
+    if (blockId) loadingIn.current.set(key, blockId);
+    report();
+    const job = chain.current
+      .then(() => prepareUpload(file, allowance))
+      .then(
+        (prepared) => {
+          // Taken out meanwhile: nothing to put it in.
+          if (imagesRef.current.find((each) => each.key === key)?.gone) throw new Error("taken out");
+          const made: DraftImage = {
+            key,
+            name,
+            blob: prepared.blob,
+            mime: prepared.mime,
+            width: prepared.width,
+            height: prepared.height,
+          };
+          // The tab gone meanwhile: nothing shows it, so no URL to show it by.
+          imagesRef.current = imagesRef.current.map((each) =>
+            each.key !== key ? each : mounted.current ? shown(made) : { ...made, url: "" },
+          );
+          const ref = quickImageRef(key);
+          if (blockId) setImageUrl(doc, blockId, ref, name);
+          return ref;
+        },
+        (error: unknown) => {
+          const gone = imagesRef.current.find((each) => each.key === key)?.gone;
+          imagesRef.current = imagesRef.current.filter((each) => each.key !== key);
+          if (!gone) {
+            refusals.current += 1;
+            if (mounted.current) say({ kind: "refused", message: uploadRefusal(error) });
+          }
+          if (mounted.current) report();
+          throw error;
+        },
+      )
+      .finally(() => {
+        preparing.current.delete(key);
+        loadingIn.current.delete(key);
+      });
+    preparing.current.set(
+      key,
+      job.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    // The next waits for this one, however it ends.
+    chain.current = job.then(
+      () => undefined,
+      () => undefined,
+    );
+    return job;
   };
-
   /** Waits for a save under way, keeps what is written, and puts the window away. */
   const close = useCallback(async () => {
     await inFlight.current;
@@ -953,7 +983,8 @@ function Capture({
       const snapshot = new Y.Doc();
       Y.applyUpdate(snapshot, Y.encodeStateAsUpdate(doc));
       const { text, key } = textOf(snapshot);
-      const pictures = imagesRef.current;
+      // Its images: those it shows, where it shows them.
+      const pictures = shownImages(snapshot);
       if (text.trim() === "" && pictures.length === 0) return;
       // Saved already, as it is: nothing to write again.
       if (!unsaved({ text, key, images: pictures, saved: savedRef.current })) return;
@@ -981,9 +1012,8 @@ function Capture({
         // All of it goes straight into the note's document, so the full editor
         // opens on exactly what was written here, over whatever a save that
         // did not finish may have written.
-        // Its images under what is written, each staged to go up as one added
+        // Its images where they are in it, each staged to go up as one added
         // to a note is (offline too), into the note made for them.
-        const parts: QuickPart[] = [];
         const refs = new Map<string, string>();
         for (const image of pictures) {
           // One saved into this note before is there already.
@@ -1002,12 +1032,11 @@ function Capture({
             });
             staged.current.set(image.key, ref);
           }
-          parts.push({ kind: "image", url: ref, name: image.name });
           refs.set(image.key, ref);
         }
         const note = await acquireDoc(noteId);
         try {
-          copyQuickBody(snapshot, note, parts);
+          copyQuickBody(snapshot, note, [], refs);
         } finally {
           await releaseDoc(noteId);
         }
@@ -1024,6 +1053,7 @@ function Capture({
         };
         savedRef.current = now;
         uploaded.current = refs;
+        toldImages.current = pictures.map((image) => image.key).join(" ");
         draft.current?.images(pictures.map(keep));
         await draft.current?.flush(true);
         await markSaved(
@@ -1077,23 +1107,26 @@ function Capture({
         toast(t.quick.nothingToMove);
         return;
       }
-      if (taken.all && imagesRef.current.length === 0) {
+      // Its lines go; an image (or a table) stays where it is.
+      const lines = taken.blocks.filter((block) => Array.isArray(block.content));
+      const stays = lines.length < taken.blocks.length;
+      if (taken.all && !stays) {
         // Its draft as it is now, to be put back as it was.
         draft.current?.update(() => contentOf(doc));
         await draft.current?.flush(true);
         onMovedAll(await loadDraft(userKey, tabId).catch(() => null), ids);
         return;
       }
-      editor.current?.remove(taken.blocks.map((block) => block.id));
+      editor.current?.remove(lines.map((block) => block.id));
       const here = editor.current;
       toast(t.quick.movedToTodo(ids.length), {
-        description: taken.all ? t.quick.imagesStay : undefined,
+        description: stays ? t.quick.imagesStay : undefined,
         action: {
           label: t.quick.undo,
           onClick: () => {
             // Gone from here (another tab shown): left in the Todo.
             if (!here || editor.current !== here) return;
-            here.putBack(taken.blocks, taken.after);
+            here.putBack(lines, taken.after);
             void takeOutOfTodo(ids, sync).catch(() => toast.error(t.quick.moveFailed));
           },
         },
@@ -1107,30 +1140,52 @@ function Capture({
 
   // What the editor is handed: the same functions all along, so that what
   // draws the header and the tabs again does not draw the editor again.
-  const latest = useRef<{ save: () => void; files: (files: File[]) => void; escape: () => void }>({
+  const latest = useRef<{
+    save: () => void;
+    begin: () => void;
+    prepare: (file: File, blockId?: string) => Promise<string>;
+    escape: () => void;
+  }>({
     save: () => {},
-    files: () => {},
+    begin: () => {},
+    prepare: () => Promise.reject(new Error("not ready")),
     escape: () => {},
   });
   useLayoutEffect(() => {
     latest.current = {
       save: () => void save(),
-      files: addFiles,
+      begin: () => {
+        if (statusRef.current?.kind === "refused") say(null);
+      },
+      prepare,
       escape: () => {
         if (escapeEnabled) void close();
       },
     };
   });
   const onSave = useCallback(() => latest.current.save(), []);
-  const onFiles = useCallback((files: File[]) => latest.current.files(files), []);
   const onEscape = useCallback(() => latest.current.escape(), []);
+  /** The images, for the editor: made ready here, and shown by their URLs of this tab's. */
+  const quickImages = useMemo<QuickImages>(
+    () => ({
+      // What was said of the files before is over, as more come in.
+      begin: () => latest.current.begin(),
+      prepare: (file, blockId) => latest.current.prepare(file, blockId),
+      shown: (ref) => {
+        const key = quickImageKey(ref);
+        const image = key ? imagesRef.current.find((each) => each.key === key) : undefined;
+        return image?.url || undefined;
+      },
+    }),
+    [],
+  );
 
   useImperativeHandle(handle, () => ({
     save: async () => {
       await save();
       const all = !unsaved({
         ...textOf(doc),
-        images: imagesRef.current,
+        images: shownImages(),
         saved: savedRef.current,
       });
       return all ? (savedRef.current?.noteId ?? null) : null;
@@ -1140,7 +1195,7 @@ function Capture({
       draft.current?.cancel();
     },
     focus: () => editor.current?.focus(),
-    holds: () => unsaved({ ...textOf(doc), images: imagesRef.current, saved: savedRef.current }),
+    holds: () => unsaved({ ...textOf(doc), images: heldImages(), saved: savedRef.current }),
     tellNow,
   }));
 
@@ -1251,7 +1306,7 @@ function Capture({
             onChange={(event) => {
               const files = [...(event.target.files ?? [])];
               event.target.value = "";
-              addFiles(files);
+              editor.current?.insertImages(files);
             }}
           />
           {/* Where it is saved: the folder's name, to choose another. */}
@@ -1324,60 +1379,13 @@ function Capture({
             doc={doc}
             handle={editor}
             onSave={onSave}
-            onFiles={onFiles}
+            images={quickImages}
             // The editor would take it to let go of the focus: the window goes, as from anywhere in it.
             onEscape={windowed ? onEscape : undefined}
             barSlot={windowed ? null : barSlot}
           />
         ) : null}
       </div>
-
-      {images.length > 0 ? (
-        <ul
-          aria-label={t.quick.images}
-          className="flex shrink-0 gap-2 overflow-x-auto border-t px-4 py-2"
-        >
-          {images.map((image) => (
-            <li
-              key={image.key}
-              className="relative shrink-0 pt-1.5 pr-1.5"
-              aria-busy={image.preparing || undefined}
-              aria-label={image.preparing ? t.quick.preparing : undefined}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element -- a URL of this tab's */}
-              <img
-                src={image.url}
-                alt={image.name}
-                className={cn(
-                  "size-14 rounded-md border object-cover",
-                  image.preparing && "opacity-50",
-                )}
-              />
-              {image.preparing ? (
-                // Over it while it is made ready; it can be taken out meanwhile.
-                <span
-                  className="pointer-events-none absolute top-1.5 left-0 flex size-14 items-center justify-center"
-                  aria-hidden
-                >
-                  <Loader2 className="size-5 animate-spin" />
-                </span>
-              ) : null}
-              <button
-                type="button"
-                aria-label={t.quick.removeImage(image.name)}
-                className="absolute top-0 right-0 flex size-5 items-center justify-center rounded-full bg-foreground text-background"
-                onClick={() => {
-                  // Still being made ready: not waited for any more.
-                  preparing.current.delete(image.key);
-                  editImages(imagesRef.current.filter((each) => each.key !== image.key));
-                }}
-              >
-                <X className="size-3" aria-hidden />
-              </button>
-            </li>
-          ))}
-        </ul>
-      ) : null}
 
       {windowed ? (
         // One line in the window's width: what was said, or else the keys.

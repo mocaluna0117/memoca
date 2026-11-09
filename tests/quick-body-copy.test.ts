@@ -1,7 +1,15 @@
 import { blocksToYDoc, yXmlFragmentToBlocks } from "@blocknote/core/yjs";
 import { describe, expect, test } from "vitest";
 import * as Y from "yjs";
-import { appendParagraphs, copyQuickBody, prependParagraphs, quickKey } from "@/lib/quick/body";
+import {
+  appendParagraphs,
+  copyQuickBody,
+  prependParagraphs,
+  quickImageKey,
+  quickImageRef,
+  quickKey,
+  referencedImages,
+} from "@/lib/quick/body";
 import { FRAGMENT, bodyFragment } from "@/lib/sync/ydoc";
 import { editor, valid } from "./helpers/blocknote";
 
@@ -124,5 +132,70 @@ describe("prependParagraphs", () => {
     prependParagraphs(doc, ["一行"]);
     expect(valid(doc)).toBe(true);
     expect(yXmlFragmentToBlocks(editor, bodyFragment(doc)).map(textOf)).toEqual(["一行"]);
+  });
+});
+
+describe("a quick note's images, in its body where they were put", () => {
+  const image = (key: string, name = `${key}.webp`) => ({
+    type: "image",
+    attrs: { url: quickImageRef(key), name },
+  });
+  /** Each image block of a body, however far in: its reference and name. */
+  const imagesIn = (doc: Y.Doc) => {
+    const found: string[] = [];
+    const walk = (node: Y.XmlElement | Y.XmlFragment) => {
+      for (const child of node.toArray()) {
+        if (!(child instanceof Y.XmlElement)) continue;
+        if (child.nodeName === "image") found.push(`${child.getAttribute("url")} ${child.getAttribute("name")}`);
+        else walk(child);
+      }
+    };
+    walk(bodyFragment(doc));
+    return found;
+  };
+
+  test("refer to the draft's images by their keys, read back as they were", () => {
+    expect(quickImageKey(quickImageRef("0192-a/b"))).toBe("0192-a/b");
+    expect(quickImageKey("memoca://att-1")).toBeNull();
+    expect(quickImageKey("https://example.com/a.png")).toBeNull();
+    expect(quickImageKey(undefined)).toBeNull();
+  });
+
+  test("are those of the draft the body shows, in the order it shows them, each once, however far in", () => {
+    const doc = body([
+      image("b"),
+      { type: "paragraph", text: "間" },
+      { type: "toggleListItem", text: "開くと", children: [image("a"), image("b")] },
+      { type: "image", attrs: { url: "memoca://elsewhere" } },
+    ]);
+    expect(referencedImages(doc)).toEqual(["b", "a"]);
+  });
+
+  test("saved, are where they were in the note, each with the reference it went up as", () => {
+    const from = body([
+      { type: "paragraph", text: "上" },
+      image("a", "写真.png"),
+      { type: "bulletListItem", text: "項目", children: [image("b", "図.png")] },
+      { type: "paragraph", text: "下" },
+    ]);
+    const into = new Y.Doc();
+    copyQuickBody(from, into, [], new Map([["a", "memoca://att-a"], ["b", "memoca://att-b"]]));
+    expect(outline(into)).toEqual(["paragraph:上", "image:", "bulletListItem:項目", "  image:", "paragraph:下"]);
+    expect(imagesIn(into)).toEqual(["memoca://att-a 写真.png", "memoca://att-b 図.png"]);
+    // The quick note's own body is left as it was: as what it was saved as.
+    expect(imagesIn(from)).toEqual([`${quickImageRef("a")} 写真.png`, `${quickImageRef("b")} 図.png`]);
+    expect(valid(into)).toBe(true);
+  });
+
+  test("one with no reference (never made ready) goes, its block with it, and a group left empty with that", () => {
+    const from = body([
+      { type: "paragraph", text: "上" },
+      image("gone"),
+      { type: "bulletListItem", text: "項目", children: [image("gone")] },
+    ]);
+    const into = new Y.Doc();
+    copyQuickBody(from, into, [], new Map());
+    expect(outline(into)).toEqual(["paragraph:上", "bulletListItem:項目"]);
+    expect(valid(into)).toBe(true);
   });
 });

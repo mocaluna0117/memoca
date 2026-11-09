@@ -137,11 +137,8 @@ export const ja = {
     nothingToMove: "Todo に移す行がありません",
     moveFailed: "Todo に移せませんでした。もう一度お試しください。",
     undo: "元に戻す",
-    images: "追加した画像",
-    removeImage: (name: string) => `${name} を外す`,
     imagesOnly: "即席メモに入れられるのは、文字と画像だけです。",
     tooManyImages: (max: number) => `画像は、1 つの即席メモに ${max} 枚までです。`,
-    preparing: "画像を準備しています",
   },
   storage: {
     title: "内訳",
