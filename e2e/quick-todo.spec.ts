@@ -199,7 +199,10 @@ test.describe("the quick note's Todo", () => {
     const picker = page.getByRole("dialog", { name: "期日" });
     await expect(picker).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("todo-picker.png") });
+    // A day picked: set, the picker open for a time; put in order once it is put away.
     await picker.getByRole("button", { name: "明日" }).click();
+    await expect(picker.locator("[data-todo-due-now]")).toHaveText(dayLabel(1));
+    await picker.getByRole("button", { name: "完了" }).click();
     await expect(picker).toBeHidden();
     await expect.poll(() => dueLines(page)).toEqual([`【明日】本選考 ${dayLabel(1)}`, "【期日なし】カプコン", "SPI"]);
 
@@ -207,7 +210,8 @@ test.describe("the quick note's Todo", () => {
     await todo(page).locator(".bn-inline-content", { hasText: /^SPI$/ }).click();
     await dueButton(page, "SPI").click();
     await picker.getByLabel("時刻").fill("23:59");
-    await picker.getByRole("button", { name: "閉じる" }).click();
+    await page.keyboard.press("Enter");
+    await expect(picker).toBeHidden();
     await expect.poll(() => dueLines(page)).toEqual([
       `【今日】SPI ${dayLabel(0)} 23:59`,
       `【明日】本選考 ${dayLabel(1)}`,
@@ -231,6 +235,40 @@ test.describe("the quick note's Todo", () => {
     await expect.poll(() => dueLines(page)).toEqual([`【今日】SPI ${dayLabel(0)} 23:59`, "【期日なし】本選考", "カプコン"]);
   });
 
+  test("a time written in stays as it is written, a day and a time set in the one opening", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "a pointer over the items");
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    await openTodo(page);
+    await write(page, "ES の提出");
+    await dueButton(page, "ES の提出").click();
+    const picker = page.getByRole("dialog", { name: "期日" });
+    await picker.getByRole("button", { name: "明日" }).click();
+    const time = picker.getByLabel("時刻");
+    // Written, it stays written: it went back to what it was as it was set.
+    await time.fill("23:05");
+    await expect(time).toHaveValue("23:05");
+    await time.fill("23:59");
+    await expect(time).toHaveValue("23:59");
+    await expect(picker.locator("[data-todo-due-now]")).toHaveText(`${dayLabel(1)} 23:59`);
+    // On the item at once, as it is set.
+    await expect(dueButton(page, "ES の提出")).toHaveText(`${dayLabel(1)} 23:59`);
+    // Another day, the time kept; the time taken off, the day kept.
+    await picker.getByRole("button", { name: "今日" }).click();
+    await expect(picker.locator("[data-todo-due-now]")).toHaveText(`${dayLabel(0)} 23:59`);
+    await picker.getByRole("button", { name: "時刻なし" }).click();
+    await expect(time).toHaveValue("");
+    await expect(picker.locator("[data-todo-due-now]")).toHaveText(dayLabel(0));
+    await picker.getByRole("button", { name: "23:59" }).click();
+    await expect(time).toHaveValue("23:59");
+    await page.screenshot({ path: testInfo.outputPath("todo-time.png") });
+    await page.keyboard.press("Escape");
+    await expect(picker).toBeHidden();
+    await expect.poll(() => dueLines(page)).toEqual([`【今日】ES の提出 ${dayLabel(0)} 23:59`]);
+  });
+
   test("on a phone, the caret's item has the calendar: a due given with a touch", async ({ page }, testInfo) => {
     test.skip(testInfo.project.name !== "mobile", "a phone's screen, with no pointer over the items");
     await signUp(page);
@@ -239,9 +277,15 @@ test.describe("the quick note's Todo", () => {
     await write(page, "TOPPAN 本選考", "カプコン");
     await todo(page).locator(".bn-inline-content", { hasText: /^TOPPAN 本選考$/ }).click();
     await dueButton(page, "TOPPAN 本選考").click();
-    await page.getByRole("dialog", { name: "期日" }).getByRole("button", { name: "1 週間後" }).click();
+    const picker = page.getByRole("dialog", { name: "期日" });
+    await picker.getByRole("button", { name: "1 週間後" }).click();
+    // A time at a touch, the day kept.
+    await picker.getByRole("button", { name: "12:00" }).click();
+    await expect(picker.locator("[data-todo-due-now]")).toHaveText(`${dayLabel(7)} 12:00`);
+    await page.screenshot({ path: testInfo.outputPath("todo-time-phone.png") });
+    await picker.getByRole("button", { name: "完了" }).click();
     // A week on: past this week's Sunday, whatever day it is.
-    await expect.poll(() => dueLines(page)).toEqual([`【それ以降】TOPPAN 本選考 ${dayLabel(7)}`, "【期日なし】カプコン"]);
+    await expect.poll(() => dueLines(page)).toEqual([`【それ以降】TOPPAN 本選考 ${dayLabel(7)} 12:00`, "【期日なし】カプコン"]);
   });
 
   test("a quick note's lines, all of them, moved into the Todo: its tab closed, and 元に戻す puts it back", async ({

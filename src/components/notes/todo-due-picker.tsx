@@ -1,14 +1,22 @@
 "use client";
 
-import { ChevronLeft, ChevronRight, X } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
-import { dayOf, dueOf, readDue } from "@/lib/quick/todo-due";
+import { dayOf, dueOf, formatDue, readDue } from "@/lib/quick/todo-due";
 import { cn } from "@/lib/utils";
 
 const WEEKDAYS = ["月", "火", "水", "木", "金", "土", "日"];
 const NAMES = ["日", "月", "火", "水", "木", "金", "土"];
+
+/** The times a due is most often given, a touch each: 正午, and the end of a day among them. */
+const TIMES = [
+  { label: "9:00", time: "09:00" },
+  { label: "12:00", time: "12:00" },
+  { label: "18:00", time: "18:00" },
+  { label: "23:59", time: "23:59" },
+];
 
 /** Midnight of a day, so many days after `date`'s. */
 const daysAfter = (date: Date, days: number) => new Date(date.getFullYear(), date.getMonth(), date.getDate() + days);
@@ -25,9 +33,16 @@ function monthDays(month: Date): Date[] {
 }
 
 /**
- * An item's due picked: a day from the month shown (今日, 明日 and a week on
- * at a touch), a time if wanted, or none. A day picked puts it away; a time
- * keeps it open. Beside `at`, the item's button.
+ * An item's due picked: a day (今日, 明日 and a week on at a touch, or from
+ * the month shown), and a time if wanted (a touch for the usual ones, or
+ * written), or none. Each is set as it is picked, and the picker stays
+ * open for the other, saying what the due is now, until 完了 (or Enter, Esc,
+ * a click beside it). Beside `at`, the item's button.
+ *
+ * What it shows is its own, from the due it opened with and what is picked
+ * since: the item's due, as the editor has it, is not read again while it is
+ * open, and a time written in, shown from that, went back to what it was as
+ * each was set (a wheel's, on a phone, at every turn).
  */
 export function TodoDuePicker({
   due,
@@ -41,22 +56,40 @@ export function TodoDuePicker({
   onPick: (due: string | null) => void;
   onClose: () => void;
 }) {
-  const read = readDue(due);
-  const today = daysAfter(new Date(), 0);
+  const [now] = useState(() => new Date());
+  const today = daysAfter(now, 0);
+  const [current, setCurrent] = useState<string | null>(() => (readDue(due) ? due : null));
+  const read = readDue(current);
   const [month, setMonth] = useState(() => {
     const shown = read?.day ?? today;
     return new Date(shown.getFullYear(), shown.getMonth(), 1);
   });
   const time = read?.time ?? null;
+  /** Sets the due, here and on the item. */
+  const pick = (next: string | null) => {
+    setCurrent(next);
+    onPick(next);
+  };
   const pickDay = (day: Date) => {
-    onPick(dueOf(day, time));
-    onClose();
+    pick(dueOf(day, time));
+    if (day.getMonth() !== month.getMonth() || day.getFullYear() !== month.getFullYear()) {
+      setMonth(new Date(day.getFullYear(), day.getMonth(), 1));
+    }
+  };
+  /** A time, on the day picked (today, if none is yet); none, the day alone. */
+  const pickTime = (next: string | null) => {
+    if (!next && !read) return;
+    pick(dueOf(read?.day ?? today, next));
   };
   const quick = [
     { label: "今日", day: today },
     { label: "明日", day: daysAfter(today, 1) },
     { label: "1 週間後", day: daysAfter(today, 7) },
   ];
+  // Larger to touch on a phone, and 16 pixels of text in its field, or iOS
+  // zooms the page in as it is touched.
+  const chip =
+    "h-7 flex-1 px-2 text-xs pointer-coarse:h-9 pointer-coarse:text-sm aria-pressed:border-primary aria-pressed:bg-primary/10";
 
   return (
     <Popover open onOpenChange={(open) => !open && onClose()}>
@@ -69,18 +102,23 @@ export function TodoDuePicker({
       <PopoverContent
         align="end"
         collisionPadding={8}
-        className="w-72 gap-2"
+        className="max-h-(--radix-popover-content-available-height) w-72 gap-2 overflow-y-auto"
         aria-label="期日"
         // Back to the editor, by whoever opened it: not to the anchor.
         onCloseAutoFocus={(event) => event.preventDefault()}
       >
+        <p className="text-sm font-medium" aria-live="polite" data-todo-due-now="">
+          {current ? formatDue(current, now) : <span className="text-muted-foreground">期日なし</span>}
+        </p>
+
         <div className="flex gap-1.5">
           {quick.map((each) => (
             <Button
               key={each.label}
               variant="outline"
               size="sm"
-              className="h-7 flex-1 px-2 text-xs"
+              className={chip}
+              aria-pressed={read !== null && dayOf(read.day) === dayOf(each.day)}
               onClick={() => pickDay(each.day)}
             >
               {each.label}
@@ -97,7 +135,7 @@ export function TodoDuePicker({
           >
             <ChevronLeft aria-hidden />
           </Button>
-          <p className="text-sm font-medium" aria-live="polite">
+          <p className="text-sm font-medium">
             {month.getFullYear()}年{month.getMonth() + 1}月
           </p>
           <Button
@@ -141,43 +179,58 @@ export function TodoDuePicker({
           })}
         </div>
 
-        <div className="flex items-center gap-2 border-t pt-2">
-          <label className="flex flex-1 items-center gap-2 text-xs text-muted-foreground">
-            時刻
+        <div className="flex flex-col gap-1.5 border-t pt-2">
+          <div className="flex items-center gap-2">
+            <label htmlFor="todo-due-time" className="text-xs text-muted-foreground">
+              時刻
+            </label>
             <input
+              id="todo-due-time"
               type="time"
               value={time ?? ""}
-              aria-label="時刻"
-              className="h-7 flex-1 rounded-md border bg-transparent px-2 text-sm text-foreground"
-              onChange={(event) => {
-                const value = event.target.value;
-                onPick(dueOf(read?.day ?? today, value || null));
-              }}
+              className="h-7 min-w-0 flex-1 rounded-md border bg-transparent px-2 text-sm text-foreground pointer-coarse:h-9 pointer-coarse:text-base"
+              onChange={(event) => pickTime(event.target.value || null)}
               onKeyDown={(event) => {
-                if (event.key === "Enter") onClose();
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  onClose();
+                }
               }}
             />
-          </label>
-          {time ? (
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label="時刻をなしにする"
-              onClick={() => read && onPick(dueOf(read.day, null))}
-            >
-              <X aria-hidden />
-            </Button>
-          ) : null}
-        </div>
-
-        <div className="flex items-center justify-between">
-          {read ? (
             <Button
               variant="ghost"
               size="sm"
-              className="h-7 px-2 text-xs text-destructive hover:text-destructive"
+              className="h-7 shrink-0 px-2 text-xs pointer-coarse:h-9"
+              disabled={!time}
+              onClick={() => pickTime(null)}
+            >
+              時刻なし
+            </Button>
+          </div>
+          <div className="flex gap-1.5">
+            {TIMES.map((each) => (
+              <Button
+                key={each.time}
+                variant="outline"
+                size="sm"
+                className={cn(chip, "tabular-nums")}
+                aria-pressed={time === each.time}
+                onClick={() => pickTime(each.time)}
+              >
+                {each.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <div className="flex items-center justify-between border-t pt-2">
+          {current ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-xs text-destructive hover:text-destructive pointer-coarse:h-9"
               onClick={() => {
-                onPick(null);
+                pick(null);
                 onClose();
               }}
             >
@@ -186,8 +239,8 @@ export function TodoDuePicker({
           ) : (
             <span />
           )}
-          <Button variant="ghost" size="sm" className="h-7 px-2 text-xs" onClick={onClose}>
-            閉じる
+          <Button size="sm" className="h-7 px-3 text-xs pointer-coarse:h-9" onClick={onClose}>
+            完了
           </Button>
         </div>
       </PopoverContent>
