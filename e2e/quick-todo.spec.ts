@@ -1,5 +1,16 @@
 import { expect, type Page, test } from "@playwright/test";
-import { createNote, editor, openApp, showList, signIn, signUp, waitForSynced } from "./helpers";
+import {
+  createNote,
+  editor,
+  openApp,
+  quickField,
+  quickText,
+  showList,
+  signIn,
+  signUp,
+  waitForSynced,
+  writeQuick,
+} from "./helpers";
 
 /** The Todo's editor. */
 const todo = (page: Page) => page.getByLabel("Todo", { exact: true });
@@ -232,6 +243,49 @@ test.describe("the quick note's Todo", () => {
     // A week on: 今週 on a Sunday's, それ以降 on any other day's.
     const week = new Date().getDay() === 0 ? "今週" : "それ以降";
     await expect.poll(() => dueLines(page)).toEqual([`【${week}】TOPPAN 本選考 ${dayLabel(7)}`, "【期日なし】カプコン"]);
+  });
+
+  test("a quick note's lines, all of them, moved into the Todo: its tab closed, and 元に戻す puts it back", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    await writeQuick(quickField(page), "富士フイルム\nカプコン");
+    await page.getByRole("button", { name: "Todo に移す" }).click();
+    // The Todo shown, with them in it.
+    await expect(page.getByRole("tab", { name: "Todo" })).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => items(page)).toEqual(["[ ] 富士フイルム", "[ ] カプコン"]);
+    await expect(page.getByRole("tab", { name: /富士フイルム/ })).toHaveCount(0);
+
+    await page.getByText("Todo に 2 件移しました").waitFor();
+    await page.getByRole("button", { name: "元に戻す" }).click();
+    await expect(page.getByRole("tab", { name: /富士フイルム/ })).toHaveAttribute("aria-selected", "true");
+    await expect.poll(() => quickText(quickField(page))).toBe("富士フイルム\nカプコン");
+    await openTodo(page);
+    await expect.poll(() => items(page)).toEqual(["[ ] "]);
+  });
+
+  test("the lines selected, alone, moved into the Todo; 元に戻す puts them back where they were", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "lines selected with a pointer");
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    const field = quickField(page);
+    await writeQuick(field, "メモの書き出し\nTOPPAN 本選考\nメモの続き");
+    await field.locator(".bn-inline-content", { hasText: /^TOPPAN 本選考$/ }).click({ clickCount: 3 });
+    await page.getByRole("button", { name: "Todo に移す" }).click();
+    await page.getByText("Todo に 1 件移しました").waitFor();
+    // The rest stays, in its tab.
+    await expect.poll(() => quickText(field)).toBe("メモの書き出し\nメモの続き");
+    await page.getByRole("button", { name: "元に戻す" }).click();
+    await expect.poll(() => quickText(field)).toBe("メモの書き出し\nTOPPAN 本選考\nメモの続き");
+
+    await field.locator(".bn-inline-content", { hasText: /^TOPPAN 本選考$/ }).click({ clickCount: 3 });
+    await page.getByRole("button", { name: "Todo に移す" }).click();
+    await expect.poll(() => quickText(field)).toBe("メモの書き出し\nメモの続き");
+    await openTodo(page);
+    await expect.poll(() => items(page)).toEqual(["[ ] TOPPAN 本選考"]);
   });
 
   test("its tab, and what is in it, are there when the quick note opens again", async ({ page }) => {

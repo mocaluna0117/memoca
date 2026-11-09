@@ -400,6 +400,20 @@ export async function closeTab(userKey: string, tabId: string): Promise<QuickTab
   return tabs;
 }
 
+/**
+ * A tab closed a moment ago put back, shown, where it was among the others,
+ * its draft as it was then (for 元に戻す).
+ */
+export async function reopenTab(userKey: string, tabId: string, at: number, draft: QuickDraft | null): Promise<void> {
+  if (draft && draft.userKey === userKey) await setMeta(draftKey(tabId), draft);
+  await changeTabs(userKey, (tabs) => {
+    if (tabs.ids.includes(tabId)) return tabs.active === tabId ? tabs : { ...tabs, active: tabId };
+    const ids = [...tabs.ids];
+    ids.splice(Math.min(Math.max(at, 0), ids.length), 0, tabId);
+    return { ...tabs, ids, active: tabId };
+  });
+}
+
 /** This account's tabs, each with its draft (if any), as they change (in any window). */
 export function useQuickTabs(
   userKey: string,

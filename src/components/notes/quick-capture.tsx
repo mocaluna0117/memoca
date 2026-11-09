@@ -8,6 +8,7 @@ import {
   FolderIcon,
   ImagePlus,
   Inbox,
+  ListPlus,
   Loader2,
   X,
 } from "lucide-react";
@@ -29,7 +30,12 @@ import { FolderPicker } from "@/components/folders/folder-picker";
 import { QuickTips, Tip } from "@/components/notes/quick-tip";
 import { TodoCapture } from "@/components/notes/quick-todo";
 import { QuickEditor, type QuickEditorHandle } from "@/components/notes/quick-editor";
-import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
+import {
+  useStorageUsage,
+  useSync,
+  useSyncEngine,
+  useSyncStatusStore,
+} from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
 import { newBuildOut } from "@/lib/build";
 import { startImeTrace } from "@/lib/debug/ime-trace";
@@ -52,6 +58,7 @@ import {
   type DraftContent,
   type DraftImage,
   MAX_TABS,
+  type QuickDraft,
   type SavedAs,
   closeTab,
   keepDraft,
@@ -60,6 +67,7 @@ import {
   markSaved,
   openTab,
   openTodoTab,
+  reopenTab,
   showTab,
   unsaved,
   useQuickTabs,
@@ -81,6 +89,7 @@ import {
 import { SAVE_KEYS } from "@/lib/quick/keys";
 import { useQuickMode } from "@/lib/quick/mode";
 import { TODO_TAB_ID } from "@/lib/quick/todo-id";
+import { moveIntoTodo, takeOutOfTodo } from "@/lib/quick/todo-move";
 import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, holdsShared, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
@@ -306,6 +315,8 @@ function Tabbed({
   }, []);
 
   const capture = useRef<CaptureHandle>(null);
+  const syncStatus = useSyncStatusStore();
+  const syncEngine = useSyncEngine();
   // The tab shown's text as typed, before its draft is written.
   const [typed, setTyped] = useState<QuickTab | null>(null);
   // The tab asked about before it is closed.
@@ -393,6 +404,29 @@ function Tabbed({
     return () => document.removeEventListener("keydown", listener);
   }, []);
 
+  /**
+   * A tab all of whose lines went into the Todo: closed, and the Todo shown,
+   * with 元に戻す (the items taken out again, the tab put back as it was).
+   */
+  const movedAll = async (id: string, kept: QuickDraft | null, ids: string[]) => {
+    const at = live?.tabs.ids.indexOf(id) ?? 0;
+    moving();
+    capture.current?.discard();
+    await closeTab(userKey, id);
+    await openTodoTab(userKey);
+    toast(t.quick.movedToTodo(ids.length), {
+      action: {
+        label: t.quick.undo,
+        onClick: () =>
+          void (async () => {
+            await takeOutOfTodo(ids, { status: syncStatus, engine: syncEngine });
+            moving();
+            await reopenTab(userKey, id, at, kept);
+          })().catch(() => toast.error(t.quick.moveFailed)),
+      },
+    });
+  };
+
   if (!ready || !live || !active) return null;
   const asked = closing ? tabs.find((tab) => tab.id === closing) : undefined;
   const strip = (
@@ -425,6 +459,7 @@ function Tabbed({
           onText={(text, images, changed) =>
             setTyped({ id: active, text, images, unsaved: changed })
           }
+          onMovedAll={(kept, ids) => void movedAll(active, kept, ids)}
           strip={strip}
         />
       )}
@@ -485,6 +520,7 @@ function Capture({
   initialStatus,
   escapeEnabled,
   onText,
+  onMovedAll,
   strip,
 }: {
   handle: Ref<CaptureHandle>;
@@ -504,6 +540,8 @@ function Capture({
   escapeEnabled: boolean;
   /** What it holds, as typed, and whether any of it is not saved. */
   onText: (text: string, images: number, unsaved: boolean) => void;
+  /** All of its lines moved into the Todo (and no images left): its draft as it was, and the items' ids. */
+  onMovedAll: (kept: QuickDraft | null, ids: string[]) => void;
   /** The tabs, under the header. */
   strip: ReactNode;
 }) {
@@ -520,6 +558,10 @@ function Capture({
   /** The draft read into it: the editor is shown on it once it is, not before (see the effect). */
   const [loaded, setLoaded] = useState(false);
   const editor = useRef<QuickEditorHandle>(null);
+  const syncStatus = useSyncStatusStore();
+  const syncEngine = useSyncEngine();
+  /** Lines being moved into the Todo: one move at a time. */
+  const [toTodo, setToTodo] = useState(false);
   /** Where the bar of block actions goes on a phone: the page's foot, above the keyboard. */
   const [barSlot, setBarSlot] = useState<HTMLDivElement | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1018,6 +1060,51 @@ function Capture({
     if (inFlight.current === run) inFlight.current = null;
   };
 
+  /**
+   * The lines selected (or, with none, all of them) moved into the Todo,
+   * as its items, and taken out of here, with 元に戻す. All of them, with no
+   * images: the tab closed (see onMovedAll).
+   */
+  const moveToTodo = async () => {
+    if (toTodo) return;
+    const taken = editor.current?.linesForTodo();
+    if (!taken) return;
+    const sync = { status: syncStatus, engine: syncEngine };
+    setToTodo(true);
+    try {
+      const ids = await moveIntoTodo(taken.blocks, sync);
+      if (ids.length === 0) {
+        toast(t.quick.nothingToMove);
+        return;
+      }
+      if (taken.all && imagesRef.current.length === 0) {
+        // Its draft as it is now, to be put back as it was.
+        draft.current?.update(() => contentOf(doc));
+        await draft.current?.flush(true);
+        onMovedAll(await loadDraft(userKey, tabId).catch(() => null), ids);
+        return;
+      }
+      editor.current?.remove(taken.blocks.map((block) => block.id));
+      const here = editor.current;
+      toast(t.quick.movedToTodo(ids.length), {
+        description: taken.all ? t.quick.imagesStay : undefined,
+        action: {
+          label: t.quick.undo,
+          onClick: () => {
+            // Gone from here (another tab shown): left in the Todo.
+            if (!here || editor.current !== here) return;
+            here.putBack(taken.blocks, taken.after);
+            void takeOutOfTodo(ids, sync).catch(() => toast.error(t.quick.moveFailed));
+          },
+        },
+      });
+    } catch {
+      toast.error(t.quick.moveFailed);
+    } finally {
+      setToTodo(false);
+    }
+  };
+
   // What the editor is handed: the same functions all along, so that what
   // draws the header and the tabs again does not draw the editor again.
   const latest = useRef<{ save: () => void; files: (files: File[]) => void; escape: () => void }>({
@@ -1131,6 +1218,19 @@ function Capture({
               </Button>
             </Tip>
           ) : null}
+          <Tip label={t.quick.moveToTodoTip}>
+            <Button
+              variant="ghost"
+              size="icon"
+              // The selection stays as it is, for what is selected to be moved.
+              onMouseDown={(event) => event.preventDefault()}
+              onClick={() => void moveToTodo()}
+              disabled={saving || toTodo}
+              aria-label={t.quick.moveToTodo}
+            >
+              <ListPlus className="size-4" aria-hidden />
+            </Button>
+          </Tip>
           <Tip label={t.quick.addImage}>
             <Button
               variant="ghost"

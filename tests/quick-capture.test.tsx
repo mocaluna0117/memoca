@@ -45,6 +45,9 @@ vi.mock("next/navigation", () => ({
 vi.mock("@/components/providers/sync-provider", () => ({
   useSync: () => ({ me: h.me }),
   useStorageUsage: () => h.me,
+  // For moving lines into the Todo (lib/quick/todo-move).
+  useSyncStatusStore: () => ({ get: () => ({ lastSyncAt: null, catchingUp: false }) }),
+  useSyncEngine: () => () => null,
 }));
 vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote, moveNote: h.move }));
 // The editor, as a field of lines: each a paragraph of the tab's document,

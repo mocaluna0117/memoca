@@ -2,7 +2,9 @@
 
 import { uuidv7 } from "uuidv7";
 import { db } from "@/lib/db";
+import type { SyncEngine } from "@/lib/sync/engine";
 import { createNote, setNoteTrashed } from "@/lib/sync/mutations";
+import type { StatusStore } from "@/lib/sync/status-store";
 
 import { TODO_NOTE_ID } from "@/lib/quick/todo-id";
 
@@ -32,4 +34,59 @@ export async function ensureTodoNote(): Promise<string> {
   const noteId = own?.purged ? `${TODO_NOTE_ID}-${uuidv7().slice(-8)}` : TODO_NOTE_ID;
   await createNote({ folderId: null, topLevel: true, title: "", kind: "note", noteId });
   return noteId;
+}
+
+/** How long the Todo waits, on a device that has none, for the server's to come in. */
+const WAIT_FOR_SERVER_MS = 4_000;
+
+/**
+ * The Todo's note, as the server has it, before an editor writes into it:
+ * on a device that has none yet (newly signed in), the first sync waited
+ * for (online, for a moment) in case the account has one; one here without
+ * its body has its body fetched. Made only if there is none then. Written
+ * into before the server's came, the device's own first line would be a
+ * second list in the note, beside the server's, which the editor does not
+ * show (joinTodoLists puts such lists together, should they meet).
+ */
+export async function readyTodo(
+  status: StatusStore,
+  engine: () => SyncEngine | null,
+  gone: () => boolean,
+): Promise<string> {
+  const online = () => navigator.onLine !== false;
+  const synced = () => {
+    const now = status.get();
+    return now.lastSyncAt !== null && !now.catchingUp;
+  };
+  const here = async () => {
+    const own = await db().notes.get(TODO_NOTE_ID);
+    if (own && !own.purged) return own;
+    return db()
+      .notes.filter((note) => !note.purged && note.noteId.startsWith(`${TODO_NOTE_ID}-`))
+      .first();
+  };
+  const until = Date.now() + WAIT_FOR_SERVER_MS;
+  let note = await here();
+  while (!note && online() && !synced() && Date.now() < until && !gone()) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    note = await here();
+  }
+  if (note) {
+    // All of it, as the server has it: every edit the note row says there is.
+    const whole = async () => {
+      const [row, body] = await Promise.all([
+        db().notes.get(note!.noteId),
+        db().bodies.get(note!.noteId),
+      ]);
+      if (!row) return true;
+      if (row.lastUpdateSeq === 0 && row.snapshotSeq === 0) return true;
+      return Boolean(body && body.keyEpoch === row.keyEpoch && body.throughSeq >= row.lastUpdateSeq);
+    };
+    const bodyUntil = Date.now() + WAIT_FOR_SERVER_MS;
+    if (!(await whole())) await engine()?.ensureBody(note.noteId).catch(() => undefined);
+    while (!(await whole()) && online() && Date.now() < bodyUntil && !gone()) {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+  }
+  return ensureTodoNote();
 }
