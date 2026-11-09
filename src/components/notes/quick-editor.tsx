@@ -8,6 +8,7 @@ import { SuggestionMenu, filterSuggestionItems } from "@blocknote/core/extension
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
   DesktopFormattingToolbarController,
+  GridSuggestionMenuController,
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
   useCreateBlockNote,
@@ -24,6 +25,7 @@ import {
   useRef,
 } from "react";
 import { createPortal } from "react-dom";
+import { atWordStart, slashMenuOpens } from "@/components/editor/menu-start";
 import type * as Y from "yjs";
 import { MemocaFormattingToolbar } from "@/components/editor/image-crop";
 import { imeCommit } from "@/components/editor/ime-commit";
@@ -219,10 +221,11 @@ export const QuickEditor = memo(function QuickEditor({
         formattingToolbar={false}
         slashMenu={false}
         sideMenu={false}
+        emojiPicker={false}
       >
         <SuggestionMenuController
           triggerCharacter="/"
-          shouldOpen={(state) => !state.selection.$from.parent.type.isInGroup("tableContent")}
+          shouldOpen={slashMenuOpens}
           getItems={async (query) =>
             filterSuggestionItems(
               turningLines(plain, getDefaultReactSlashMenuItems(editor)).filter(
@@ -232,6 +235,8 @@ export const QuickEditor = memo(function QuickEditor({
             )
           }
         />
+        {/* BlockNote's emoji menu (":" and a word), at a word's start only. */}
+        <GridSuggestionMenuController triggerCharacter=":" columns={10} minQueryLength={2} shouldOpen={atWordStart} />
         <DesktopFormattingToolbarController formattingToolbar={MemocaFormattingToolbar} />
         {barSlot ? createPortal(<InlineBlockBar />, barSlot) : null}
       </BlockNoteView>

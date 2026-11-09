@@ -6,12 +6,14 @@ import "@blocknote/shadcn/style.css";
 import { type BlockNoteEditor, combineByGroup } from "@blocknote/core";
 import { filterSuggestionItems } from "@blocknote/core/extensions";
 import { FindBar } from "@/components/editor/find-bar";
+import { atWordStart, slashMenuOpens } from "@/components/editor/menu-start";
 import { findInNote } from "@/components/editor/find-in-note";
 import { withCollaboration } from "@blocknote/core/yjs";
 import {
   DesktopFormattingToolbarController,
   type FloatingUIOptions,
   SideMenuController,
+  GridSuggestionMenuController,
   SuggestionMenuController,
   getDefaultReactSlashMenuItems,
   useCreateBlockNote,
@@ -441,6 +443,7 @@ function EditorSurface({
         formattingToolbar={false}
         slashMenu={false}
         sideMenu={false}
+        emojiPicker={false}
       >
         {/* BlockNote's + and handle, with 複製 and コピー in the handle's menu. */}
         <SideMenuController sideMenu={MemocaSideMenu} />
@@ -450,7 +453,7 @@ function EditorSurface({
             is not. */}
         <SuggestionMenuController
           triggerCharacter="/"
-          shouldOpen={(state) => !state.selection.$from.parent.type.isInGroup("tableContent")}
+          shouldOpen={slashMenuOpens}
           getItems={async (query) =>
             filterSuggestionItems(
               [
@@ -465,6 +468,8 @@ function EditorSurface({
             )
           }
         />
+        {/* BlockNote's emoji menu (":" and a word), at a word's start only. */}
+        <GridSuggestionMenuController triggerCharacter=":" columns={10} minQueryLength={2} shouldOpen={atWordStart} />
         {/* BlockNote's own toolbar, with トリミング added for images. */}
         {/* The floating one only, on a phone too: BlockNote's own for a phone
             (from 0.55) is pinned above the keyboard, where Memoca's block bar

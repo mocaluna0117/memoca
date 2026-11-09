@@ -53,3 +53,51 @@ test.describe("the / menu", () => {
     );
   });
 });
+
+test.describe("a URL typed in a note, or in the quick note", () => {
+  test.beforeEach(({}, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "typed on a keyboard");
+  });
+
+  test("opens no menu at its : or its /: Enter ends the line, and nothing of it goes", async ({ page }) => {
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    const quick = page.locator(".memoca-quick-editor .bn-editor").first();
+    await quick.click();
+    await page.keyboard.type("https://example.com/a");
+    await expect(page.getByRole("option")).toHaveCount(0);
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("次の行");
+    await expect
+      .poll(() => quick.locator(".bn-block-content").allInnerTexts())
+      .toEqual(["https://example.com/a", "次の行"]);
+
+    await openApp(page);
+    await createNote(page, "URL のメモ");
+    await editor(page).click();
+    await page.keyboard.type("https://example.com/b");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("次の行");
+    await expect
+      .poll(() => editor(page).locator(".bn-block-content").allInnerTexts())
+      .toEqual(["https://example.com/b", "次の行"]);
+    // Nor at a date's /, after a number.
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("締切 11/30");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("その次");
+    await expect
+      .poll(() => editor(page).locator(".bn-block-content").allInnerTexts())
+      .toEqual(["https://example.com/b", "次の行", "締切 11/30", "その次"]);
+    // After a space, the / menu opens as ever; with nothing in it to
+    // choose, Enter is a new line.
+    await page.keyboard.type(" /");
+    await expect(page.getByRole("option").first()).toBeVisible();
+    await page.keyboard.type("ないもの");
+    await expect(page.getByRole("option")).toHaveCount(0);
+    await page.keyboard.press("Enter");
+    await expect
+      .poll(async () => (await editor(page).locator(".bn-block-content").allInnerTexts()).map((text) => text.trim()))
+      .toEqual(["https://example.com/b", "次の行", "締切 11/30", "その次 /ないもの", ""]);
+  });
+});
