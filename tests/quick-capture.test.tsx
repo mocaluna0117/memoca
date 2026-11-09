@@ -6,18 +6,27 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as Y from "yjs";
 import { db, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
-import { DRAFT_DELAY_MS, keepDraft, loadDraft, loadTabs } from "@/lib/quick/draft";
+import { DRAFT_DELAY_MS, keepDraft, loadTabs } from "@/lib/quick/draft";
+import { imageUrls } from "@/lib/quick/body";
 import { SHELL_HIDDEN } from "@/lib/quick/shell";
-import { bodyFragment } from "@/lib/sync/ydoc";
+import { readSaved } from "@/lib/quick/tabs";
+import { bodyFragment, extractText } from "@/lib/sync/ydoc";
 
 const ME = "user-me";
 
-/** The draft of the tab shown, for an account. */
-const draftOf = async (userKey: string) => loadDraft(userKey, (await loadTabs(userKey)).active);
-/** Each tab's draft text, in order (empty where there is none). */
+/**
+ * What the tab shown holds, for an account: its note's text, its images'
+ * references, and what it was saved as (each tab a note of the account's,
+ * lib/quick/tabs). Null for a tab whose note was never written into.
+ */
+const draftOf = async (userKey: string) => {
+  const doc = docs.get((await loadTabs(userKey)).active);
+  return doc ? { text: extractText(doc), images: imageUrls(doc), saved: readSaved(doc) } : null;
+};
+/** Each tab's text, in order (empty where there is none). */
 const tabTexts = async (userKey: string) => {
   const tabs = await loadTabs(userKey);
-  return Promise.all(tabs.ids.map(async (id) => (await loadDraft(userKey, id))?.text ?? ""));
+  return tabs.ids.filter((id) => id !== "todo").map((id) => (docs.get(id) ? extractText(docs.get(id)!) : ""));
 };
 
 const h = vi.hoisted(() => ({
@@ -37,6 +46,9 @@ const h = vi.hoisted(() => ({
   prepare: vi.fn(),
   stage: vi.fn(),
   move: vi.fn(),
+  trash: vi.fn(),
+  makeTab: vi.fn(),
+  flush: vi.fn(),
   /** The document of the tab shown, as its editor has it. */
   doc: null as unknown as import("yjs").Doc,
   /** How many image blocks a paste has made, for each its own id. */
@@ -53,7 +65,14 @@ vi.mock("@/components/providers/sync-provider", () => ({
   useSyncStatusStore: () => ({ get: () => ({ lastSyncAt: null, catchingUp: false }) }),
   useSyncEngine: () => () => null,
 }));
-vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote, moveNote: h.move }));
+vi.mock("@/lib/sync/mutations", () => ({ createNote: h.createNote, moveNote: h.move, setNoteTrashed: h.trash }));
+vi.mock("@/lib/quick/tabs", async (original) => ({
+  ...(await original<typeof import("@/lib/quick/tabs")>()),
+  makeTabNote: h.makeTab,
+}));
+// All of a tab's note here at once: no server to wait for.
+vi.mock("@/lib/quick/todo", () => ({ wholeBody: async () => {} }));
+vi.mock("convex/react", () => ({ useConvex: () => ({}) }));
 // The editor, as a field of lines: each a paragraph of the tab's document,
 // with ids that follow from where it is, so that the same lines say the same.
 // Images, as the editor puts them: a block for each file pasted, shown
@@ -188,7 +207,7 @@ vi.mock("@/components/folders/folder-picker", () => ({
       </div>
     ) : null,
 }));
-vi.mock("@/lib/sync/docs", () => ({ acquireDoc: h.acquire, releaseDoc: h.release }));
+vi.mock("@/lib/sync/docs", () => ({ acquireDoc: h.acquire, releaseDoc: h.release, flushDoc: h.flush }));
 vi.mock("@/lib/build", () => ({ newBuildOut: h.newBuild }));
 vi.mock("@/lib/quick/shell", async (original) => ({
   ...(await original<typeof import("@/lib/quick/shell")>()),
@@ -199,6 +218,7 @@ vi.mock("@/lib/media/attachments", async (original) => ({
   ...(await original<typeof import("@/lib/media/attachments")>()),
   prepareUpload: h.prepare,
   stageUpload: h.stage,
+  resolveAttachment: async () => null,
 }));
 
 import { QuickCapture, TAB_NAME_DELAY_MS } from "@/components/notes/quick-capture";
@@ -216,7 +236,8 @@ URL.revokeObjectURL = () => {};
  * read back by a live query, take a few rounds.
  */
 const settle = async () => {
-  for (let round = 0; round < 4; round += 1) {
+  // A tab's note made, its body read and the editor shown on it: more rounds.
+  for (let round = 0; round < 8; round += 1) {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
       for (let i = 0; i < 5; i += 1) await new Promise((resolve) => setImmediate(resolve));
@@ -308,10 +329,29 @@ beforeEach(async () => {
   h.push.mockReset();
   docs = new Map();
   h.acquire.mockReset().mockImplementation(async (noteId: string) => {
-    if (!docs.has(noteId)) docs.set(noteId, new Y.Doc());
+    if (!docs.has(noteId)) {
+      const doc = new Y.Doc();
+      docs.set(noteId, doc);
+      // A tab's note's first line, for the tabs, as the documents write it.
+      if (noteId.startsWith("quick-tab-")) {
+        doc.on("update", () => {
+          const preview = extractText(doc).split("\n").find((line) => line.trim() !== "") ?? "";
+          void db().notes.update(noteId, { preview });
+        });
+      }
+    }
     return docs.get(noteId);
   });
   h.release.mockReset().mockResolvedValue(undefined);
+  h.flush.mockReset().mockResolvedValue(undefined);
+  // A tab's note, as makeTabNote makes one: hidden, synced, here at once.
+  h.makeTab.mockReset().mockImplementation(async (noteId: string) => {
+    await db().notes.put({ noteId, deletedAt: null, purged: false, preview: "", lastUpdateSeq: 0, snapshotSeq: 0 } as never);
+  });
+  // Into the trash, as a tab closed puts its note: out of the tabs everywhere.
+  h.trash.mockReset().mockImplementation(async (noteId: string, trashed: boolean) => {
+    await db().notes.update(noteId, { deletedAt: trashed ? Date.now() : null });
+  });
   h.newBuild.mockReset().mockResolvedValue(false);
   // Made ready at once, as it came: the tests of that have it wait.
   h.prepare.mockReset().mockImplementation(async (file: File) => ({
@@ -441,7 +481,16 @@ describe("the quick note, saving", () => {
   });
 
   test("a save whose body could not be written finishes the same note when tried again", async () => {
-    h.acquire.mockRejectedValueOnce(new Error("idb"));
+    // The note saved into, not the tab's own.
+    const acquire = h.acquire.getMockImplementation()!;
+    let failed = false;
+    h.acquire.mockImplementation(async (noteId: string) => {
+      if (noteId === "note-1" && !failed) {
+        failed = true;
+        throw new Error("idb");
+      }
+      return acquire(noteId);
+    });
     await render();
     await type("一行目\n本文");
     await key({ key: "Enter", ctrlKey: true });
@@ -494,22 +543,17 @@ describe("the quick note's window, closing", () => {
     expect(await atClose).toMatchObject({ text: "閉じる前" });
   });
 
-  test("Esc does not put the window away until the draft is on the device", async () => {
+  test("Esc does not put the window away until what is written is on the device", async () => {
     await render();
     await type("閉じる前");
-    const table = db().meta;
-    const put = table.put.bind(table);
+    // The tab's note written to the device: held back, to see the window wait for it.
     let written!: () => void;
-    vi.spyOn(table, "put").mockImplementation(
-      ((row: unknown) =>
-        new Promise((resolve) => (written = () => resolve(put(row as never))))) as never,
-    );
+    h.flush.mockImplementation(() => new Promise<void>((resolve) => (written = resolve)));
     await key({ key: "Escape" }, document);
     expect(h.closed).not.toHaveBeenCalled();
     await act(async () => written());
     await settle();
     expect(h.closed).toHaveBeenCalledOnce();
-    vi.restoreAllMocks();
   });
 
   test("Esc waits for a save under way, and the window shown again does not still say saved", async () => {
@@ -705,15 +749,17 @@ describe("the quick note's draft, coming back", () => {
     expect(field().value).toBe("");
 
     await type("私の");
-    h.me = { userKey: "user-next", inboxFolderId: "inbox-2" };
-    await act(async () => root.render(<QuickCapture />));
-    await settle();
-    expect(field().value).toBe("");
-    // What the last one had typed is kept as its draft, for it alone, and
-    // the next one's empty field, written in its turn, does not forget it.
-    await pause();
+    // In its tab's note, the account's: sent as any note is, not the device's.
     expect(await draftOf(ME)).toMatchObject({ text: "私の" });
-    expect(await draftOf("user-next")).toBeNull();
+    // Another signing in on the device: the device emptied first, as signing
+    // in does, and its quick note starts afresh.
+    await act(async () => root.unmount());
+    await resetLocalData();
+    root = createRoot(host);
+    h.me = { userKey: "user-next", inboxFolderId: "inbox-2" };
+    await render();
+    expect(field().value).toBe("");
+    expect((await draftOf("user-next"))?.text ?? "").toBe("");
   });
 });
 
@@ -908,8 +954,10 @@ describe("the quick note's images", () => {
     await render();
     expect(field().value).toBe("前の下書き");
     expect(blocks()).toEqual([{ name: "前の写真.png", shown: true }]);
-    await pause();
-    expect((await draftOf(ME))?.images).toMatchObject([{ key: "old-1", name: "前の写真.png" }]);
+    // Sent up as the tab's note's file, as one pasted now is.
+    expect(h.stage).toHaveBeenCalledOnce();
+    expect(h.stage.mock.calls[0]![0]).toMatchObject({ noteId: expect.stringMatching(/^quick-tab-/) });
+    expect((await draftOf(ME))?.images).toEqual(["memoca://att-1"]);
   });
 
   test("one pasted is shown at once, and is in the draft only once it is ready", async () => {
@@ -921,13 +969,17 @@ describe("the quick note's images", () => {
     expect(busy()?.name).toBe("写真.png");
     await pause();
     expect((await draftOf(ME))?.images ?? []).toEqual([]);
+    expect(h.stage).not.toHaveBeenCalled();
     await finish(() => making.resolve(READY));
     expect(busy()).toBeNull();
     expect(thumbs()).toHaveLength(1);
-    await pause();
-    expect((await draftOf(ME))?.images).toMatchObject([
-      { name: "写真.png", mime: "image/webp", width: 40, height: 30 },
-    ]);
+    // Sent up, as it was made ready, as the tab's note's file.
+    expect(h.stage).toHaveBeenCalledOnce();
+    expect(h.stage.mock.calls[0]![0]).toMatchObject({
+      noteId: (await loadTabs(ME)).active,
+      prepared: { mime: "image/webp", width: 40, height: 30 },
+    });
+    expect((await draftOf(ME))?.images).toEqual(["memoca://att-1"]);
   });
 
   test("⌘ + Enter while one is being made ready saves once it is, with the image, once", async () => {
@@ -939,11 +991,9 @@ describe("the quick note's images", () => {
     expect(h.createNote).not.toHaveBeenCalled();
     await finish(() => making.resolve(READY));
     expect(h.createNote).toHaveBeenCalledOnce();
+    // Sent once, as the tab's note's file; the note saved uses it too.
     expect(h.stage).toHaveBeenCalledOnce();
-    expect(h.stage.mock.calls[0]![0]).toMatchObject({
-      noteId: "note-1",
-      prepared: { mime: "image/webp", width: 40, height: 30 },
-    });
+    expect(h.stage.mock.calls[0]![0]).toMatchObject({ noteId: expect.stringMatching(/^quick-tab-/) });
     expect(bodyOf("note-1")).toEqual(["本文"]);
     expect(kindsOf("note-1")).toEqual(["paragraph", "image"]);
     expect(imagesOf("note-1")).toEqual([{ url: "memoca://att-1", name: "写真.png" }]);
@@ -1062,14 +1112,12 @@ describe("the quick note's images", () => {
     await act(async () => newTab().click());
     await settle();
     expect(thumbs()).toHaveLength(0);
-    const urls = nextUrl;
     await finish(() => making.resolve(READY));
-    // Shown nowhere: no URL is made for it.
-    expect(nextUrl).toBe(urls);
-    await pause();
-    expect((await loadDraft(ME, first))?.images).toMatchObject([
-      { name: "写真.png", mime: "image/webp", width: 40, height: 30 },
-    ]);
+    // In the tab it was pasted in, where it was put, sent as its note's file.
+    expect(imageUrls(docs.get(first)!)).toEqual(["memoca://att-1"]);
+    expect(h.stage.mock.calls[0]![0]).toMatchObject({ noteId: first });
+    // Let go of once it is in.
+    expect(h.release).toHaveBeenCalledWith(first);
   });
 
   test("a tab let go of while its image is being made ready does not get its draft written back", async () => {
@@ -1090,7 +1138,9 @@ describe("the quick note's images", () => {
     expect(field().value).toBe("一つ目");
     await finish(() => making.resolve(READY));
     await pause();
-    expect(await loadDraft(ME, second)).toBeNull();
+    // Not sent, and its tab's note in the trash: closed on every device.
+    expect(h.stage).not.toHaveBeenCalled();
+    expect((await db().notes.get(second))?.deletedAt).not.toBeNull();
     expect((await loadTabs(ME)).ids).toHaveLength(1);
   });
 
@@ -1311,9 +1361,9 @@ describe("the quick note, written as a note is", () => {
     await render();
     await key({ key: "Enter", ctrlKey: true });
     await pause();
-    const kept = await draftOf(ME);
-    expect(kept?.body?.byteLength).toBeGreaterThan(0);
-    expect(kept?.saved?.key).toBe(kept?.key);
+    // What it was saved as, kept in the tab's note (every device has it): as it is now.
+    const doc = docs.get((await loadTabs(ME)).active)!;
+    expect(readSaved(doc)?.key).toBe(bodyFragment(doc).toString());
     expect(button("保存").disabled).toBe(true);
   });
 });
@@ -1406,7 +1456,8 @@ describe("the quick note's Todo tab", () => {
     root = createRoot(host);
     await render("window=1&text=共有された文");
     expect(field().value).toBe("共有された文");
-    expect(tabs()).toEqual(["Todo", "新しいメモ", "共有された文"]);
+    // The empty one made for this device out of sight: the shared text's shown.
+    expect(tabs()).toEqual(["Todo", "共有された文"]);
   });
 });
 

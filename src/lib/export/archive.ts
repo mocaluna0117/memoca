@@ -1,5 +1,6 @@
 "use client";
 
+import { isQuickTab } from "@/lib/quick/todo-id";
 import { type Block, BlockNoteEditor } from "@blocknote/core";
 import { yXmlFragmentToBlocks } from "@blocknote/core/yjs";
 import type { ConvexReactClient } from "convex/react";
@@ -123,7 +124,10 @@ export async function exportAll(options: ExportOptions): Promise<ExportResult> {
   const database = db();
   const now = options.now ?? new Date();
   const folders = (await database.folders.toArray()).filter((f) => !f.deletedAt && !f.purged);
-  const notes = (await database.notes.toArray()).filter((n) => !n.deletedAt && !n.purged);
+  // Not a quick note's tab: a draft, saved (if it is) as a note of its own.
+  const notes = (await database.notes.toArray()).filter(
+    (n) => !n.deletedAt && !n.purged && !isQuickTab(n.noteId),
+  );
 
   const wanted = notes.filter(
     (note) => !note.locked || (options.includeLocked && vault.isUnlocked),

@@ -71,22 +71,31 @@ export async function readyTodo(
     await new Promise((resolve) => setTimeout(resolve, 150));
     note = await here();
   }
-  if (note) {
-    // All of it, as the server has it: every edit the note row says there is.
-    const whole = async () => {
-      const [row, body] = await Promise.all([
-        db().notes.get(note!.noteId),
-        db().bodies.get(note!.noteId),
-      ]);
-      if (!row) return true;
-      if (row.lastUpdateSeq === 0 && row.snapshotSeq === 0) return true;
-      return Boolean(body && body.keyEpoch === row.keyEpoch && body.throughSeq >= row.lastUpdateSeq);
-    };
-    const bodyUntil = Date.now() + WAIT_FOR_SERVER_MS;
-    if (!(await whole())) await engine()?.ensureBody(note.noteId).catch(() => undefined);
-    while (!(await whole()) && online() && Date.now() < bodyUntil && !gone()) {
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    }
-  }
+  if (note) await wholeBody(note.noteId, engine, gone);
   return ensureTodoNote();
+}
+
+/**
+ * Waits (online, for a moment) for all of a note's body this device does
+ * not have yet: every edit its row says the server has. An editor shown on
+ * less writes its own first line into it, beside the server's, which then
+ * comes in as a second list the editor does not show.
+ */
+export async function wholeBody(
+  noteId: string,
+  engine: () => SyncEngine | null,
+  gone: () => boolean = () => false,
+): Promise<void> {
+  const online = () => navigator.onLine !== false;
+  const whole = async () => {
+    const [row, body] = await Promise.all([db().notes.get(noteId), db().bodies.get(noteId)]);
+    if (!row) return true;
+    if (row.lastUpdateSeq === 0 && row.snapshotSeq === 0) return true;
+    return Boolean(body && body.keyEpoch === row.keyEpoch && body.throughSeq >= row.lastUpdateSeq);
+  };
+  const until = Date.now() + WAIT_FOR_SERVER_MS;
+  if (!(await whole())) await engine()?.ensureBody(noteId).catch(() => undefined);
+  while (!(await whole()) && online() && Date.now() < until && !gone()) {
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
 }

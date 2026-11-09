@@ -6,8 +6,14 @@ import { readTable } from "./local-db";
 const WINDOW = "popup,width=380,height=460";
 
 /** Whether this device holds a draft of the quick note. */
+/**
+ * Whether what is being written is kept: in a tab's note (each tab a note
+ * of the account's, synced as any note is), as its first line says.
+ */
 const hasDraft = async (page: Page) =>
-  (await readTable<{ key: string }>(page, "meta")).some((row) => row.key.startsWith("quickDraft:"));
+  (await readTable<{ noteId: string; preview: string | null; deletedAt: number | null }>(page, "notes")).some(
+    (note) => note.noteId.startsWith("quick-tab-") && note.deletedAt === null && (note.preview ?? "").trim() !== "",
+  );
 
 test.describe("the quick note in a window of its own", () => {
   test("however much is written, the header and its save button stay in view", async ({ page }) => {

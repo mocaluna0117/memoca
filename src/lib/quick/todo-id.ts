@@ -17,3 +17,17 @@ export const TODO_TAB_ID = "todo";
 export function isQuickTodo(noteId: string): boolean {
   return noteId === TODO_NOTE_ID || noteId.startsWith(`${TODO_NOTE_ID}-`);
 }
+
+/**
+ * What a quick note's tab's note is named by: each tab a note of its own,
+ * synced as any note is, so that every device of the account has the same
+ * tabs (lib/quick/tabs), left out of Memoca's own lists as the Todo is.
+ * Saved, a tab's quick note is copied into a note of its own (kind "quick").
+ */
+export const QUICK_TAB_PREFIX = "quick-tab-";
+
+/** Whether a note is a quick note's tab's. */
+export const isQuickTab = (noteId: string) => noteId.startsWith(QUICK_TAB_PREFIX);
+
+/** Whether a note is the quick note's own (its Todo, a tab's), not one of Memoca's lists. */
+export const isHiddenNote = (noteId: string) => isQuickTodo(noteId) || isQuickTab(noteId);

@@ -1,34 +1,28 @@
 import { expect, test } from "@playwright/test";
-import { createNote, openApp, signUp, waitForSynced } from "./helpers";
+import { createNote, openApp, signIn, signUp, waitForSynced } from "./helpers";
 
 test.describe("signing out with what only this device has", () => {
   test.beforeEach(({}, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "the settings page, on a computer");
   });
 
-  test("a quick note not saved: asked first, kept by default; saved, signed out at once", async ({ page }) => {
-    await signUp(page);
+  test("a quick note not saved, once sent, is the account's: signed out at once, and there on signing in again", async ({
+    page,
+  }) => {
+    const email = await signUp(page);
     await page.goto("/quick");
-    await page.getByLabel("即席メモ", { exact: true }).fill("書きかけの考え");
-    // Written as a draft before leaving the page.
+    await page.getByLabel("即席メモ", { exact: true }).click();
+    await page.keyboard.insertText("書きかけの考え");
+    // Sent as any edit is: its tab is a note of the account's.
     await page.waitForTimeout(800);
-
     await page.goto("/app/settings");
-    await page.getByRole("button", { name: "ログアウト", exact: true }).click();
-    const dialog = page.getByRole("alertdialog", { name: /まだ送っていない内容があります/ });
-    await expect(dialog).toContainText("保存していない即席メモ 1 件");
-    await dialog.getByRole("button", { name: "ログアウトしない" }).click();
-    await expect(dialog).toHaveCount(0);
-    await expect(page).toHaveURL(/\/app\/settings$/);
-
-    // Saved, there is nothing to lose.
-    await page.goto("/quick");
-    await page.getByRole("button", { name: "保存" }).click();
-    await expect(page).toHaveURL(/\/app\?n=/);
     await waitForSynced(page);
-    await page.goto("/app/settings");
     await page.getByRole("button", { name: "ログアウト", exact: true }).click();
     await expect(page).toHaveURL(/\/$/, { timeout: 20_000 });
+
+    await signIn(page, email);
+    await page.goto("/quick");
+    await expect(page.getByLabel("即席メモ", { exact: true })).toContainText("書きかけの考え", { timeout: 30_000 });
   });
 
   test("changes not sent, with no network: asked, and signed out only if chosen", async ({ page, context }) => {

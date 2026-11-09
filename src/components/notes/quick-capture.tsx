@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { uuidv7 } from "uuidv7";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useConvex } from "convex/react";
 import {
   type ReactNode,
   type Ref,
@@ -45,38 +46,39 @@ import { t } from "@/lib/i18n/ja";
 import { useClientValue } from "@/lib/hooks/use-client-value";
 import { layoutHeight, useVisibleArea } from "@/lib/hooks/use-visible-area";
 import { useModKeyLabel } from "@/lib/platform";
-import { type Allowance, prepareUpload, stageUpload } from "@/lib/media/attachments";
+import {
+  type Allowance,
+  idFromRef,
+  prepareUpload,
+  resolveAttachment,
+  stageUpload,
+} from "@/lib/media/attachments";
 import { uploadRefusal } from "@/lib/media/refusal";
 import {
-  appendBlocks,
-  appendParagraphs,
   blockOf,
   copyQuickBody,
+  imageUrls,
   prependParagraphs,
-  quickImageKey,
-  quickImageRef,
   quickKey,
-  referencedImages,
   setImageUrl,
 } from "@/lib/quick/body";
 import {
-  type DraftContent,
-  type DraftImage,
   MAX_TABS,
-  type QuickDraft,
   type SavedAs,
+  addFreshTab,
   closeTab,
-  keepDraft,
-  loadDraft,
   loadTabs,
-  markSaved,
   openTab,
   openTodoTab,
-  reopenTab,
+  rememberUnsaved,
+  restoreTab,
   showTab,
   unsaved,
   useQuickTabs,
 } from "@/lib/quick/draft";
+import { makeTabNote, onSavedChange, readSaved, writeSaved } from "@/lib/quick/tabs";
+import { wholeBody } from "@/lib/quick/todo";
+import { migrateLocalDrafts } from "@/lib/quick/migrate-drafts";
 import { db } from "@/lib/db";
 import {
   CloseTabDialog,
@@ -93,11 +95,11 @@ import {
 } from "@/lib/quick/folder";
 import { SAVE_KEYS } from "@/lib/quick/keys";
 import { useQuickMode } from "@/lib/quick/mode";
-import { TODO_TAB_ID } from "@/lib/quick/todo-id";
+import { TODO_TAB_ID, isQuickTab } from "@/lib/quick/todo-id";
 import { moveIntoTodo, takeOutOfTodo } from "@/lib/quick/todo-move";
 import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, holdsShared, joinShared, quickLines } from "@/lib/quick/text";
-import { acquireDoc, releaseDoc } from "@/lib/sync/docs";
+import { acquireDoc, flushDoc, releaseDoc } from "@/lib/sync/docs";
 import { createNote, moveNote } from "@/lib/sync/mutations";
 import { bodyFragment, extractText } from "@/lib/sync/ydoc";
 import type { Folder } from "@/lib/types";
@@ -141,43 +143,12 @@ const folderName = (folder: Folder | undefined) =>
 
 /** What a tab holds of text now: its text, and what its body says (lib/quick/body quickKey). */
 const textOf = (doc: Y.Doc) => ({ text: extractText(doc), key: quickKey(doc) });
-/** As {@link textOf}, with the body itself, for the draft. */
-const contentOf = (doc: Y.Doc): DraftContent => ({
-  ...textOf(doc),
-  body: Y.encodeStateAsUpdate(doc),
-});
-
-/** An image added, with a URL of this tab's to show it by. */
-type QuickImage = DraftImage & {
-  url: string;
-  /** Still being made ready (compressed) and checked: shown loading, in no draft yet. */
-  preparing?: boolean;
-  /** Its block taken out while it was made ready: not put in anywhere. */
-  gone?: boolean;
-};
-
 /** The most images one quick note takes. */
 const MAX_IMAGES = 10;
 
 /** Whether a file is an image, or one a phone sends as a HEIC photo with no type. */
 const isImage = (file: File) => file.type.startsWith("image/") || /\.(heic|heif)$/i.test(file.name);
 
-/** An image of the draft, shown again. */
-const shown = (image: DraftImage): QuickImage => ({
-  ...image,
-  url: URL.createObjectURL(image.blob),
-});
-/** An image as the draft keeps it, its URL left out. */
-const keptImage = (image: QuickImage): DraftImage => ({
-  key: image.key,
-  name: image.name,
-  blob: image.blob,
-  mime: image.mime,
-  width: image.width,
-  height: image.height,
-});
-/** An image made ready: the draft keeps those alone, so none is read back as it came. */
-const ready = (image: QuickImage) => !image.preparing;
 /** What is still said as the window goes: why an image was turned away; not that it was saved. */
 const stillSaid = (said: Status): Status => (said?.kind === "refused" ? said : null);
 
@@ -293,6 +264,9 @@ function Tabbed({
   useEffect(() => {
     let current = true;
     void (async () => {
+      // This device's drafts of its own, from before the tabs were the
+      // account's, made its tabs' notes first (once).
+      await migrateLocalDrafts(userKey).catch(() => undefined);
       const [tabs, remembered, all] = await Promise.all([
         loadTabs(userKey),
         rememberedQuickFolder(userKey).catch(() => null),
@@ -303,11 +277,20 @@ function Tabbed({
         setFirstFolders(all);
       }
       if (shared) {
-        const there = await loadDraft(userKey, tabs.active);
+        // What the tab shown holds, read from its note (its first line, for
+        // the tabs, may not be written yet: a draft made its note a moment ago).
+        let there = "";
+        if (isQuickTab(tabs.active) && (await db().notes.get(tabs.active))) {
+          const body = await acquireDoc(tabs.active);
+          try {
+            there = extractText(body);
+          } finally {
+            await releaseDoc(tabs.active);
+          }
+        }
         // Into the tab shown if it is empty (or holds it already); never the Todo's.
         const busy =
-          tabs.active === TODO_TAB_ID ||
-          (there && there.text.trim() !== "" && !holdsShared(there.text, shared));
+          tabs.active === TODO_TAB_ID || (there.trim() !== "" && !holdsShared(there, shared));
         const tab = busy ? ((await openTab(userKey)) ?? tabs.active) : tabs.active;
         if (current) setShare({ tab, text: shared });
       }
@@ -329,21 +312,26 @@ function Tabbed({
   // The tab asked about before it is closed.
   const [closing, setClosing] = useState<string | null>(null);
 
-  const active = live?.tabs.active ?? null;
+  const active = live?.tabs.active || null;
   const tabs: QuickTab[] = (live?.tabs.ids ?? []).map((id) => {
     // The Todo's: written as it is typed, never anything to save.
     if (id === TODO_TAB_ID)
       return { id, text: t.quick.todo, images: 0, unsaved: false, todo: true };
     if (typed?.id === id) return typed;
-    const draft = live?.drafts.get(id);
-    const images = draft?.images ?? [];
-    return {
-      id,
-      text: draft?.text ?? "",
-      images: images.length,
-      unsaved: unsaved({ text: draft?.text ?? "", key: draft?.key, images, saved: draft?.saved }),
-    };
+    const face = live?.faces.get(id);
+    return { id, text: face?.text ?? "", images: face?.images ?? 0, unsaved: face?.unsaved ?? false };
   });
+  // Every tab closed (here, or on another device): a new, empty one. Not
+  // while a draft of this device's own is still to be made a tab's note
+  // (its tab not shown until it is).
+  const none =
+    ready &&
+    live !== undefined &&
+    !tabs.some((tab) => !tab.todo) &&
+    !live.own.some((id) => id !== TODO_TAB_ID && !isQuickTab(id));
+  useEffect(() => {
+    if (none) void addFreshTab(userKey);
+  }, [none, userKey]);
 
   // Said by the tab shown next, once one is saved and closed.
   const [notice, setNotice] = useState<Status>(null);
@@ -415,7 +403,7 @@ function Tabbed({
    * A tab all of whose lines went into the Todo: closed, and the Todo shown,
    * with 元に戻す (the items taken out again, the tab put back as it was).
    */
-  const movedAll = async (id: string, kept: QuickDraft | null, ids: string[]) => {
+  const movedAll = async (id: string, ids: string[]) => {
     const at = live?.tabs.ids.indexOf(id) ?? 0;
     moving();
     capture.current?.discard();
@@ -428,7 +416,7 @@ function Tabbed({
           void (async () => {
             await takeOutOfTodo(ids, { status: syncStatus, engine: syncEngine });
             moving();
-            await reopenTab(userKey, id, at, kept);
+            await restoreTab(userKey, id, at);
           })().catch(() => toast.error(t.quick.moveFailed)),
       },
     });
@@ -455,18 +443,19 @@ function Tabbed({
         <Capture
           key={active}
           handle={capture}
-          tabId={active}
-          userKey={userKey}
+          noteId={active}
           folder={folder}
           onPickFolder={() => setPicking(true)}
           allowance={allowance}
           shared={share?.tab === active ? share.text : ""}
           initialStatus={notice}
           escapeEnabled={closing === null && !picking}
-          onText={(text, images, changed) =>
-            setTyped({ id: active, text, images, unsaved: changed })
-          }
-          onMovedAll={(kept, ids) => void movedAll(active, kept, ids)}
+          onText={(text, images, changed) => {
+            setTyped({ id: active, text, images, unsaved: changed });
+            // For the tab once it is not shown: closed, asked about or not.
+            void rememberUnsaved(userKey, active, changed).catch(() => undefined);
+          }}
+          onMovedAll={(ids) => void movedAll(active, ids)}
           strip={strip}
         />
       )}
@@ -518,8 +507,7 @@ function Tabbed({
 
 function Capture({
   handle,
-  tabId,
-  userKey,
+  noteId,
   folder,
   onPickFolder,
   allowance,
@@ -531,9 +519,8 @@ function Capture({
   strip,
 }: {
   handle: Ref<CaptureHandle>;
-  /** The tab this is: whose draft it keeps. */
-  tabId: string;
-  userKey: string;
+  /** The tab this is: its note, which holds what is written in it (lib/quick/tabs). */
+  noteId: string;
   /** The folder it is saved into, as chosen for every tab. */
   folder: QuickFolder;
   /** Another folder to be chosen. */
@@ -547,23 +534,24 @@ function Capture({
   escapeEnabled: boolean;
   /** What it holds, as typed, and whether any of it is not saved. */
   onText: (text: string, images: number, unsaved: boolean) => void;
-  /** All of its lines moved into the Todo, and nothing else (no image) left: its draft as it was, and the items' ids. */
-  onMovedAll: (kept: QuickDraft | null, ids: string[]) => void;
+  /** All of its lines moved into the Todo, and nothing else (no image) left: the items' ids. */
+  onMovedAll: (ids: string[]) => void;
   /** The tabs, under the header. */
   strip: ReactNode;
 }) {
   const router = useRouter();
+  const client = useConvex();
   const windowed = useQuickMode() === "window";
   // The desktop shell's window for the whole app, to be brought out from
   // here: not in shells before 0.4.1.
   const canShowApp = useClientValue(() => typeof window.memocaShell?.showApp === "function", false);
   const modKey = useModKeyLabel();
   const area = useVisibleArea();
-  // What is written, as a note's body is: the tab's own document, edited by
-  // its editor, kept in its draft, and copied into the note as it is saved.
-  const [doc] = useState(() => new Y.Doc());
-  /** The draft read into it: the editor is shown on it once it is, not before (see the effect). */
-  const [loaded, setLoaded] = useState(false);
+  // What is written, as a note's body is: the tab's note's own document,
+  // synced as any note's is, edited by its editor, and copied into a note
+  // of its own as it is saved. Shown once all of it is here (see the effect).
+  const [doc, setDoc] = useState<Y.Doc | null>(null);
+  const docRef = useRef<Y.Doc | null>(null);
   const editor = useRef<QuickEditorHandle>(null);
   const syncStatus = useSyncStatusStore();
   const syncEngine = useSyncEngine();
@@ -581,20 +569,14 @@ function Capture({
   // Whether any of it is not saved: what the save button follows.
   const [changed, setChanged] = useState(false);
   const changedRef = useRef(false);
-  // What the tab was last saved as: saved again, that note is written over.
+  // What the tab was last saved as (kept in its note, the same on every
+  // device): saved again, that note is written over.
   const savedRef = useRef<SavedAs | null>(null);
   /** The folder it is saved into, as it is when a save starts. */
   const folderRef = useRef(folder);
   useLayoutEffect(() => {
     folderRef.current = folder;
   });
-  /** Where each image saved into that note went up, by its key: not sent again. */
-  const uploaded = useRef(new Map<string, string>());
-  /** An image as the draft keeps it, with where it went up, if it did. */
-  const keep = (image: QuickImage): DraftImage => {
-    const ref = uploaded.current.get(image.key);
-    return ref ? { ...keptImage(image), ref } : keptImage(image);
-  };
   /** What the tabs were last told of it, as they show it: its name, its images, whether it is saved. */
   const reported = useRef<{ name: string; images: number; changed: boolean } | null>(null);
   /**
@@ -602,9 +584,11 @@ function Capture({
    * as what they show of it changes, not on every key, which would render
    * them all again.
    */
-  const report = (seen = textOf(doc), atOnce = true) => {
-    const { text, key } = seen;
-    const pictures = heldImages();
+  const report = (seen?: { text: string; key: string }, atOnce = true) => {
+    const body = docRef.current;
+    if (!body) return { changed: false };
+    const { text, key } = seen ?? textOf(body);
+    const pictures = heldImages(body);
     const images = pictures.length;
     const now = {
       name: tabName({ text, images }),
@@ -670,38 +654,26 @@ function Capture({
   // root's height is the layout viewport's, which neither iOS's keyboard nor
   // Chrome's, resizing only what is seen, makes shorter.)
   const keyboard = !windowed && area !== null && area.height < layoutHeight() - 100;
-  const draft = useRef<ReturnType<typeof keepDraft> | null>(null);
   /** A save under way, for closing to wait for. */
   const inFlight = useRef<Promise<void> | null>(null);
   /** The note a save made and could not finish, for the next save to finish. */
   const unfinished = useRef<string | null>(null);
 
-  // Images added, each with a URL of this tab's to show it by, let go of as
-  // the tab goes: every one added while it is shown, those taken out of what
-  // is written too (⌘ + Z puts one back). Those its body shows are its own
-  // (shownImages): what its draft keeps, and what a save sends up.
-  const imagesRef = useRef<QuickImage[]>([]);
-  /** The images the body shows, in the order it shows them (lib/quick/body referencedImages). */
-  const shownImages = (from: Y.Doc = doc): QuickImage[] =>
-    referencedImages(from).flatMap((key) => imagesRef.current.filter((image) => image.key === key && ready(image)));
-  /** Those, and those still being made ready: what the tab holds, for its name and for closing it. */
-  const heldImages = (): QuickImage[] => [...shownImages(), ...imagesRef.current.filter((image) => image.preparing)];
+  /**
+   * Its images: those its body shows (each the note's own file, uploaded as
+   * one pasted into a note is), and those still being made ready, for its
+   * name and for closing it.
+   */
+  const heldImages = (from: Y.Doc) => [
+    ...imageUrls(from).map((key) => ({ key })),
+    ...[...preparing.current.keys()].map((key) => ({ key })),
+  ];
   /** The block each image still being made ready is shown loading in, by its key. */
   const loadingIn = useRef(new Map<string, string>());
-  /** The keys of the images the draft was last told of. */
-  const toldImages = useRef("");
-  /** Tells the draft of the images the body shows, as they change. */
-  const keepImages = (kept = draft.current) => {
-    const pictures = shownImages();
-    const keys = pictures.map((image) => image.key).join(" ");
-    if (keys === toldImages.current) return;
-    toldImages.current = keys;
-    kept?.images(pictures.map(keep));
-  };
+  /** The images taken out (their blocks) while they were made ready: not sent. */
+  const takenOut = useRef(new Set<string>());
   const picker = useRef<HTMLInputElement>(null);
-  /** The images a save staged already, by key: one tried again stages none twice. */
-  const staged = useRef(new Map<string, string>());
-  /** Each image still being made ready, by key: a save, and the draft, wait for it. */
+  /** Each image still being made ready, by key: a save, and the window's going, wait for it. */
   const preparing = useRef(new Map<string, Promise<void>>());
   /**
    * The preparations, one after another: each holds its whole bitmap (and
@@ -710,105 +682,85 @@ function Capture({
   const chain = useRef<Promise<void>>(Promise.resolve());
   /** How many images were turned away: one more while a save waits, and it saves nothing over the reason. */
   const refusals = useRef(0);
-  /** Whether this tab's quick note is still shown: an image made ready once it is gone goes into its draft alone. */
+  /** Whether this tab's quick note is still shown. */
   const mounted = useRef(false);
-  /** Whether what is written was let go of (the tab closed unsaved): its draft is not written again. */
+  /** Whether what is written was let go of (the tab closed unsaved). */
   const discarded = useRef(false);
-  useEffect(
-    () => () => {
-      for (const image of imagesRef.current) if (image.url) URL.revokeObjectURL(image.url);
-    },
-    [],
-  );
 
   useEffect(() => {
-    const kept = keepDraft(userKey, tabId);
-    draft.current = kept;
     mounted.current = true;
-    // The tab's draft, then what was shared above it (where the draft does
-    // not hold it already), before the editor is shown on the document: an
-    // editor shown on it first writes its own empty line into it, which the
-    // draft's would then be merged with.
+    // The tab's note, made if this device opened it a moment ago; then all
+    // of it the server has (a tab another device wrote in), before the
+    // editor is shown on its document: an editor shown on less writes its
+    // own empty line into it, beside the server's. Then what was shared,
+    // above what it holds (where it does not hold it already).
     let current = true;
-    void loadDraft(userKey, tabId)
-      .then((left) => {
-        if (!current) return;
-        if (left?.saved) {
-          savedRef.current = left.saved;
-          for (const image of left.images ?? []) {
-            if (image.ref) uploaded.current.set(image.key, image.ref);
-          }
-        }
-        if (left?.body) Y.applyUpdate(doc, left.body);
-        // A draft from before the quick note had an editor: its lines.
-        else if (left && left.text.trim() !== "") appendParagraphs(doc, quickLines(left.text));
-        if (shared && !holdsShared(extractText(doc), shared)) {
-          prependParagraphs(doc, [...quickLines(shared), ...(extractText(doc) ? [""] : [])]);
-        }
-        const pictures = (left?.images ?? []).map(shown);
-        imagesRef.current = pictures;
-        // A draft's images from before they were put where they were pasted
-        // (a strip of them, under the text): after what is written.
-        const there = referencedImages(doc);
-        const apart = pictures.filter((image) => !there.includes(image.key));
-        if (apart.length > 0) {
-          appendBlocks(
-            doc,
-            apart.map((image) => ({ kind: "image", url: quickImageRef(image.key), name: image.name })),
-          );
-        }
-        if (pictures.length > 0) keepImages(kept);
-      })
-      .catch(() => undefined)
-      .finally(() => {
-        if (!current) return;
-        kept.update(() => contentOf(doc));
-        kept.release();
-        report();
-        lastText.current = textOf(doc).text;
-        setLoaded(true);
-      });
+    let held: Y.Doc | null = null;
+    void (async () => {
+      const row = await db().notes.get(noteId);
+      if (!row) await makeTabNote(noteId);
+      // One the server has edits of (written on another device): all of them first.
+      else if (row.lastUpdateSeq > 0 || row.snapshotSeq > 0) await wholeBody(noteId, syncEngine, () => !current);
+      const body = await acquireDoc(noteId);
+      if (!current) {
+        void releaseDoc(noteId);
+        return;
+      }
+      held = body;
+      savedRef.current = readSaved(body);
+      if (shared && !holdsShared(extractText(body), shared)) {
+        prependParagraphs(body, [...quickLines(shared), ...(extractText(body) ? [""] : [])]);
+      }
+      docRef.current = body;
+      lastText.current = textOf(body).text;
+      report();
+      setDoc(body);
+    })().catch(() => {
+      if (current) say({ kind: "failed" });
+    });
     // The images being made ready: the one map all along, read as the tab goes.
     const jobs = preparing.current;
     return () => {
       current = false;
       mounted.current = false;
-      draft.current = null;
+      if (!held) return;
       // An image still being made ready as the tab goes (another shown, the
-      // page left) is written into its draft once it is, the draft let go of
-      // then; not into one let go of already (its tab closed unsaved).
-      if (jobs.size > 0 && !discarded.current) {
-        void allReady(jobs).then(() => {
-          kept.update(() => contentOf(doc));
-          keepImages(kept);
-          kept.dispose();
-        });
-        return;
-      }
-      kept.dispose();
+      // page left) goes into its block once it is, the note let go of then.
+      void allReady(jobs)
+        .then(() => flushDoc(noteId))
+        .catch(() => undefined)
+        .finally(() => void releaseDoc(noteId));
     };
     // Once for the tab: another is a new Capture.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userKey, tabId]);
+  }, [noteId]);
 
-  // Every change to what is written: into the draft (read as it is written,
-  // not on every key), and to the tabs and the save button as they show it.
-  // What was said goes once something is written: not as the editor writes
-  // its first, empty line into an empty tab, which would take away that
-  // the tab before it was saved.
+  // What it was saved as, saved here or on another device: the save button
+  // and the tabs follow.
+  useEffect(() => {
+    if (!doc) return;
+    return onSavedChange(doc, () => {
+      savedRef.current = readSaved(doc);
+      report();
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doc]);
+
+  // Every change to what is written (here, or on another device): to the
+  // tabs and the save button as they show it. What was said goes once
+  // something is written: not as the editor writes its first, empty line
+  // into an empty tab, which would take away that the tab before it was saved.
   const onEdit = useEffectEvent(() => {
-    draft.current?.update(() => contentOf(doc));
-    keepImages();
+    const body = docRef.current;
+    if (!body) return;
     // One taken out while it is made ready is not waited for any more.
     for (const [key, blockId] of loadingIn.current) {
-      if (blockOf(doc, blockId)) continue;
+      if (blockOf(body, blockId)) continue;
       loadingIn.current.delete(key);
       preparing.current.delete(key);
-      imagesRef.current = imagesRef.current.map((each) =>
-        each.key === key ? { ...each, preparing: false, gone: true } : each,
-      );
+      takenOut.current.add(key);
     }
-    const seen = textOf(doc);
+    const seen = textOf(body);
     const wasChanged = reported.current?.changed ?? false;
     const { changed: nowChanged } = report(seen, false);
     // Why an image was turned away stays said as the others come in.
@@ -818,86 +770,70 @@ function Capture({
     if (written && statusRef.current) say(null);
   });
   useEffect(() => {
-    if (!loaded) return;
+    if (!doc) return;
     // Its body observed, not the document's updates: with something
     // listening for those, Yjs writes each change out as one, every key.
     const body = bodyFragment(doc);
     const listener = () => onEdit();
     body.observeDeep(listener);
     return () => body.unobserveDeep(listener);
-  }, [doc, loaded]);
+  }, [doc]);
 
   useEffect(() => {
     // Into the editor as it is shown: the editor's own (autoFocus).
-    if (!loaded || !windowed) return;
+    if (!doc || !windowed) return;
     // Shown again by the shell, or brought forward: ready to type into.
     const refocus = () => editor.current?.focus();
     window.addEventListener("focus", refocus);
     return () => window.removeEventListener("focus", refocus);
-  }, [loaded, windowed]);
+  }, [doc, windowed]);
 
   /**
    * Makes a file pasted, dropped or chosen ready as an image, as one added
-   * to a note is (compressed, and checked), one after another, keeping it
-   * among this tab's images; its block (`blockId`, which BlockNote shows
-   * loading meanwhile) is given the reference it shows it by, even once the
-   * tab is gone (its draft written then). One that cannot be is turned away,
-   * said why: BlockNote's block for it is put right. A save, the draft and
-   * the window's going wait for those still being made ready.
+   * to a note is (compressed, and checked), one after another, and stages it
+   * to go up as the tab's note's own file (offline too): its block
+   * (`blockId`, which BlockNote shows loading meanwhile) is given its
+   * reference, even once the tab is gone. One that cannot be is turned
+   * away, said why: BlockNote's block for it is put right. A save, and the
+   * window's going, wait for those still being made ready.
    */
   const prepare = (file: File, blockId?: string): Promise<string> => {
+    const body = docRef.current;
     if (!isImage(file)) {
       say({ kind: "refused", message: t.quick.imagesOnly });
       return Promise.reject(new Error("not an image"));
     }
-    if (shownImages().length + preparing.current.size >= MAX_IMAGES) {
+    if (!body || imageUrls(body).length + preparing.current.size >= MAX_IMAGES) {
       say({ kind: "refused", message: t.quick.tooManyImages(MAX_IMAGES) });
       return Promise.reject(new Error("too many images"));
     }
     const key = uuidv7();
     const name = file.name || "image";
-    imagesRef.current = [
-      ...imagesRef.current,
-      { key, name, blob: file, mime: file.type || "image/*", width: 0, height: 0, url: "", preparing: true },
-    ];
     if (blockId) loadingIn.current.set(key, blockId);
-    report();
     const job = chain.current
-      .then(() => prepareUpload(file, allowance))
+      .then(async () => {
+        const prepared = await prepareUpload(file, allowance);
+        // Taken out meanwhile (or its tab closed unsaved): nothing to put it in, nor to send.
+        if (takenOut.current.has(key) || discarded.current) throw new Error("taken out");
+        return stageUpload({ noteId, file, prepared });
+      })
       .then(
-        (prepared) => {
-          // Taken out meanwhile: nothing to put it in.
-          if (imagesRef.current.find((each) => each.key === key)?.gone) throw new Error("taken out");
-          const made: DraftImage = {
-            key,
-            name,
-            blob: prepared.blob,
-            mime: prepared.mime,
-            width: prepared.width,
-            height: prepared.height,
-          };
-          // The tab gone meanwhile: nothing shows it, so no URL to show it by.
-          imagesRef.current = imagesRef.current.map((each) =>
-            each.key !== key ? each : mounted.current ? shown(made) : { ...made, url: "" },
-          );
-          const ref = quickImageRef(key);
-          if (blockId) setImageUrl(doc, blockId, ref, name);
+        (ref) => {
+          if (blockId) setImageUrl(body, blockId, ref, name);
           return ref;
         },
         (error: unknown) => {
-          const gone = imagesRef.current.find((each) => each.key === key)?.gone;
-          imagesRef.current = imagesRef.current.filter((each) => each.key !== key);
-          if (!gone) {
+          if (!takenOut.current.has(key) && !discarded.current) {
             refusals.current += 1;
             if (mounted.current) say({ kind: "refused", message: uploadRefusal(error) });
           }
-          if (mounted.current) report();
           throw error;
         },
       )
       .finally(() => {
         preparing.current.delete(key);
         loadingIn.current.delete(key);
+        if (mounted.current) report();
       });
     preparing.current.set(
       key,
@@ -906,6 +842,7 @@ function Capture({
         () => undefined,
       ),
     );
+    report();
     // The next waits for this one, however it ends.
     chain.current = job.then(
       () => undefined,
@@ -920,21 +857,21 @@ function Capture({
     // made ready with it. The shell keeps the page, and waits for the image
     // itself as it puts the window away (SHELL_HIDDEN): not kept up for it.
     if (!window.memocaShell) await allReady(preparing.current);
-    await draft.current?.flush(true);
+    await flushDoc(noteId).catch(() => undefined);
     // Shown again by the shell, the window should not still say saved.
     say(stillSaid(statusRef.current));
     closeQuickWindow();
-  }, []);
+  }, [noteId]);
 
   /** As {@link close}, Memoca's own window brought out in its place, as it was left. */
   const showApp = useCallback(async () => {
     await inFlight.current;
     // The shell's alone: an image still being made ready is waited for as
     // it puts the window away.
-    await draft.current?.flush(true);
+    await flushDoc(noteId).catch(() => undefined);
     say(stillSaid(statusRef.current));
     window.memocaShell?.showApp?.();
-  }, []);
+  }, [noteId]);
 
   useEffect(() => {
     if (!windowed) return;
@@ -944,7 +881,7 @@ function Capture({
     const hidden = async () => {
       await inFlight.current;
       await allReady(preparing.current);
-      await draft.current?.flush(true);
+      await flushDoc(noteId).catch(() => undefined);
       say(stillSaid(statusRef.current));
       // Out again by the time the server says (and maybe being typed in):
       // left for the next time it is put away.
@@ -952,7 +889,7 @@ function Capture({
     };
     window.addEventListener(SHELL_HIDDEN, hidden);
     return () => window.removeEventListener(SHELL_HIDDEN, hidden);
-  }, [windowed]);
+  }, [windowed, noteId]);
 
   useEffect(() => {
     if (!windowed) return;
@@ -971,6 +908,8 @@ function Capture({
     // One at a time: ⌘ + Enter again while the first waits for an image is
     // not another; a tab's closing, asking, waits for the one under way.
     if (inFlight.current) return inFlight.current;
+    const body = docRef.current;
+    if (!body) return;
     const run = (async () => {
       // An image still being made ready goes in as it will be once it is;
       // one turned away meanwhile is said, and nothing is saved over that.
@@ -981,10 +920,10 @@ function Capture({
       // own. Typed on while the save runs, the editor holds more, which is
       // not saved, and is not marked so.
       const snapshot = new Y.Doc();
-      Y.applyUpdate(snapshot, Y.encodeStateAsUpdate(doc));
+      Y.applyUpdate(snapshot, Y.encodeStateAsUpdate(body));
       const { text, key } = textOf(snapshot);
-      // Its images: those it shows, where it shows them.
-      const pictures = shownImages(snapshot);
+      // Its images: those it shows, where it shows them, each its file's reference.
+      const pictures = imageUrls(snapshot).map((url) => ({ key: url }));
       if (text.trim() === "" && pictures.length === 0) return;
       // Saved already, as it is: nothing to write again.
       if (!unsaved({ text, key, images: pictures, saved: savedRef.current })) return;
@@ -997,89 +936,52 @@ function Capture({
         // its first line stands in for one where notes are listed.
         const before = savedRef.current ? await db().notes.get(savedRef.current.noteId) : undefined;
         const again = before && before.deletedAt === null && !before.purged ? before.noteId : null;
-        const noteId =
+        const saved =
           unfinished.current ??
           again ??
           (await createNote({ folderId: target.id, title: "", kind: "quick" }));
-        unfinished.current = noteId;
+        unfinished.current = saved;
         // Saved again with another folder chosen since: there too. Not moved
         // back where it was saved, if it has been moved since.
         const chosenThen = savedRef.current?.folderId;
-        if (noteId === again && chosenThen !== undefined && chosenThen !== target.id) {
-          await moveNote(noteId, target.id);
+        if (saved === again && chosenThen !== undefined && chosenThen !== target.id) {
+          await moveNote(saved, target.id);
         }
 
         // All of it goes straight into the note's document, so the full editor
         // opens on exactly what was written here, over whatever a save that
-        // did not finish may have written.
-        // Its images where they are in it, each staged to go up as one added
-        // to a note is (offline too), into the note made for them.
-        const refs = new Map<string, string>();
-        for (const image of pictures) {
-          // One saved into this note before is there already.
-          let ref = noteId === again ? uploaded.current.get(image.key) : undefined;
-          ref ??= staged.current.get(image.key);
-          if (!ref) {
-            ref = await stageUpload({
-              noteId,
-              file: new File([image.blob], image.name, { type: image.mime }),
-              prepared: {
-                blob: image.blob,
-                mime: image.mime,
-                width: image.width,
-                height: image.height,
-              },
-            });
-            staged.current.set(image.key, ref);
-          }
-          refs.set(image.key, ref);
-        }
-        const note = await acquireDoc(noteId);
+        // did not finish may have written. Its images with it, the tab's
+        // note's files, used by this note too, as a block copied between
+        // notes is.
+        const note = await acquireDoc(saved);
         try {
-          copyQuickBody(snapshot, note, [], refs);
+          copyQuickBody(snapshot, note, []);
         } finally {
-          await releaseDoc(noteId);
+          await releaseDoc(saved);
         }
         unfinished.current = null;
-        staged.current.clear();
 
-        // Kept as it is, as what it was saved as: the tab stays.
+        // Kept as it is, as what it was saved as, in the tab's note (every
+        // device has it): the tab stays.
         const now: SavedAs = {
-          noteId,
+          noteId: saved,
           text,
           key,
           folderId: target.id,
           images: pictures.map((image) => image.key),
         };
         savedRef.current = now;
-        uploaded.current = refs;
-        toldImages.current = pictures.map((image) => image.key).join(" ");
-        draft.current?.images(pictures.map(keep));
-        await draft.current?.flush(true);
-        await markSaved(
-          userKey,
-          tabId,
-          noteId,
-          { text, key, body: Y.encodeStateAsUpdate(snapshot) },
-          pictures.map(keep),
-          target.id,
-        ).catch(() => undefined);
-        // Written on meanwhile: the draft holds that, over what was saved
-        // (written again whatever it last wrote: markSaved wrote in between).
-        if (quickKey(doc) !== key) {
-          draft.current?.update(() => contentOf(doc));
-          await draft.current?.flush(true);
-        }
+        writeSaved(body, now);
+        await flushDoc(noteId).catch(() => undefined);
         report();
         if (!windowed) {
-          router.replace(`/app?${new URLSearchParams({ n: noteId })}`);
+          router.replace(`/app?${new URLSearchParams({ n: saved })}`);
         } else {
-          say({ kind: "saved", noteId, folder: target.name });
+          say({ kind: "saved", noteId: saved, folder: target.name });
           editor.current?.focus();
         }
       } catch {
-        // Kept as it is, draft and all, to be saved again: into the note
-        // already made, if one was.
+        // Kept as it is, to be saved again: into the note already made, if one was.
         say({ kind: "failed" });
       } finally {
         setSaving(false);
@@ -1111,10 +1013,8 @@ function Capture({
       const lines = taken.blocks.filter((block) => Array.isArray(block.content));
       const stays = lines.length < taken.blocks.length;
       if (taken.all && !stays) {
-        // Its draft as it is now, to be put back as it was.
-        draft.current?.update(() => contentOf(doc));
-        await draft.current?.flush(true);
-        onMovedAll(await loadDraft(userKey, tabId).catch(() => null), ids);
+        await flushDoc(noteId).catch(() => undefined);
+        onMovedAll(ids);
         return;
       }
       editor.current?.remove(lines.map((block) => block.id));
@@ -1165,37 +1065,40 @@ function Capture({
   });
   const onSave = useCallback(() => latest.current.save(), []);
   const onEscape = useCallback(() => latest.current.escape(), []);
-  /** The images, for the editor: made ready here, and shown by their URLs of this tab's. */
+  /** The images, for the editor: made ready and sent here, and shown as a note's are. */
   const quickImages = useMemo<QuickImages>(
     () => ({
       // What was said of the files before is over, as more come in.
       begin: () => latest.current.begin(),
       prepare: (file, blockId) => latest.current.prepare(file, blockId),
-      shown: (ref) => {
-        const key = quickImageKey(ref);
-        const image = key ? imagesRef.current.find((each) => each.key === key) : undefined;
-        return image?.url || undefined;
+      shown: async (ref) => {
+        const id = idFromRef(ref);
+        return id ? ((await resolveAttachment(client, id)) ?? ref) : ref;
       },
     }),
-    [],
+    [client],
   );
 
   useImperativeHandle(handle, () => ({
     save: async () => {
       await save();
+      const body = docRef.current;
+      if (!body) return null;
       const all = !unsaved({
-        ...textOf(doc),
-        images: shownImages(),
+        ...textOf(body),
+        images: imageUrls(body).map((key) => ({ key })),
         saved: savedRef.current,
       });
       return all ? (savedRef.current?.noteId ?? null) : null;
     },
     discard: () => {
       discarded.current = true;
-      draft.current?.cancel();
     },
     focus: () => editor.current?.focus(),
-    holds: () => unsaved({ ...textOf(doc), images: heldImages(), saved: savedRef.current }),
+    holds: () => {
+      const body = docRef.current;
+      return body ? unsaved({ ...textOf(body), images: heldImages(body), saved: savedRef.current }) : false;
+    },
     tellNow,
   }));
 
@@ -1373,7 +1276,7 @@ function Capture({
             : { paddingBottom: "calc(env(safe-area-inset-bottom, 0px) + 1rem)" }
         }
       >
-        {loaded ? (
+        {doc ? (
           <QuickEditor
             autoFocus
             doc={doc}

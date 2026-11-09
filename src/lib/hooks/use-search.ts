@@ -1,7 +1,7 @@
 "use client";
 
 import { useLiveQuery } from "dexie-react-hooks";
-import { isQuickTodo } from "@/lib/quick/todo-id";
+import { isHiddenNote } from "@/lib/quick/todo-id";
 import { useDeferredValue, useEffect, useMemo, useSyncExternalStore } from "react";
 import { db } from "@/lib/db";
 import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
@@ -47,7 +47,7 @@ export function useSearch(
       database.bodies.toArray(),
     ]);
     // The quick note's Todo is not a note to be found (lib/quick/todo).
-    return { notes: notes.filter((note) => !isQuickTodo(note.noteId)), folders, bodies };
+    return { notes: notes.filter((note) => !isHiddenNote(note.noteId)), folders, bodies };
   }, [enabled]);
 
   useEffect(() => {

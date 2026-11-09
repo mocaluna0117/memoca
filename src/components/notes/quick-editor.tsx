@@ -74,7 +74,7 @@ export type QuickImages = {
   /** Files are coming in (a paste, a drop, the button): what was said of those before is over. */
   begin: () => void;
   prepare: (file: File, blockId?: string) => Promise<string>;
-  shown: (ref: string) => string | undefined;
+  shown: (ref: string) => Promise<string>;
 };
 
 /** A block of the quick note's, as BlockNote gives one. */
@@ -174,7 +174,7 @@ export const QuickEditor = memo(function QuickEditor({
             release();
           }
         },
-        resolveFileUrl: async (url: string) => latest.current.shown(url) ?? url,
+        resolveFileUrl: (url: string) => latest.current.shown(url),
         // Files where they are pasted, as into a note (BlockNote's own, with
         // the upload above); text into the editor, a link as one.
         pasteHandler: ({ event, editor: pasting, defaultPasteHandler }) => {

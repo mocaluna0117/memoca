@@ -65,11 +65,13 @@ test.describe("images in the quick note", () => {
         ),
       )
       .toEqual(["上の行", "image", "下の行"]);
-    // The note's own file, sent as any is, made smaller on the way (WebP).
+    // Sent as it was pasted, as the tab's note's file (made smaller on the
+    // way, WebP), and used by the note saved from it, not sent again.
     await uploadsDrained(page);
     const files = await readTable<{ noteId: string; mime: string; status: string }>(page, "attachments");
     expect(files).toHaveLength(1);
-    expect(files[0]).toMatchObject({ noteId, mime: "image/webp" });
+    expect(files[0]).toMatchObject({ noteId: expect.stringMatching(/^quick-tab-/), mime: "image/webp" });
+    expect(noteId).not.toMatch(/^quick-tab-/);
   });
 
   test("chosen by its button, put in where the caret is, taken out again, and saved alone, with no text", async ({

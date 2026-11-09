@@ -9,6 +9,7 @@ import { ctx } from "@/lib/crypto/context";
 import { open, seal } from "@/lib/crypto/primitives";
 import { vault } from "@/lib/crypto/vault";
 import { db, getMeta, setMeta } from "@/lib/db";
+import { isHiddenNote } from "@/lib/quick/todo-id";
 import { acquireDoc, releaseDoc, withSentDoc, withStoredDoc } from "./docs";
 import { bodyFragment } from "./ydoc";
 
@@ -80,6 +81,8 @@ const stateOf = (doc: Y.Doc) => (bodyFragment(doc).length > 0 ? Y.encodeStateAsU
  * do not wait for it.
  */
 export async function stateBeforeEdits(noteId: string): Promise<Uint8Array | null> {
+  // The quick note's own (its Todo, a tab's): no history to open them by.
+  if (isHiddenNote(noteId)) return null;
   if (!(await versionDue(noteId))) return null;
   return withSentDoc(noteId, stateOf).catch(() => null);
 }

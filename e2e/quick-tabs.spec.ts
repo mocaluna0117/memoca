@@ -124,8 +124,15 @@ test.describe("the quick note's tabs, more than fit", () => {
     }
     const strip = page.getByRole("tablist");
     const left = () => strip.evaluate((element) => element.scrollLeft);
-    // The last opened is in sight: the strip scrolled to its end.
+    // The last opened shown (the strip drawn anew with it), and in sight:
+    // the strip scrolled to its end, and staying there.
+    await expect(page.getByRole("tab").last()).toHaveAttribute("aria-selected", "true");
     await expect.poll(left).toBeGreaterThan(0);
+    await expect.poll(async () => {
+      const first = await left();
+      await page.waitForTimeout(200);
+      return first > 0 && first === (await left());
+    }).toBe(true);
     const end = await left();
     await strip.hover();
     await page.mouse.wheel(0, -300);

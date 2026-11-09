@@ -6,7 +6,8 @@ import { db, getMeta, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { copiedBlob } from "@/lib/media/blob-copy";
 import { quickLines } from "@/lib/quick/text";
-import { TODO_TAB_ID } from "@/lib/quick/todo-id";
+import { QUICK_TAB_PREFIX, TODO_TAB_ID, isQuickTab } from "@/lib/quick/todo-id";
+import { setNoteTrashed } from "@/lib/sync/mutations";
 
 /**
  * A text as it is compared where there is no body to tell by: its lines
@@ -296,7 +297,17 @@ export function keepDraft(
 /* ------------------------------------------------------------------- tabs */
 
 /** The quick note's tabs on this device, for one account: in their order, and the one shown. */
-export type QuickTabs = { userKey: string; ids: string[]; active: string };
+export type QuickTabs = {
+  userKey: string;
+  ids: string[];
+  active: string;
+  /**
+   * The empty tab made for this device as it had none (not one opened by
+   * +): out of sight, while it is empty, where the account has tabs of its
+   * own, so that a device signed in anew shows those, not an empty one.
+   */
+  fresh?: string;
+};
 
 /** The most tabs the quick note keeps open. */
 export const MAX_TABS = 20;
@@ -304,10 +315,17 @@ export const MAX_TABS = 20;
 /** Where an account's tabs are kept: each its own, another's never written over. */
 const tabsKey = (userKey: string) => `${META.quickTabs}:${userKey}`;
 
+/**
+ * A new tab's id, the id of its note too (see lib/quick/tabs): made as the
+ * tab is first shown, synced as any note is, so that every device of the
+ * account has it.
+ */
+export const newTabId = () => `${QUICK_TAB_PREFIX}${uuidv7()}`;
+
 /** One empty tab, the one shown. */
 const fresh = (userKey: string): QuickTabs => {
-  const id = uuidv7();
-  return { userKey, ids: [id], active: id };
+  const id = newTabId();
+  return { userKey, ids: [id], active: id, fresh: id };
 };
 
 /**
@@ -356,11 +374,39 @@ export function loadTabs(userKey: string): Promise<QuickTabs> {
 export async function openTab(userKey: string): Promise<string | null> {
   let made: string | null = null;
   await changeTabs(userKey, (tabs) => {
-    if (tabs.ids.length >= MAX_TABS) return tabs;
-    made = uuidv7();
+    if (tabs.ids.filter((id) => id !== TODO_TAB_ID).length >= MAX_TABS) return tabs;
+    made = newTabId();
     return { ...tabs, ids: [...tabs.ids, made], active: made };
   });
   return made;
+}
+
+/**
+ * This device's tabs under other ids (a draft of its own become a tab's
+ * note): each of `renames` to its new id, or taken out (null).
+ */
+export function renameTabs(
+  userKey: string,
+  renames: ReadonlyMap<string, string | null>,
+  added: readonly string[] = [],
+): Promise<QuickTabs> {
+  return changeTabs(userKey, (tabs) => {
+    const adding = added.filter((id) => !tabs.ids.includes(id));
+    if (![...renames.keys()].some((id) => tabs.ids.includes(id)) && adding.length === 0) return tabs;
+    const to = (id: string) => (renames.has(id) ? renames.get(id)! : id);
+    const ids = [...tabs.ids.map(to).filter((id): id is string => id !== null), ...adding];
+    if (ids.length === 0) return fresh(userKey);
+    const active = to(tabs.active);
+    return { ...tabs, ids, active: active && ids.includes(active) ? active : ids[0]! };
+  });
+}
+
+/** A new, empty tab shown, where none is left to show (all closed, here or elsewhere). */
+export function addFreshTab(userKey: string): Promise<QuickTabs> {
+  return changeTabs(userKey, (tabs) => {
+    const id = newTabId();
+    return { ...tabs, ids: [...tabs.ids, id], active: id, fresh: id };
+  });
 }
 
 /**
@@ -376,11 +422,13 @@ export function openTodoTab(userKey: string): Promise<QuickTabs> {
   });
 }
 
-/** Shows a tab. */
+/** Shows a tab: one another device opened, among this one's from now on. */
 export function showTab(userKey: string, tabId: string): Promise<QuickTabs> {
-  return changeTabs(userKey, (tabs) =>
-    tabs.ids.includes(tabId) && tabs.active !== tabId ? { ...tabs, active: tabId } : tabs,
-  );
+  return changeTabs(userKey, (tabs) => {
+    if (tabs.active === tabId) return tabs;
+    const ids = tabs.ids.includes(tabId) ? tabs.ids : [...tabs.ids, tabId];
+    return { ...tabs, ids, active: tabId };
+  });
 }
 
 /**
@@ -388,6 +436,11 @@ export function showTab(userKey: string, tabId: string): Promise<QuickTabs> {
  * the last, the one before). The last tab closed leaves an empty one.
  */
 export async function closeTab(userKey: string, tabId: string): Promise<QuickTabs> {
+  // Its note to the trash, out of sight, on every device: closed there too.
+  // First, so that it is never shown meanwhile as another device's tab with
+  // something in it. Not deleted for good at once: what was saved from it
+  // may still be telling the server of the files it uses (trash.ts purgeNote).
+  if (isQuickTab(tabId) && (await db().notes.get(tabId))) await setNoteTrashed(tabId, true);
   const tabs = await changeTabs(userKey, (tabs) => {
     const at = tabs.ids.indexOf(tabId);
     if (at < 0) return tabs;
@@ -400,12 +453,9 @@ export async function closeTab(userKey: string, tabId: string): Promise<QuickTab
   return tabs;
 }
 
-/**
- * A tab closed a moment ago put back, shown, where it was among the others,
- * its draft as it was then (for 元に戻す).
- */
-export async function reopenTab(userKey: string, tabId: string, at: number, draft: QuickDraft | null): Promise<void> {
-  if (draft && draft.userKey === userKey) await setMeta(draftKey(tabId), draft);
+/** A tab closed a moment ago put back, shown, where it was among the others (for 元に戻す). */
+export async function restoreTab(userKey: string, tabId: string, at: number): Promise<void> {
+  if (isQuickTab(tabId) && (await db().notes.get(tabId))) await setNoteTrashed(tabId, false);
   await changeTabs(userKey, (tabs) => {
     if (tabs.ids.includes(tabId)) return tabs.active === tabId ? tabs : { ...tabs, active: tabId };
     const ids = [...tabs.ids];
@@ -414,18 +464,69 @@ export async function reopenTab(userKey: string, tabId: string, at: number, draf
   });
 }
 
-/** This account's tabs, each with its draft (if any), as they change (in any window). */
+/** Keeps whether a tab holds what is not saved, as last seen here: for one not shown, closed. */
+export async function rememberUnsaved(userKey: string, tabId: string, held: boolean): Promise<void> {
+  const key = `${META.quickUnsaved}:${userKey}`;
+  const kept = await getMeta<Record<string, boolean>>(key, {});
+  if (kept[tabId] === held) return;
+  await setMeta(key, { ...kept, [tabId]: held });
+}
+
+/** What a tab shows of itself, in the tabs: its text (its first line), its images, whether it holds what is not saved. */
+export type TabFace = { text: string; images: number; unsaved: boolean };
+
+/**
+ * This account's tabs, as they change (in any window, on any device): the
+ * Todo's, if it is open here, then the tabs' notes (lib/quick/tabs) in the
+ * order they were made. Each device's own tabs, and those of the others with
+ * anything in them (an empty one, opened elsewhere, is that device's
+ * alone); not one closed (its note in the trash), here or anywhere. The one
+ * shown is this device's own. Each with what it shows of itself: its note's
+ * first line, its images, and, as last seen here, whether it holds what is
+ * not saved (one never seen here: whether it holds anything).
+ */
 export function useQuickTabs(
   userKey: string,
-): { tabs: QuickTabs; drafts: ReadonlyMap<string, QuickDraft> } | undefined {
+): { tabs: QuickTabs; faces: ReadonlyMap<string, TabFace>; own: readonly string[] } | undefined {
   return useLiveQuery(async () => {
-    const tabs = await getMeta<QuickTabs | null>(tabsKey(userKey), null);
-    if (!tabs || tabs.userKey !== userKey || tabs.ids.length === 0) return undefined;
-    const drafts = new Map<string, QuickDraft>();
-    for (const id of tabs.ids) {
-      const draft = await getMeta<QuickDraft | null>(draftKey(id), null);
-      if (draft && draft.userKey === userKey) drafts.set(id, draft);
+    const kept = await getMeta<QuickTabs | null>(tabsKey(userKey), null);
+    if (!kept || kept.userKey !== userKey || kept.ids.length === 0) return undefined;
+    const database = db();
+    const notes = await database.notes.where("noteId").startsWith(QUICK_TAB_PREFIX).toArray();
+    const known = new Set(notes.map((note) => note.noteId));
+    const open = notes.filter((note) => !note.purged && note.deletedAt === null);
+    const files = await database.attachments
+      .where("noteId")
+      .anyOf(open.map((note) => note.noteId))
+      .filter((file) => file.deletedAt === null)
+      .toArray();
+    const images = new Map<string, number>();
+    for (const file of files) images.set(file.noteId, (images.get(file.noteId) ?? 0) + 1);
+    const seen = await getMeta<Record<string, boolean>>(`${META.quickUnsaved}:${userKey}`, {});
+    const own = new Set(kept.ids);
+    const faces = new Map<string, TabFace>();
+    for (const note of open) {
+      const text = note.preview ?? "";
+      const count = images.get(note.noteId) ?? 0;
+      if (!own.has(note.noteId) && text.trim() === "" && count === 0) continue;
+      faces.set(note.noteId, { text, images: count, unsaved: seen[note.noteId] ?? (text.trim() !== "" || count > 0) });
     }
-    return { tabs, drafts };
+    // Opened here a moment ago, its note not made yet: shown, empty.
+    for (const id of kept.ids) {
+      if (isQuickTab(id) && !known.has(id)) faces.set(id, { text: "", images: 0, unsaved: false });
+    }
+    // The empty one made for this device, out of sight while the account
+    // has tabs of its own: the newest of those shown in its place.
+    const holds = (face: TabFace) => face.text.trim() !== "" || face.images > 0;
+    const made = kept.fresh ? faces.get(kept.fresh) : undefined;
+    const hidden =
+      made !== undefined && !holds(made) && [...faces].some(([id, face]) => id !== kept.fresh && holds(face));
+    if (hidden) faces.delete(kept.fresh!);
+    const drafts = [...faces.keys()].sort();
+    const ids = [...(own.has(TODO_TAB_ID) ? [TODO_TAB_ID] : []), ...drafts];
+    const active = ids.includes(kept.active)
+      ? kept.active
+      : ((hidden && kept.active === kept.fresh ? drafts.at(-1) : drafts[0]) ?? ids[0] ?? "");
+    return { tabs: { userKey, ids, active }, faces, own: kept.ids };
   }, [userKey]);
 }

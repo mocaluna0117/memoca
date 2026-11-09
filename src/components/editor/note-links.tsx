@@ -1,7 +1,7 @@
 "use client";
 
 import { type BlockNoteEditor, createExtension } from "@blocknote/core";
-import { isQuickTodo } from "@/lib/quick/todo-id";
+import { isHiddenNote } from "@/lib/quick/todo-id";
 import { SuggestionMenu } from "@blocknote/core/extensions";
 import { SuggestionMenuController } from "@blocknote/react";
 import { FileText, Link2 } from "lucide-react";
@@ -24,7 +24,7 @@ async function notesFor(noteId: string, query: string) {
         !note.deletedAt &&
         !note.purged &&
         !note.locked &&
-        !isQuickTodo(note.noteId),
+        !isHiddenNote(note.noteId),
     )
     .map((note) => ({ note, name: noteName(note.title, note.preview).text }))
     .filter(({ name }) => !wanted || name.toLowerCase().includes(wanted));

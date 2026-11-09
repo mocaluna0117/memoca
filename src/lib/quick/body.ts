@@ -99,6 +99,16 @@ export function referencedImages(doc: Y.Doc): string[] {
   return keys;
 }
 
+/** The references of a body's images, in the order it shows them, each once: what is saved with it. */
+export function imageUrls(doc: Y.Doc): string[] {
+  const urls: string[] = [];
+  for (const image of imageBlocks(bodyFragment(doc))) {
+    const url = image.getAttribute("url");
+    if (typeof url === "string" && url !== "" && !urls.includes(url)) urls.push(url);
+  }
+  return urls;
+}
+
 /** What a quick note is written as: a line of text, or an image by its `memoca://` reference. */
 export type QuickPart = { kind: "line"; text: string } | { kind: "image"; url: string; name: string };
 
@@ -176,6 +186,38 @@ function blank(container: Y.XmlElement): boolean {
     .every((part) => part instanceof Y.XmlText && part.toString().trim() === "");
 }
 
+/** Gives the draft's image of this key, wherever the body shows it, the reference it went up as. */
+export function setQuickImage(doc: Y.Doc, key: string, ref: string): void {
+  for (const image of imageBlocks(bodyFragment(doc))) {
+    if (quickImageKey(image.getAttribute("url")) === key) image.setAttribute("url", ref);
+  }
+}
+
+/**
+ * Gives each image of a body that is the draft's (see quickImageRef) the
+ * reference it went up as, from `refs` by its key: one with none (not
+ * sent, or never made ready) goes, its block with it, and a group of a
+ * block's own left empty by that (BlockNote has none empty).
+ */
+export function putImageRefs(node: Y.XmlFragment | Y.XmlElement, refs: ReadonlyMap<string, string>): void {
+  for (const image of imageBlocks(node)) {
+    const key = quickImageKey(image.getAttribute("url"));
+    if (key === null) continue;
+    const ref = refs.get(key);
+    if (ref) {
+      image.setAttribute("url", ref);
+      continue;
+    }
+    let gone: Y.XmlElement | null = image.parent instanceof Y.XmlElement ? image.parent : null;
+    while (gone) {
+      const parent = gone.parent;
+      if (!(parent instanceof Y.XmlElement)) break;
+      parent.delete(parent.toArray().indexOf(gone), 1);
+      gone = parent.nodeName === "blockGroup" && parent.length === 0 && parent.parent instanceof Y.XmlElement ? parent : null;
+    }
+  }
+}
+
 /**
  * Writes a quick note's body into a note's, the note's emptied first (saved
  * again, it is written over): each of its blocks as it is, lists, toggles,
@@ -199,24 +241,7 @@ export function copyQuickBody(
       0,
       source.toArray().map((node) => (node as Y.XmlElement | Y.XmlText).clone()),
     );
-    for (const image of imageBlocks(target)) {
-      const key = quickImageKey(image.getAttribute("url"));
-      if (key === null) continue;
-      const ref = refs.get(key);
-      if (ref) {
-        image.setAttribute("url", ref);
-        continue;
-      }
-      // Its block goes with it: an image with nothing to show. A group of a
-      // block's own left empty goes too (BlockNote has none empty).
-      let gone: Y.XmlElement | null = image.parent instanceof Y.XmlElement ? image.parent : null;
-      while (gone) {
-        const parent = gone.parent;
-        if (!(parent instanceof Y.XmlElement)) break;
-        parent.delete(parent.toArray().indexOf(gone), 1);
-        gone = parent.nodeName === "blockGroup" && parent.length === 0 && parent.parent instanceof Y.XmlElement ? parent : null;
-      }
-    }
+    putImageRefs(target, refs);
     const group = target
       .toArray()
       .find(

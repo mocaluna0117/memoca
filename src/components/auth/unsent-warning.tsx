@@ -26,7 +26,9 @@ export function UnsentText({ unsent }: { unsent: Unsent }) {
         ))}
       </span>
       <span className="block">
-        ログアウトすると、これらはこの端末から消え、どこにも残りません。インターネットにつないで右上が「同期済み」になってから（即席メモは保存してから）、ログアウトしてください。
+        ログアウトすると、これらはこの端末から消え、どこにも残りません。インターネットにつないで右上が「同期済み」になってから
+        {/* A quick note of this device's own (from before they were the account's), not yet made one of its tabs. */}
+        {unsent.quickNotes > 0 ? "（即席メモは保存してから）" : ""}、ログアウトしてください。
       </span>
     </>
   );

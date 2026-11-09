@@ -1,5 +1,6 @@
 "use client";
 
+import { isHiddenNote } from "@/lib/quick/todo-id";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Link2 } from "lucide-react";
 import { db } from "@/lib/db";
@@ -23,7 +24,14 @@ export function NoteBacklinks({ noteId }: { noteId: string }) {
     const notes = await database.notes.bulkGet(linkers.filter((id) => id !== noteId));
     return notes
       .filter(
-        (note) => note && note.noteId !== noteId && !note.deletedAt && !note.purged && !note.locked,
+        (note) =>
+          note &&
+          note.noteId !== noteId &&
+          !note.deletedAt &&
+          !note.purged &&
+          !note.locked &&
+          // A quick note's tab, not saved: not a note of the lists.
+          !isHiddenNote(note.noteId),
       )
       .map((note) => ({ noteId: note!.noteId, name: noteName(note!.title, note!.preview).text }))
       .sort((a, b) => a.name.localeCompare(b.name, "ja"));

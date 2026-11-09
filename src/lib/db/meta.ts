@@ -51,6 +51,8 @@ export const META = {
   quickFolder: "quickFolder",
   /** The quick note's tabs, in order, and the one shown: under `quickTabs:<account>`. */
   quickTabs: "quickTabs",
+  /** Whether each of the quick note's tabs holds what is not saved, as last seen here: under `quickUnsaved:<account>`. */
+  quickUnsaved: "quickUnsaved",
   /** Images written again as WebP whose replacement the server has yet to hear of. */
   replacedToTell: "replacedToTell",
   /** Images that, written again as WebP, came to no less (or are animated): not offered again. */
