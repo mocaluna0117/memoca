@@ -333,6 +333,18 @@ describe("a version of a note, due as its edits are sent", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
+  /**
+   * Stops the engine once its versions are all kept, what each writes as it
+   * is (when this device last kept one) with them: left writing, that lands
+   * after the next test has emptied the device, which then has a version
+   * kept a moment ago, and none due.
+   */
+  async function keptAll(engine: SyncEngine) {
+    await engine.keepPendingVersions();
+    engine.stop();
+    await engine.keepPendingVersions();
+  }
+
   test("is uploaded once the edits pause, not between two of them", async () => {
     await sentAlready();
     visibility = "visible";
@@ -352,7 +364,7 @@ describe("a version of a note, due as its edits are sent", () => {
         timeout: VERSION_QUIET_MS + 2_000,
       });
     } finally {
-      main.engine.stop();
+      await keptAll(main.engine);
     }
   }, 15_000);
 
@@ -381,7 +393,7 @@ describe("a version of a note, due as its edits are sent", () => {
       await new Promise((resolve) => setTimeout(resolve, VERSION_QUIET_MS + 500));
       expect(main.server.callsTo("versions:save")).toHaveLength(1);
     } finally {
-      main.engine.stop();
+      await keptAll(main.engine);
     }
   }, 15_000);
 });
