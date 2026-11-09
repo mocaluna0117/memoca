@@ -53,5 +53,8 @@ describe("the heading an item goes under", () => {
     const sunday = new Date(2026, 10, 15, 9, 0);
     expect(bucketOf("2026-11-16", sunday)).toBe("tomorrow");
     expect(bucketOf("2026-11-17", sunday)).toBe("later");
+    // A week on is past this week, whatever day it is.
+    expect(bucketOf("2026-11-22", sunday)).toBe("later");
+    expect(bucketOf("2026-11-16", MONDAY)).toBe("later");
   });
 });

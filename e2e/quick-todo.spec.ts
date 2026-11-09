@@ -240,9 +240,8 @@ test.describe("the quick note's Todo", () => {
     await todo(page).locator(".bn-inline-content", { hasText: /^TOPPAN 本選考$/ }).click();
     await dueButton(page, "TOPPAN 本選考").click();
     await page.getByRole("dialog", { name: "期日" }).getByRole("button", { name: "1 週間後" }).click();
-    // A week on: 今週 on a Sunday's, それ以降 on any other day's.
-    const week = new Date().getDay() === 0 ? "今週" : "それ以降";
-    await expect.poll(() => dueLines(page)).toEqual([`【${week}】TOPPAN 本選考 ${dayLabel(7)}`, "【期日なし】カプコン"]);
+    // A week on: past this week's Sunday, whatever day it is.
+    await expect.poll(() => dueLines(page)).toEqual([`【それ以降】TOPPAN 本選考 ${dayLabel(7)}`, "【期日なし】カプコン"]);
   });
 
   test("a quick note's lines, all of them, moved into the Todo: its tab closed, and 元に戻す puts it back", async ({
