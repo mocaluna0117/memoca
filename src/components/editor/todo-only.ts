@@ -3,6 +3,8 @@ import { Fragment, type Node, type ResolvedPos } from "prosemirror-model";
 import { type EditorState, Plugin, TextSelection, type Transaction } from "prosemirror-state";
 import { uuidv4 } from "uuidv7";
 import { ySyncPluginKey } from "y-prosemirror";
+import { TODO_SORT, duesIn } from "@/components/editor/todo-due";
+import { dueAt } from "@/lib/quick/todo-due";
 
 /** The one kind of block the Todo's items are. */
 const CHECK = "checkListItem";
@@ -104,17 +106,21 @@ function itemsOnly(tr: Transaction): void {
 }
 
 /**
- * The items done after those to do, each as it was among its own (a stable
- * partition): one just ticked goes to the top of the done, one unticked to
- * the foot of those to do. The caret stays in the item it was in. An
- * item's details go with it.
+ * The items to do in order of their dues, the soonest first, those with
+ * none after them; then the done. Each as it was among its own otherwise (a
+ * stable sort): one just ticked goes to the top of the done, one unticked
+ * to the foot of those with its due. The caret stays in the item it was
+ * in. An item's details go with it.
  */
-function doneLast(tr: Transaction): void {
+function inOrder(tr: Transaction, dues: ReadonlyMap<string, string> | undefined): void {
   const group = tr.doc.firstChild;
   if (!group) return;
   const children: Node[] = [];
   group.forEach((child) => children.push(child));
-  const ordered = [...children.filter((child) => !isChecked(child)), ...children.filter(isChecked)];
+  const at = (child: Node) => dueAt(dues?.get(child.attrs.id as string));
+  const todo = children.filter((child) => !isChecked(child));
+  if (dues && dues.size > 0) todo.sort((a, b) => (at(a) === at(b) ? 0 : at(a) < at(b) ? -1 : 1));
+  const ordered = [...todo, ...children.filter(isChecked)];
   if (ordered.every((child, at) => child === children[at])) return;
   const { selection } = tr;
   let inside: { node: Node; from: number; to: number } | null = null;
@@ -149,21 +155,23 @@ function ticks(doc: Node): Map<string, boolean> {
 
 /**
  * What the Todo does with a change: every block an item or a line of one's
- * details, and, where an item was ticked or unticked, the done after those
- * to do. Not with a change of Yjs's own (another device's, an undo): that
- * device has put its blocks right already, and an undo of a tick goes back
- * where it was, not sorted again on top of it.
+ * details, and, where an item was ticked or unticked, or a due was set (a
+ * TODO_SORT), the list put in order (see inOrder). Not as anything is
+ * typed: a line just written stays where it is, under the item it was
+ * written after. Not with a change of Yjs's own (another device's, an
+ * undo): that device has put its blocks right already, and an undo of a
+ * tick goes back where it was, not sorted again on top of it.
  */
 export function tidyTodo(transactions: readonly Transaction[], before: EditorState, after: EditorState) {
   if (transactions.some((tr) => tr.getMeta(ySyncPluginKey))) return null;
-  const asked = transactions.some((tr) => tr.getMeta(TODO_TIDY));
+  const asked = transactions.some((tr) => tr.getMeta(TODO_TIDY) || tr.getMeta(TODO_SORT));
   if (!asked && !transactions.some((tr) => tr.docChanged)) return null;
   const tr = after.tr;
   itemsOnly(tr);
   const was = ticks(before.doc);
   const now = ticks(tr.doc);
   const flipped = [...now].some(([id, checked]) => was.has(id) && was.get(id) !== checked);
-  if (flipped || asked) doneLast(tr);
+  if (flipped || asked) inOrder(tr, duesIn(after));
   return tr.docChanged ? tr : null;
 }
 

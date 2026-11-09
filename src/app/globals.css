@@ -74,6 +74,8 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  /* A Todo item due today (todo-due). */
+  --todo-today: oklch(0.646 0.222 41.116);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -109,6 +111,7 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --todo-today: oklch(0.75 0.183 55.934);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -297,6 +300,79 @@
 .memoca-todo .bn-block-group .bn-block-group .bn-block-content[data-content-type="paragraph"] {
   font-size: 0.875em;
   color: var(--muted-foreground);
+}
+
+/* The Todo's dues (todo-due): at each item's right, on its first line;
+   red when late, orange today. With none, a calendar to give it one, on
+   the caret's item and the one the pointer is over. The item's text keeps
+   clear of it. Over the items to do, headings by their dues. */
+.memoca-todo .bn-editor > .bn-block-group > .bn-block-outer > .bn-block {
+  position: relative;
+}
+.memoca-todo .todo-due {
+  position: absolute;
+  top: 3px;
+  right: 0;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  height: 24px;
+  padding: 0 0.375rem;
+  border-radius: 0.375rem;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--muted-foreground);
+  cursor: pointer;
+  user-select: none;
+}
+.memoca-todo .todo-due:hover {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+.memoca-todo .todo-due-overdue {
+  color: var(--destructive);
+}
+.memoca-todo .todo-due-today {
+  color: var(--todo-today);
+}
+.memoca-todo .todo-due-done {
+  opacity: 0.5;
+}
+.memoca-todo .todo-due-add {
+  opacity: 0;
+}
+.memoca-todo .bn-block-outer:hover > .bn-block > .todo-due-add,
+.memoca-todo .bn-block-outer.todo-caret > .bn-block > .todo-due-add,
+.memoca-todo .todo-due-add:focus-visible {
+  opacity: 1;
+}
+.memoca-todo .bn-editor > .bn-block-group > .bn-block-outer > .bn-block > .bn-block-content {
+  padding-right: 1.75rem;
+}
+.memoca-todo .bn-editor > .bn-block-group > .bn-block-outer.todo-has-due > .bn-block > .bn-block-content {
+  padding-right: 5.25rem;
+}
+.memoca-todo .bn-editor > .bn-block-group > .bn-block-outer.todo-has-time > .bn-block > .bn-block-content {
+  padding-right: 7.5rem;
+}
+.memoca-todo .bn-editor > .bn-block-group > .bn-block-outer[data-todo-group]::before {
+  content: attr(data-todo-group);
+  display: block;
+  margin: 0.875rem 0 0.25rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted-foreground);
+  user-select: none;
+}
+.memoca-todo .bn-editor > .bn-block-group > .bn-block-outer[data-todo-group]:first-child::before {
+  margin-top: 0;
+}
+.memoca-todo .bn-editor > .bn-block-group > .bn-block-outer.todo-group-overdue::before {
+  color: var(--destructive);
+}
+.memoca-todo .bn-editor > .bn-block-group > .bn-block-outer.todo-group-today::before {
+  color: var(--todo-today);
 }
 
 /* On the window's own background, as the field was: not a box of the

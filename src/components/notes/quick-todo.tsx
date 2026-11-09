@@ -27,7 +27,9 @@ import { imeCommit } from "@/components/editor/ime-commit";
 import { listKeys } from "@/components/editor/list-keys";
 import { DISABLED_EXTENSIONS } from "@/components/editor/quotes";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
+import { sortTodo, todoDue } from "@/components/editor/todo-due";
 import { TODO_TIDY, lineAt, makeDetail, makeItem, todoOnly } from "@/components/editor/todo-only";
+import { TodoDuePicker } from "@/components/notes/todo-due-picker";
 import { Tip } from "@/components/notes/quick-tip";
 import { Button } from "@/components/ui/button";
 import { newBuildOut } from "@/lib/build";
@@ -41,6 +43,7 @@ import { SHELL_HIDDEN, closeQuickWindow } from "@/lib/quick/shell";
 import { useSyncEngine, useSyncStatusStore } from "@/components/providers/sync-provider";
 import { db } from "@/lib/db";
 import { TODO_NOTE_ID, ensureTodoNote } from "@/lib/quick/todo";
+import { DUE_MAP, TODO_DUE } from "@/lib/quick/todo-due";
 import { joinTodoLists } from "@/lib/quick/todo-repair";
 import type { SyncEngine } from "@/lib/sync/engine";
 import type { StatusStore } from "@/lib/sync/status-store";
@@ -436,6 +439,9 @@ const TodoEditor = memo(function TodoEditor({
   onTurn: (turn: Turn) => void;
 }) {
   const { resolvedTheme } = useTheme();
+  const dues = useMemo(() => doc.getMap<string>(DUE_MAP), [doc]);
+  // The item whose due is being picked, and where its button is.
+  const [picking, setPicking] = useState<{ id: string; at: DOMRect } | null>(null);
   const options = useMemo(
     () =>
       withCollaboration({
@@ -455,7 +461,12 @@ const TodoEditor = memo(function TodoEditor({
         trailingBlock: false,
         links: { onClick: (event: MouseEvent) => openLinkApart(event) },
         disableExtensions: NOT_ITEMS,
-        extensions: [todoOnly(), listKeys(), imeCommit()],
+        extensions: [
+          todoOnly(),
+          listKeys(),
+          imeCommit(),
+          todoDue({ map: doc.getMap<string>(DUE_MAP), onPick: (id, at) => setPicking({ id, at }) }),
+        ],
         domAttributes: { editor: { "aria-label": t.quick.todoField } },
         // Files have nowhere to go in a Todo; text pasted becomes its items.
         pasteHandler: ({ event, defaultPasteHandler }) => {
@@ -497,6 +508,10 @@ const TodoEditor = memo(function TodoEditor({
             block.type === "checkListItem" && (block.props as { checked?: boolean }).checked,
         );
         if (finished.length > 0) plain.removeBlocks(finished);
+        // Their dues go with them.
+        doc.transact(() => {
+          for (const block of finished) dues.delete(block.id);
+        }, TODO_DUE);
         toEnd();
       },
       turnLine: () => {
@@ -506,8 +521,30 @@ const TodoEditor = memo(function TodoEditor({
         if (tr) view.dispatch(tr);
       },
     }),
-    [plain, toEnd],
+    [plain, toEnd, doc, dues],
   );
+
+  useEffect(() => {
+    // On a phone, the keyboard down as the picker opens: it has the screen.
+    if (picking && window.matchMedia("(pointer: coarse)").matches) plain.prosemirrorView?.dom.blur();
+  }, [picking, plain]);
+  const pickedDue = useCallback(
+    (due: string | null) => {
+      if (!picking) return;
+      doc.transact(() => {
+        if (due) dues.set(picking.id, due);
+        else dues.delete(picking.id);
+      }, TODO_DUE);
+    },
+    [doc, dues, picking],
+  );
+  const pickerClosed = useCallback(() => {
+    setPicking(null);
+    // In order of the dues, now that it is put away (not under it as it moved).
+    const view = plain.prosemirrorView;
+    if (view) sortTodo(view, dues);
+    if (!window.matchMedia("(pointer: coarse)").matches) plain.focus();
+  }, [plain, dues]);
 
   useEffect(() => {
     // What the caret's line can be made, for the button on a phone.
@@ -579,6 +616,14 @@ const TodoEditor = memo(function TodoEditor({
         // Enter to close itself: the line would not end.
         emojiPicker={false}
       />
+      {picking ? (
+        <TodoDuePicker
+          due={dues.get(picking.id) ?? null}
+          at={picking.at}
+          onPick={pickedDue}
+          onClose={pickerClosed}
+        />
+      ) : null}
     </div>
   );
 });

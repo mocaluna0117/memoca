@@ -33,6 +33,29 @@ const lines = (page: Page) =>
     if (top) walk(top, 0);
     return out;
   });
+/** The Todo's items with their dues, and the heading over each that has one: "【明日】本選考 11/10(火)". */
+const dueLines = (page: Page) =>
+  todo(page).evaluate((root) =>
+    [...root.querySelectorAll(":scope > .bn-block-group > .bn-block-outer")].map((outer) => {
+      const heading = outer.getAttribute("data-todo-group");
+      const text = outer.querySelector(".bn-inline-content")?.textContent ?? "";
+      const due = outer.querySelector(":scope > .bn-block > .todo-due:not(.todo-due-add)")?.textContent;
+      return `${heading ? `【${heading}】` : ""}${text}${due ? ` ${due}` : ""}`;
+    }),
+  );
+/** A day as a due reads: "11/10(火)", so many days from today. */
+function dayLabel(days: number) {
+  const day = new Date();
+  day.setDate(day.getDate() + days);
+  return `${day.getMonth() + 1}/${day.getDate()}(${"日月火水木金土"[day.getDay()]})`;
+}
+/** The item of this text's due button: its due, or its calendar. */
+const dueButton = (page: Page, text: string) =>
+  todo(page)
+    .locator(":scope > .bn-block-group > .bn-block-outer", {
+      has: page.locator(".bn-inline-content", { hasText: new RegExp(`^${text}$`) }),
+    })
+    .locator(":scope > .bn-block > .todo-due");
 /** Ticks the item of this text by its box. */
 const tick = (page: Page, text: string) =>
   todo(page)
@@ -147,6 +170,68 @@ test.describe("the quick note's Todo", () => {
     await expect.poll(() => lines(page)).toEqual(["[ ] 株式会社デジタルガレージ", "  ・適性検査 11/13"]);
     await page.getByRole("button", { name: "項目にする" }).click();
     await expect.poll(() => lines(page)).toEqual(["[ ] 株式会社デジタルガレージ", "[ ] 適性検査 11/13"]);
+  });
+
+  test("an item given a due from the calendar: at its right, under its heading, in order of the dues", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "a pointer over the items");
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    await openTodo(page);
+    await write(page, "カプコン", "本選考", "SPI");
+    // No headings while no item has a due.
+    await expect.poll(() => dueLines(page)).toEqual(["カプコン", "本選考", "SPI"]);
+
+    await todo(page).locator(".bn-inline-content", { hasText: /^本選考$/ }).hover();
+    await dueButton(page, "本選考").click();
+    const picker = page.getByRole("dialog", { name: "期日" });
+    await expect(picker).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath("todo-picker.png") });
+    await picker.getByRole("button", { name: "明日" }).click();
+    await expect(picker).toBeHidden();
+    await expect.poll(() => dueLines(page)).toEqual([`【明日】本選考 ${dayLabel(1)}`, "【期日なし】カプコン", "SPI"]);
+
+    // Today's, with a time.
+    await todo(page).locator(".bn-inline-content", { hasText: /^SPI$/ }).click();
+    await dueButton(page, "SPI").click();
+    await picker.getByLabel("時刻").fill("23:59");
+    await picker.getByRole("button", { name: "閉じる" }).click();
+    await expect.poll(() => dueLines(page)).toEqual([
+      `【今日】SPI ${dayLabel(0)} 23:59`,
+      `【明日】本選考 ${dayLabel(1)}`,
+      "【期日なし】カプコン",
+    ]);
+    await page.screenshot({ path: testInfo.outputPath("todo-dues.png") });
+
+    // Kept, as the quick note opens again.
+    await waitForSynced(page).catch(() => undefined);
+    await page.waitForTimeout(800);
+    await page.reload();
+    await expect.poll(() => dueLines(page)).toEqual([
+      `【今日】SPI ${dayLabel(0)} 23:59`,
+      `【明日】本選考 ${dayLabel(1)}`,
+      "【期日なし】カプコン",
+    ]);
+
+    // Taken off: with none again, under 期日なし, where it was among those.
+    await dueButton(page, "本選考").click();
+    await picker.getByRole("button", { name: "期日を消す" }).click();
+    await expect.poll(() => dueLines(page)).toEqual([`【今日】SPI ${dayLabel(0)} 23:59`, "【期日なし】本選考", "カプコン"]);
+  });
+
+  test("on a phone, the caret's item has the calendar: a due given with a touch", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "mobile", "a phone's screen, with no pointer over the items");
+    await signUp(page);
+    await page.goto("/quick");
+    await openTodo(page);
+    await write(page, "TOPPAN 本選考", "カプコン");
+    await todo(page).locator(".bn-inline-content", { hasText: /^TOPPAN 本選考$/ }).click();
+    await dueButton(page, "TOPPAN 本選考").click();
+    await page.getByRole("dialog", { name: "期日" }).getByRole("button", { name: "1 週間後" }).click();
+    // A week on: 今週 on a Sunday's, それ以降 on any other day's.
+    const week = new Date().getDay() === 0 ? "今週" : "それ以降";
+    await expect.poll(() => dueLines(page)).toEqual([`【${week}】TOPPAN 本選考 ${dayLabel(7)}`, "【期日なし】カプコン"]);
   });
 
   test("its tab, and what is in it, are there when the quick note opens again", async ({ page }) => {
