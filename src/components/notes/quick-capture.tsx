@@ -813,8 +813,10 @@ function Capture({
     const job = chain.current
       .then(async () => {
         const prepared = await prepareUpload(file, allowance);
-        // Taken out meanwhile (or its tab closed unsaved): nothing to put it in, nor to send.
+        // Taken out meanwhile (or its tab closed unsaved, here or on another
+        // device): nothing to put it in, nor to send.
         if (takenOut.current.has(key) || discarded.current) throw new Error("taken out");
+        if ((await db().notes.get(noteId))?.deletedAt) throw new Error("taken out");
         return stageUpload({ noteId, file, prepared });
       })
       .then(
