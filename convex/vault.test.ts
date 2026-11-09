@@ -292,10 +292,7 @@ describe("folder locks", () => {
     ).toEqual({ status: "ok" });
   });
 
-  for (const [folderId, name] of [
-    ["templates", "テンプレート"],
-    ["journal", "日記"],
-  ] as const) {
+  for (const [folderId, name] of [["templates", "テンプレート"]] as const) {
     test(`the ${folderId} folder cannot be locked, nor trashed, as Inbox cannot`, async () => {
       const t = setup();
       await seedUser(t, AUTH_A);
@@ -320,6 +317,43 @@ describe("folder locks", () => {
       expect((await folderRow(t, folderId))?.deletedAt).toBeNull();
     });
   }
+
+  test("the days' notes' folder, made while 今日のメモ was in the app, is any other folder now", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushFolder(as, "journal", "日記");
+    // As it was made then.
+    await t.run(async (ctx) => {
+      const row = await ctx.db
+        .query("folders")
+        .filter((q) => q.eq(q.field("folderId"), "journal"))
+        .unique();
+      await ctx.db.patch(row!._id, { system: "journal" });
+    });
+    const pulled = await as.query(api.sync.pull, { since: 0 });
+    expect(pulled!.folders.find((folder) => folder.folderId === "journal")?.system).toBeNull();
+
+    expect(
+      await as.mutation(api.vault.setFolderLock, { folderId: "journal", locked: true, ts: stamp(2000) }),
+    ).toEqual({ status: "ok" });
+    const pushed = await as.mutation(api.sync.push, {
+      deviceId: "device-1",
+      ops: [
+        { kind: "folder", opId: "op-trash-journal", folderId: "journal", trash: { deletedAt: 3000, ts: stamp(3000) } },
+      ],
+    });
+    expect(JSON.stringify(pushed)).not.toContain("systemFolder");
+    expect((await folderRow(t, "journal"))?.deletedAt).toBe(3000);
+  });
+
+  test("one an app not yet updated makes is an ordinary folder", async () => {
+    const t = setup();
+    await seedUser(t, AUTH_A);
+    const as = t.withIdentity({ subject: AUTH_A });
+    await pushFolder(as, "journal", "日記", "journal");
+    expect((await folderRow(t, "journal"))?.system).toBeNull();
+  });
 
   test("an older change arriving late loses", async () => {
     const t = setup();

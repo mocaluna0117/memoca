@@ -8,6 +8,7 @@ import {
   SNAPSHOT_INLINE_LIMIT,
 } from "./lib/constants";
 import { uploadedSize } from "./lib/files";
+import { systemOf } from "./lib/folders";
 import { isNewer } from "./lib/hlc";
 import { sealedV, stampV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
@@ -642,7 +643,7 @@ export const setFolderLock = mutation({
     // Quick notes and shared text land in Inbox; locking it would make every
     // new note wait for the vault. Templates are copied into notes that may
     // not be locked, in plaintext.
-    if (args.locked && folder.system !== null) {
+    if (args.locked && systemOf(folder) !== null) {
       return { status: "rejected" as const, reason: "systemFolder" };
     }
     // Last writer wins, as for every other field group. An older change

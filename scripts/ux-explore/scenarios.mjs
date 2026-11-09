@@ -263,7 +263,7 @@ export const scenarios = [
     },
   },
   {
-    name: "templates-journal-history",
+    name: "templates-history",
     devices: ["desktop"],
     async run(page, run) {
       await page.getByRole("button", { name: "テンプレートから作成" }).first().click();
@@ -272,9 +272,6 @@ export const scenarios = [
       await page.getByRole("dialog").getByRole("button", { name: /議事録/ }).first().click().catch(() => page.getByRole("dialog").getByText(/議事録/).first().click());
       await sleep(page, 1500);
       await run.step("from-template", "議事録の本文が入る", () => outline(page), (o) => o.length > 1);
-      await page.locator("aside").getByRole("button", { name: "今日のメモ" }).click();
-      await sleep(page, 1200);
-      await run.step("journal", "日付のメモのナビが出る", () => page.getByRole("navigation", { name: "日付のメモ" }).isVisible(), (v) => v === true);
       await editor(page).click();
       await page.keyboard.type("一つ目の版");
       await sleep(page, 1500);

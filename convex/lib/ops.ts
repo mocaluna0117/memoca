@@ -17,6 +17,7 @@ export const folderOpV = v.object({
     v.object({
       parentId: v.union(v.string(), v.null()),
       sortKey: v.string(),
+      // "journal" from an app not yet updated: made an ordinary folder (lib/folders).
       system: v.union(v.literal("inbox"), v.literal("templates"), v.literal("journal"), v.null()),
     }),
   ),

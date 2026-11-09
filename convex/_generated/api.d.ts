@@ -16,6 +16,7 @@ import type * as http from "../http.js";
 import type * as lib_constants from "../lib/constants.js";
 import type * as lib_desktopSignIn from "../lib/desktopSignIn.js";
 import type * as lib_files from "../lib/files.js";
+import type * as lib_folders from "../lib/folders.js";
 import type * as lib_hlc from "../lib/hlc.js";
 import type * as lib_ops from "../lib/ops.js";
 import type * as lib_refs from "../lib/refs.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   "lib/constants": typeof lib_constants;
   "lib/desktopSignIn": typeof lib_desktopSignIn;
   "lib/files": typeof lib_files;
+  "lib/folders": typeof lib_folders;
   "lib/hlc": typeof lib_hlc;
   "lib/ops": typeof lib_ops;
   "lib/refs": typeof lib_refs;

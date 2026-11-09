@@ -167,6 +167,16 @@ export class MemocaDb extends Dexie {
     this.version(2).stores({
       bodies: "noteId, *links",
     });
+    // The days' notes' folder (今日のメモ, since taken out of the app): any
+    // other folder now, as the server has it too.
+    this.version(3).upgrade((tx) =>
+      tx
+        .table("folders")
+        .toCollection()
+        .modify((folder: { system: string | null }) => {
+          if (folder.system === "journal") folder.system = null;
+        }),
+    );
   }
 }
 

@@ -44,7 +44,6 @@ import { copiesLeftNotice, useLockActions } from "@/components/vault/use-lock-ac
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { VersionHistory } from "@/components/notes/version-history";
 import { NoteBacklinks } from "@/components/notes/note-backlinks";
-import { JournalNav } from "@/components/notes/journal-nav";
 import { useNotePlace } from "@/components/notes/use-note-place";
 import { enterFromTitle } from "@/components/editor/title-enter";
 import {
@@ -479,7 +478,6 @@ export function NotePane({
           </DropdownMenuContent>
         </DropdownMenu>
       </header>
-      <JournalNav noteId={noteId} />
 
       <div
         ref={body}

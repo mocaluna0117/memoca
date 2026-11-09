@@ -10,6 +10,7 @@ import {
   UPDATE_INLINE_LIMIT,
 } from "./lib/constants";
 import { uploadedSize } from "./lib/files";
+import { systemOf } from "./lib/folders";
 import { ZERO_STAMP, type Stamp, isFromTheFuture, isNewer } from "./lib/hlc";
 import { type Op, type OpResult, opV } from "./lib/ops";
 import { type SeqWriter, openSeq } from "./lib/seq";
@@ -163,7 +164,7 @@ export function publicFolder(f: Doc<"folders">) {
     icon: f.icon,
     sortKey: f.sortKey,
     locked: f.locked,
-    system: f.system,
+    system: systemOf(f),
     deletedAt: f.deletedAt,
     purged: f.purged,
     ts: f.ts,
@@ -379,7 +380,7 @@ async function applyFolderOp(
       icon: op.name?.icon ?? null,
       sortKey: op.place?.sortKey ?? op.create.sortKey,
       locked: false,
-      system: op.create.system,
+      system: systemOf(op.create),
       deletedAt: op.trash?.deletedAt ?? null,
       purged: false,
       ts: {
@@ -417,7 +418,7 @@ async function applyFolderOp(
     moved = true;
   }
   if (op.trash && isNewer(op.trash.ts, ts.trash)) {
-    if (existing.system !== null && op.trash.deletedAt !== null) {
+    if (systemOf(existing) !== null && op.trash.deletedAt !== null) {
       return reject(op.opId, "systemFolder");
     }
     patch.deletedAt = op.trash.deletedAt;

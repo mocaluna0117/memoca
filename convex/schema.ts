@@ -113,6 +113,8 @@ export default defineSchema({
      * one whose notes are the templates new notes are made from. Neither is
      * trashed or locked.
      */
+    // "journal": the days' notes' folder of 今日のメモ, since taken out of
+    // the app; kept for the rows made then, read as none (lib/folders).
     system: v.union(v.literal("inbox"), v.literal("templates"), v.literal("journal"), v.null()),
     deletedAt: v.union(v.number(), v.null()),
     purged: v.boolean(),

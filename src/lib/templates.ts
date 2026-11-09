@@ -121,16 +121,6 @@ export async function fillFromTemplate(noteId: string, templateId: string): Prom
   if (body.length > 0) await writeBody(noteId, (fragment) => fragment.insert(0, body));
 }
 
-/**
- * Fills a note just made with a template's body only, its title left as it
- * is: a day's note, named by its day (lib/journal). Nothing when none of
- * the template is on this device yet.
- */
-export async function fillBodyFromTemplate(noteId: string, templateId: string): Promise<void> {
-  const body = await bodyCopy(templateId);
-  if (body.length > 0) await writeBody(noteId, (fragment) => fragment.insert(0, body));
-}
-
 /** The blocks of a note's body (the blockContainers of its blockGroup), copied. */
 async function blocksCopy(noteId: string): Promise<Y.XmlElement[]> {
   return withStoredDoc(noteId, (doc) => {

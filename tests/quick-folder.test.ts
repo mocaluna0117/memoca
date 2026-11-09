@@ -31,7 +31,6 @@ const folders = [
   folder("locked", { locked: true }),
   folder("inside-locked", { parentId: "locked" }),
   folder("templates", { system: "templates" }),
-  folder("journal", { system: "journal" }),
 ];
 const byId = (id: string) => folders.find((each) => each.folderId === id);
 
@@ -41,8 +40,8 @@ describe("the folders a quick note may be saved into", () => {
     expect(quickFolderAllowed(byId("inbox"), folders)).toBe(true);
   });
 
-  test("not one in the trash or locked, nor inside one, nor the templates' or the days'", () => {
-    for (const id of ["trashed", "inside-trashed", "locked", "inside-locked", "templates", "journal"]) {
+  test("not one in the trash or locked, nor inside one, nor the templates'", () => {
+    for (const id of ["trashed", "inside-trashed", "locked", "inside-locked", "templates"]) {
       expect(quickFolderAllowed(byId(id), folders), id).toBe(false);
     }
     expect(quickFolderAllowed(undefined, folders)).toBe(false);

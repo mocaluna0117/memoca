@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, internalMutation, mutation } from "./_generated/server";
 import { MAX_REFS_PER_NOTE, TOMBSTONE_MS, UNREFERENCED_GRACE_MS } from "./lib/constants";
 import { fileTombstone } from "./lib/files";
+import { systemOf } from "./lib/folders";
 import { type Stamp, isNewer } from "./lib/hlc";
 import { stampV } from "./lib/ops";
 import { allNotesReported, dropNoteRefs, isInUse, settleUse } from "./lib/refs";
@@ -218,7 +219,7 @@ async function purgeTargets(
 
   if (!more) {
     for (const folder of pendingFolders) {
-      if (folder.system !== null) continue;
+      if (systemOf(folder) !== null) continue;
       await ctx.db.patch(folder._id, {
         purged: true,
         purgedAt: Date.now(),

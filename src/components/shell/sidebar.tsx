@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  CalendarDays,
   FileText,
   FilePlus,
   FolderPlus,
@@ -31,9 +30,7 @@ import { Separator } from "@/components/ui/separator";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUnreadNews } from "@/lib/hooks/use-news";
 import { useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
-import { JOURNAL_FOLDER_ID, createFolder, createNote } from "@/lib/sync/mutations";
-import { dayOf, journalDay, openToday } from "@/lib/journal";
-import { useWorkspace } from "@/lib/hooks/workspace";
+import { createFolder, createNote } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
 
@@ -85,9 +82,7 @@ export function Sidebar({
     [onSelectFolder, onNavigate],
   );
   const openQuickNote = useOpenQuickNote();
-  const { navigate } = useWorkspace();
   const [mode] = useSidebarMode();
-  const todayOpen = selectedNoteId !== null && journalDay(selectedNoteId) === dayOf(new Date());
 
   const unreadNews = useUnreadNews();
   const links = [
@@ -145,24 +140,6 @@ export function Sidebar({
         >
           <Zap className="size-4 text-primary" aria-hidden />
           {t.nav.quick}
-        </button>
-        {/* Today's note, made the first time it is asked for each day (lib/journal). */}
-        <button
-          type="button"
-          onClick={async () => {
-            const noteId = await openToday();
-            navigate({ folderId: JOURNAL_FOLDER_ID, pinned: false, noteId });
-            onNavigate?.();
-          }}
-          className={cn(
-            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-            todayOpen && pathname === "/app"
-              ? "bg-accent text-accent-foreground"
-              : "hover:bg-accent/60",
-          )}
-        >
-          <CalendarDays className="size-4 opacity-70" aria-hidden />
-          今日のメモ
         </button>
         <button
           type="button"

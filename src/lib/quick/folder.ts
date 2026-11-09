@@ -8,12 +8,12 @@ import type { Folder, FolderNode } from "@/lib/types";
 /**
  * Whether the quick note may save into a folder: one there, not in the
  * trash, not locked or inside a locked one (a quick note is written in the
- * clear, and the vault may be closed), and not the templates' or the days'
- * own folder, whose notes are of their own kinds.
+ * clear, and the vault may be closed), and not the templates' folder,
+ * whose notes are templates.
  */
 export function quickFolderAllowed(folder: Folder | undefined, folders: Folder[]): boolean {
   if (!folder || folder.purged) return false;
-  if (folder.system === "templates" || folder.system === "journal") return false;
+  if (folder.system === "templates") return false;
   if (trashedFolderIds(folders).has(folder.folderId)) return false;
   return !lockedFolderIds(folders).has(folder.folderId);
 }
@@ -34,7 +34,7 @@ export function quickFolderOf(
 
 /** As {@link quickFolderAllowed}, for a folder of the tree (one in the trash is not in it). */
 export function quickPickable(node: FolderNode): boolean {
-  return !node.inLockedTree && node.system !== "templates" && node.system !== "journal";
+  return !node.inLockedTree && node.system !== "templates";
 }
 
 const key = (userKey: string) => `${META.quickFolder}:${userKey}`;
