@@ -143,6 +143,28 @@ test.describe("the quick note's tabs, more than fit", () => {
   });
 });
 
+test.describe("the quick note's tab closed, named by a long run of letters", () => {
+  test("is asked about in a dialog that stays on the screen, its name wrapped and cut short", async ({ page }, testInfo) => {
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    // A first line with no place to break it: a URL, or letters typed at random.
+    const long = "@d'wgDwdG.dGwdgwpdwpdwpdgWdwgDwgd'wgdt.@dt.dg.dg.dg.dgw'dgw'dwg'd.gd'w@dwgDwgd'wgdt";
+    await writeQuick(quickField(page), `${long}\n二行目`);
+    await page.getByRole("button", { name: "新しいタブ" }).click();
+    await page.getByRole("button", { name: new RegExp(`のタブを閉じる$`) }).first().click();
+    const dialog = page.getByRole("alertdialog");
+    await expect(dialog).toBeVisible();
+    const viewport = page.viewportSize()!;
+    const box = (await dialog.boundingBox())!;
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(viewport.width);
+    // Nothing inside it wider than it.
+    const overflow = await dialog.evaluate((element) => element.scrollWidth - element.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(0);
+    await page.screenshot({ path: testInfo.outputPath("close-long-name.png") });
+  });
+});
+
 test.describe("the quick note's tabs, on a phone", () => {
   test.beforeEach(({}, testInfo) => {
     test.skip(testInfo.project.name !== "mobile", "the page of a phone");

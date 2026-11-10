@@ -125,7 +125,8 @@ export const ja = {
     closeTip: "閉じる（Esc）",
     closeTab: (name: string) => `${name} のタブを閉じる`,
     closeTitle: "保存してから閉じますか？",
-    closeBody: (name: string) => `「${name}」には、保存していない内容があります。`,
+    closeBody: (name: string) =>
+      `「${[...name].length > 40 ? `${[...name].slice(0, 40).join("")}…` : name}」には、保存していない内容があります。`,
     closeSave: "保存して閉じる",
     closeDiscard: "保存せずに閉じる",
     hint: (modKey: string, windowed: boolean) => `${modKey} + Enter で保存${windowed ? " ・ Esc で閉じる" : ""}`,
