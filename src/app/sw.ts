@@ -227,6 +227,64 @@ const serwist: Serwist = new Serwist({
 
 serwist.addEventListeners();
 
+/** A reminder as the server sends it (convex/push.ts). */
+type Pushed = { title?: string; body?: string; tag?: string; url?: string };
+
+// One of the Todo's reminders, sent by the server at its time: shown,
+// always (a push the user is not shown is not allowed). Where it opens is
+// one of this app's own pages only.
+self.addEventListener("push", (event) => {
+  let pushed: Pushed = {};
+  try {
+    pushed = (event.data?.json() ?? {}) as Pushed;
+  } catch {
+    pushed = { body: event.data?.text() };
+  }
+  const url = typeof pushed.url === "string" && pushed.url.startsWith("/") ? pushed.url : "/quick?todo=1";
+  event.waitUntil(
+    self.registration.showNotification(pushed.title || "memoca", {
+      body: pushed.body ?? "",
+      tag: pushed.tag,
+      icon: "/icons/icon-192.png",
+      data: { url },
+    }),
+  );
+});
+
+// A reminder touched: the Todo, in a window of the app already open if there
+// is one (brought forward), or a new one.
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const path = (event.notification.data as { url?: string } | null)?.url ?? "/quick?todo=1";
+  const url = new URL(path, self.location.origin).href;
+  event.waitUntil(
+    (async () => {
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      const open = windows.find((each) => new URL(each.url).origin === self.location.origin);
+      if (open) {
+        const moved = await open.navigate(url).catch(() => null);
+        await (moved ?? open).focus();
+        return;
+      }
+      await self.clients.openWindow(url);
+    })(),
+  );
+});
+
+// The browser renewed the subscription by itself: made again with the same
+// key. The server is given it as the app opens next (lib/notify/push.ts).
+self.addEventListener("pushsubscriptionchange", (event) => {
+  const change = event as ExtendableEvent & { oldSubscription?: PushSubscription | null };
+  const key = change.oldSubscription?.options.applicationServerKey;
+  if (!key) return;
+  change.waitUntil(
+    self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key }).then(
+      () => undefined,
+      () => undefined,
+    ),
+  );
+});
+
 // A page taken over asks which build this is: news to it only if not its own.
 self.addEventListener("message", (event) => {
   if ((event.data as { type?: string } | null)?.type === "BUILD") {

@@ -306,6 +306,21 @@ export const purgeAccount = internalMutation({
       return;
     }
 
+    // The Todo's reminders (none sent after), and where they were sent.
+    for (const row of await ctx.db
+      .query("reminders")
+      .withIndex("by_user_key", (q) => q.eq("userId", userId))
+      .take(1000)) {
+      if (row.scheduledId) await ctx.scheduler.cancel(row.scheduledId);
+      await ctx.db.delete(row._id);
+    }
+    for (const row of await ctx.db
+      .query("pushSubscriptions")
+      .withIndex("by_user", (q) => q.eq("userId", userId))
+      .take(100)) {
+      await ctx.db.delete(row._id);
+    }
+
     const vault = await ctx.db
       .query("vaults")
       .withIndex("by_user", (q) => q.eq("userId", userId))

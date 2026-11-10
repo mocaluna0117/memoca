@@ -203,10 +203,12 @@ export function QuickCapture() {
   const [shared] = useState(() =>
     joinShared({ title: params.get("title"), text: params.get("text"), url: params.get("url") }),
   );
+  // A reminder of the Todo's touched: the Todo shown (once, as it opens).
+  const [toTodo] = useState(() => params.get("todo") === "1");
   useEffect(() => {
-    if (!SHARED.some((name) => params.has(name))) return;
+    if (!SHARED.some((name) => params.has(name)) && !params.has("todo")) return;
     const address = new URL(window.location.href);
-    for (const name of SHARED) address.searchParams.delete(name);
+    for (const name of [...SHARED, "todo"]) address.searchParams.delete(name);
     window.history.replaceState(null, "", address.pathname + address.search);
     // Once: what the address held is read on the first render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -222,6 +224,7 @@ export function QuickCapture() {
         inbox={me?.inboxFolderId ?? null}
         allowance={usage}
         shared={shared}
+        toTodo={toTodo}
       />
     </QuickTips>
   );
@@ -236,11 +239,14 @@ function Tabbed({
   inbox,
   allowance,
   shared,
+  toTodo,
 }: {
   userKey: string;
   inbox: string | null;
   allowance: Allowance | null;
   shared: string;
+  /** Opened from a reminder of the Todo's: the Todo shown. */
+  toTodo: boolean;
 }) {
   const live = useQuickTabs(userKey);
   // What was shared, and the tab it goes into, until another tab is shown:
@@ -276,6 +282,7 @@ function Tabbed({
         setChosen(remembered);
         setFirstFolders(all);
       }
+      if (toTodo && !shared) await openTodoTab(userKey);
       if (shared) {
         // What the tab shown holds, read from its note (its first line, for
         // the tabs, may not be written yet: a draft made its note a moment ago).

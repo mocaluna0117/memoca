@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation } from "convex/react";
+import { useConvex, useMutation } from "convex/react";
 import { Loader2, LogOut, Smartphone } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
@@ -40,6 +40,7 @@ import { UnsentDialog } from "@/components/auth/unsent-warning";
 import { type Unsent, anyUnsent, unsentOnDevice } from "@/lib/sync/unsent";
 import { formatBytes } from "@/lib/bytes";
 import { resetLocalData } from "@/lib/db";
+import { turnOff } from "@/lib/notify/push";
 import { t } from "@/lib/i18n/ja";
 
 function Section({
@@ -78,7 +79,10 @@ export default function SettingsPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   // What only this device has, asked about before signing out loses it.
   const [unsent, setUnsent] = useState<Unsent | null>(null);
+  const convex = useConvex();
   const leave = async () => {
+    // The Todo's reminders no longer sent to this device (another account may sign in on it).
+    await turnOff(convex).catch(() => undefined);
     await resetLocalData();
     // With no network the server is not told, but nothing of the account is
     // left here, and it goes on as the desktop shell's sign-out does.
@@ -276,6 +280,8 @@ export default function SettingsPage() {
               disabled={deleting}
               onClick={async () => {
                 setDeleting(true);
+                // This browser's push subscription dropped too: not handed to whoever signs in next.
+                await turnOff(convex).catch(() => undefined);
                 await deleteAccount();
                 await resetLocalData();
                 await signOut();

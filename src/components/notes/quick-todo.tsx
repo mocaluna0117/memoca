@@ -30,6 +30,7 @@ import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { sortTodo, todoDue } from "@/components/editor/todo-due";
 import { TODO_TIDY, lineAt, makeDetail, makeItem, todoOnly } from "@/components/editor/todo-only";
 import { TodoDuePicker } from "@/components/notes/todo-due-picker";
+import { TodoNotify, useSendReminders } from "@/components/notes/todo-notify";
 import { Tip } from "@/components/notes/quick-tip";
 import { Button } from "@/components/ui/button";
 import { newBuildOut } from "@/lib/build";
@@ -42,6 +43,7 @@ import { useQuickMode } from "@/lib/quick/mode";
 import { SHELL_HIDDEN, closeQuickWindow } from "@/lib/quick/shell";
 import { useSyncEngine, useSyncStatusStore } from "@/components/providers/sync-provider";
 import { readyTodo } from "@/lib/quick/todo";
+import { NONE, NOTIFY_MAP, type Timing, defaultTimings, entriesOf, ownTimings, writeTimings } from "@/lib/notify/reminders";
 import { DUE_MAP, TODO_DUE } from "@/lib/quick/todo-due";
 import { joinTodoLists } from "@/lib/quick/todo-repair";
 import { acquireDoc, flushDoc, releaseDoc } from "@/lib/sync/docs";
@@ -127,6 +129,8 @@ export function TodoCapture({
   const noteId = loaded?.noteId ?? null;
   const status = useSyncStatusStore();
   const engine = useSyncEngine();
+  // Its reminders sent as it is changed here.
+  useSendReminders(loaded?.doc ?? null);
 
   useEffect(() => {
     // Let go of exactly once, as the note editor does (see NoteEditor).
@@ -261,6 +265,7 @@ export function TodoCapture({
           >
             {t.nav.quick}
           </h1>
+          {loaded ? <TodoNotify doc={loaded.doc} /> : null}
           {canShowApp ? (
             <Tip label={t.quick.openApp}>
               <Button
@@ -382,6 +387,7 @@ const TodoEditor = memo(function TodoEditor({
 }) {
   const { resolvedTheme } = useTheme();
   const dues = useMemo(() => doc.getMap<string>(DUE_MAP), [doc]);
+  const notify = useMemo(() => doc.getMap<string>(NOTIFY_MAP), [doc]);
   // The item whose due is being picked, and where its button is.
   const [picking, setPicking] = useState<{ id: string; at: DOMRect } | null>(null);
   const options = useMemo(
@@ -450,9 +456,12 @@ const TodoEditor = memo(function TodoEditor({
             block.type === "checkListItem" && (block.props as { checked?: boolean }).checked,
         );
         if (finished.length > 0) plain.removeBlocks(finished);
-        // Their dues go with them.
+        // Their dues go with them, and their reminders' times.
         doc.transact(() => {
-          for (const block of finished) dues.delete(block.id);
+          for (const block of finished) {
+            dues.delete(block.id);
+            notify.delete(block.id);
+          }
         }, TODO_DUE);
         toEnd();
       },
@@ -463,7 +472,7 @@ const TodoEditor = memo(function TodoEditor({
         if (tr) view.dispatch(tr);
       },
     }),
-    [plain, toEnd, doc, dues],
+    [plain, toEnd, doc, dues, notify],
   );
 
   useEffect(() => {
@@ -475,10 +484,24 @@ const TodoEditor = memo(function TodoEditor({
       if (!picking) return;
       doc.transact(() => {
         if (due) dues.set(picking.id, due);
-        else dues.delete(picking.id);
+        else {
+          dues.delete(picking.id);
+          // No due, nothing to be told of: the account's times again, if one is given later.
+          notify.delete(picking.id);
+        }
       }, TODO_DUE);
     },
-    [doc, dues, picking],
+    [doc, dues, notify, picking],
+  );
+  const pickedNotify = useCallback(
+    (own: Timing[] | typeof NONE | null) => {
+      if (!picking) return;
+      doc.transact(() => {
+        if (own === null) notify.delete(picking.id);
+        else notify.set(picking.id, own === NONE || own.length === 0 ? NONE : writeTimings(own));
+      }, TODO_DUE);
+    },
+    [doc, notify, picking],
   );
   const pickerClosed = useCallback(() => {
     setPicking(null);
@@ -564,6 +587,9 @@ const TodoEditor = memo(function TodoEditor({
           at={picking.at}
           onPick={pickedDue}
           onClose={pickerClosed}
+          notify={ownTimings(entriesOf(notify), picking.id)}
+          defaults={defaultTimings(entriesOf(notify))}
+          onNotify={pickedNotify}
         />
       ) : null}
     </div>

@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
+import { NEEDS_TIME, NONE, TIMINGS, TIMING_CHIP, type Timing } from "@/lib/notify/reminders";
 import { dayOf, dueOf, formatDue, readDue } from "@/lib/quick/todo-due";
 import { cn } from "@/lib/utils";
 
@@ -49,12 +50,21 @@ export function TodoDuePicker({
   at,
   onPick,
   onClose,
+  notify,
+  defaults,
+  onNotify,
 }: {
   due: string | null;
   at: DOMRect;
   /** The due picked: null for none. */
   onPick: (due: string | null) => void;
   onClose: () => void;
+  /** The item's own reminders: none at all, its own times, or (null) the account's. */
+  notify: Timing[] | typeof NONE | null;
+  /** The account's times, as the item has them unless it has its own. */
+  defaults: Timing[];
+  /** Its own chosen: null for the account's again. */
+  onNotify: (own: Timing[] | typeof NONE | null) => void;
 }) {
   const [now] = useState(() => new Date());
   const today = daysAfter(now, 0);
@@ -223,6 +233,10 @@ export function TodoDuePicker({
           </div>
         </div>
 
+        {current ? (
+          <NotifyRow own={notify} defaults={defaults} timed={time !== null} chip={chip} onChange={onNotify} />
+        ) : null}
+
         <div className="flex items-center justify-between border-t pt-2">
           {current ? (
             <Button
@@ -245,5 +259,87 @@ export function TodoDuePicker({
         </div>
       </PopoverContent>
     </Popover>
+  );
+}
+
+/**
+ * When the item is told of its due: as every item is (the account's times,
+ * chosen at the Todo's bell), never, or at times of its own. What it shows
+ * is its own, as the picker's due is.
+ */
+function NotifyRow({
+  own: first,
+  defaults,
+  timed,
+  chip,
+  onChange,
+}: {
+  own: Timing[] | typeof NONE | null;
+  defaults: Timing[];
+  timed: boolean;
+  chip: string;
+  onChange: (own: Timing[] | typeof NONE | null) => void;
+}) {
+  const [own, setOwn] = useState(first);
+  // Its own times shown, even with every one of them taken off (kept as none).
+  const [choosing, setChoosing] = useState(Array.isArray(first));
+  const mode = choosing ? "own" : own === NONE ? "none" : "default";
+  const chosen = Array.isArray(own) ? own : [];
+  const set = (next: Timing[] | typeof NONE | null) => {
+    setOwn(next);
+    onChange(next);
+  };
+  const modes = [
+    { key: "default", label: "いつもどおり", pick: () => (setChoosing(false), set(null)) },
+    { key: "none", label: "通知しない", pick: () => (setChoosing(false), set(NONE)) },
+    {
+      key: "own",
+      label: "時刻を選ぶ",
+      pick: () => {
+        setChoosing(true);
+        // From the account's, as the item had them.
+        if (!Array.isArray(own)) set(defaults.filter((each) => timed || !NEEDS_TIME.has(each)));
+      },
+    },
+  ] as const;
+  const toggle = (timing: Timing) => {
+    const next = chosen.includes(timing) ? chosen.filter((each) => each !== timing) : [...chosen, timing];
+    set(TIMINGS.filter((each) => next.includes(each)));
+  };
+  return (
+    <div className="flex flex-col gap-1.5 border-t pt-2" role="group" aria-label="通知">
+      <p className="text-xs text-muted-foreground">通知</p>
+      <div className="flex gap-1.5">
+        {modes.map((each) => (
+          <Button
+            key={each.key}
+            variant="outline"
+            size="sm"
+            className={chip}
+            aria-pressed={mode === each.key}
+            onClick={each.pick}
+          >
+            {each.label}
+          </Button>
+        ))}
+      </div>
+      {choosing ? (
+        <div className="grid grid-cols-2 gap-1.5">
+          {TIMINGS.map((timing) => (
+            <Button
+              key={timing}
+              variant="outline"
+              size="sm"
+              className={chip}
+              aria-pressed={chosen.includes(timing)}
+              disabled={NEEDS_TIME.has(timing) && !timed}
+              onClick={() => toggle(timing)}
+            >
+              {TIMING_CHIP[timing]}
+            </Button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }

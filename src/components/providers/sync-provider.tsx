@@ -21,6 +21,7 @@ import { vault } from "@/lib/crypto/vault";
 import { db, getMeta, setMeta } from "@/lib/db";
 import type { Allowance } from "@/lib/media/attachments";
 import { META, deviceId } from "@/lib/db/meta";
+import { tellServerAgain } from "@/lib/notify/push";
 import { flushAll } from "@/lib/sync/docs";
 import { SyncEngine, type SyncStatus } from "@/lib/sync/engine";
 import { type StatusStore, createStatusStore } from "@/lib/sync/status-store";
@@ -257,6 +258,13 @@ export function SyncProvider({
   useEffect(() => {
     if (remote && (owner === null || owner === remote.userKey)) void setMeta(META.profile, remote);
   }, [remote, owner]);
+
+  // This device's push subscription, if it asked for the Todo's reminders,
+  // given to the server again once the account is known there (lib/notify/push).
+  const signedInThere = remote != null;
+  useEffect(() => {
+    if (signedInThere) void tellServerAgain(client).catch(() => undefined);
+  }, [signedInThere, client]);
 
   const me = remote ?? cached ?? null;
   /** The device's data is this account's (or there is none): it may be shown. */

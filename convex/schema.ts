@@ -351,4 +351,35 @@ export default defineSchema({
     /** When the person last confirmed they kept the current recovery key. */
     recoveryCheckedAt: v.optional(v.number()),
   }).index("by_user", ["userId"]),
+
+  /**
+   * Where each device that asked for the Todo's reminders is sent them: its
+   * browser's push subscription (Web Push), one row a device. Taken out as
+   * the device signs out, or as its push service says it is gone.
+   */
+  pushSubscriptions: defineTable({
+    userId: v.id("users"),
+    endpoint: v.string(),
+    p256dh: v.string(),
+    auth: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_user", ["userId"])
+    .index("by_endpoint", ["endpoint"]),
+
+  /**
+   * The Todo's reminders still to come, as a device worked them out from the
+   * Todo's dues and the times chosen (src/lib/notify/reminders.ts): each
+   * sent, at its time, to every device of the account (reminders.fire), and
+   * gone once it is. Replaced whole by the device that changes the Todo.
+   */
+  reminders: defineTable({
+    userId: v.id("users"),
+    /** The item's block id and which of the times it is: the same on every device. */
+    key: v.string(),
+    at: v.number(),
+    title: v.string(),
+    body: v.string(),
+    scheduledId: v.optional(v.id("_scheduled_functions")),
+  }).index("by_user_key", ["userId", "key"]),
 });
