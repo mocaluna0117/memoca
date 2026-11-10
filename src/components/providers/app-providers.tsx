@@ -2,11 +2,13 @@
 
 import { ConvexReactClient } from "convex/react";
 import { ThemeProvider } from "next-themes";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect } from "react";
 import { type AuthClientForConvex, ConvexWithBetterAuth } from "@/components/providers/convex-auth";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { authClient } from "@/lib/auth/client";
+import { traceIme } from "@/lib/debug/ime-trace";
+import { watchStuckPointer } from "@/lib/ui/unstick-pointer";
 
 const convex = new ConvexReactClient(process.env.NEXT_PUBLIC_CONVEX_URL!, {
   // The app reads from IndexedDB, so a brief disconnect is invisible; keep the
@@ -45,10 +47,21 @@ export function AppProviders({
         nonce={nonce}
       >
         <TooltipProvider delayDuration={300}>
+          <ClicksKept />
           {children}
           <Toaster position="top-center" richColors closeButton />
         </TooltipProvider>
       </ThemeProvider>
     </ConvexWithBetterAuth>
   );
+}
+
+/**
+ * The page's clicks given back where a menu or a dialog, gone, left them
+ * taken (lib/ui/unstick-pointer): on every page, Memoca's own and the
+ * quick note's. Said in the input record, while it is kept.
+ */
+function ClicksKept() {
+  useEffect(() => watchStuckPointer(() => traceIme({ type: "clicks-given-back" })), []);
+  return null;
 }

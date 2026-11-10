@@ -4,6 +4,7 @@ import type { Node } from "prosemirror-model";
 import type { Transaction } from "prosemirror-state";
 import { isApple } from "@/lib/platform";
 import { SHELL_HIDDEN, inShell } from "@/lib/quick/shell";
+import { layerOpen } from "@/lib/ui/unstick-pointer";
 
 /**
  * A record, kept in memory, of the keys, input-method compositions and input
@@ -15,6 +16,14 @@ import { SHELL_HIDDEN, inShell } from "@/lib/quick/shell";
  * and whether one took it, each transaction, and what ime-commit decided.
  * Only counts are kept of what is written: how many lines, how long the line
  * with the caret is, where in it the caret is.
+ *
+ * And clicks, in Memoca's own window as in the quick note's: now and then,
+ * brought out by ⌘⇧M, nothing on the page could be clicked (an image no more
+ * than a button). Of each press and click, where it was, what was there to
+ * take it (elementFromPoint) and what did (its target), whether the page's
+ * clicks were taken (body's pointer-events) and how many layers were open to
+ * take them, and whether the window was seen and had the focus; and of the
+ * page itself, each time it stood still for half a second or more.
  *
  * In the quick note's window too, whose field is a plain one: there, now and
  * then, each character typed took the place of the one after the caret, and
@@ -34,6 +43,10 @@ type Entry = Record<string, string | number | boolean | null>;
 
 /** Enough for a few minutes of typing: what went wrong is copied soon after. */
 const KEEP = 3000;
+
+/** How often the page's beat is looked for, and how late one is to be said: it stood still. */
+const BEAT_MS = 250;
+const STILL_MS = 500;
 
 /** What, set to 1 in localStorage, keeps the record from the page's load. */
 const FROM_LOAD = "memoca:ime-trace";
@@ -190,7 +203,23 @@ export function startImeTrace({
       target: short(event.target as globalThis.Node | null),
       inEditor: Boolean(document.activeElement?.closest(".ProseMirror")),
     };
-    if (event instanceof KeyboardEvent) {
+    if (event instanceof MouseEvent) {
+      // Where, what was there to take it, and whether anything could.
+      const x = Math.round(event.clientX);
+      const y = Math.round(event.clientY);
+      Object.assign(entry, {
+        x,
+        y,
+        button: event.button,
+        under: short(document.elementFromPoint(x, y)),
+        bodyPointer: document.body.style.pointerEvents || null,
+        layerOpen: layerOpen(),
+        visible: document.visibilityState,
+        focused: document.hasFocus(),
+      });
+    } else if (event.type === "visibilitychange") {
+      Object.assign(entry, { visible: document.visibilityState, focused: document.hasFocus() });
+    } else if (event instanceof KeyboardEvent) {
       Object.assign(entry, keyOf(event), { composing: event.isComposing });
     } else if (event instanceof InputEvent) {
       Object.assign(entry, {
@@ -336,9 +365,26 @@ export function startImeTrace({
     "focusin",
     "focusout",
     "selectionchange",
+    "pointerdown",
+    "pointerup",
+    "click",
+    "dblclick",
+    "contextmenu",
+    "visibilitychange",
   ];
   // The window's own: put away and brought out by the desktop shell.
-  const windowTypes = ["focus", "blur", SHELL_HIDDEN];
+  const windowTypes = ["focus", "blur", "pageshow", "pagehide", SHELL_HIDDEN];
+  // The page standing still: a beat every quarter second, one late said.
+  let beat: ReturnType<typeof setInterval> | null = null;
+  let lastBeat = 0;
+  const onBeat = () => {
+    const now = performance.now();
+    const late = now - lastBeat - BEAT_MS;
+    if (late >= STILL_MS) {
+      push({ type: "still", ms: Math.round(late), visible: document.visibilityState, focused: document.hasFocus() });
+    }
+    lastBeat = now;
+  };
   const onWindow = (event: Event) => {
     if (event.target === window) push({ type: `window:${event.type}`, ...where() });
   };
@@ -353,6 +399,8 @@ export function startImeTrace({
     for (const type of types) document.addEventListener(type, record, true);
     for (const type of windowTypes) window.addEventListener(type, onWindow, true);
     watching = setInterval(watch, 1000);
+    lastBeat = performance.now();
+    beat = setInterval(onBeat, BEAT_MS);
     watch();
   };
   /** Stops it: nothing listened for, and the editor left as it was. */
@@ -362,6 +410,8 @@ export function startImeTrace({
     sink = null;
     if (watching !== null) clearInterval(watching);
     watching = null;
+    if (beat !== null) clearInterval(beat);
+    beat = null;
     mutations.disconnect();
     watched?.off("transaction", onTransaction);
     unwrap();

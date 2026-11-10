@@ -25,7 +25,15 @@ export function useShellRefresh() {
       checking = true;
       try {
         await flushAll();
-        if ((await newBuildOut()) && hidden && !here.document.hasFocus()) {
+        // Not under someone looking at it: brought out by the shell, a window
+        // the system did not make the active one has no focus, and has not
+        // been told it is out (no focus event), but is seen.
+        if (
+          (await newBuildOut()) &&
+          hidden &&
+          !here.document.hasFocus() &&
+          here.document.visibilityState === "hidden"
+        ) {
           here.location.reload();
         }
       } finally {
@@ -39,12 +47,17 @@ export function useShellRefresh() {
     const onShown = () => {
       hidden = false;
     };
+    const onVisible = () => {
+      if (here.document.visibilityState === "visible") onShown();
+    };
     here.addEventListener(SHELL_HIDDEN, onHidden);
     here.addEventListener("focus", onShown);
+    here.document.addEventListener("visibilitychange", onVisible);
     const timer = here.setInterval(() => void check(), HIDDEN_CHECK_MS);
     return () => {
       here.removeEventListener(SHELL_HIDDEN, onHidden);
       here.removeEventListener("focus", onShown);
+      here.document.removeEventListener("visibilitychange", onVisible);
       here.clearInterval(timer);
     };
   }, []);
