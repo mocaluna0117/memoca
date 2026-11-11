@@ -1,2 +1,5 @@
 shots/
 findings-*.json
+notations-*.json
+memory-*.json
+tmp-*.mjs

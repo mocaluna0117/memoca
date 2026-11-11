@@ -34,3 +34,24 @@ E2E が覆っていない流れを、手元の Convex と手元のビルドに�
   （調べ終わったら、ふつうの `pnpm build` に戻してから E2E と前後比較をする）。
 - 打つ文字は `keyboard.type`（日本語は文字を挿入するだけで keydown が出ない）。BlockNote の「⋮⋮」は keydown で隠れるので、keydown が出ない入力でも隠れるようにしてある（`side-menu-input.ts`）。
 
+
+## 記法を実際に打つ・メモリを測る（2026-11-11）
+
+- `UX_BASE=http://localhost:3100 node scripts/ux-explore/notations.mjs [--only=note,quick,todo] [--case=id,...]`
+  - ふつうのメモ（ケースごとに新しいメモ）、即席メモ（ケースごとに新しいタブ）、Todo（末尾に項目を足しながら）に、記法を 1 つずつ打ちます。
+  - ブロックの種類・文字・深さ・書式を記録します。
+  - 日本語入力は、CDP の `Input.imeSetComposition` と `Input.insertText` で、変換して確定する流れを再現します。
+  - 期待と違ったものは `shots/notation-*.png` に残し、結果は `notations-<時刻>.json` に出します。
+- `UX_BASE=http://localhost:3100 node scripts/ux-explore/memory.mjs [--cycles=60] [--only=notes,quick,palette,pressure]`
+  - 次の 3 つを繰り返し、10 回ごとに数えます。数える前に、使っていないメモリを片付けさせます。
+    - メモの切り替え
+    - 即席メモ（Todo とタブの切り替え、ベル、入力）
+    - コマンドパレット
+  - 数えるのは、JS のメモリ・画面の要素の数・見張り（イベントリスナー）の数・文書の数です。慣らし（10 回）のあとの 1 回あたりの増え方を出します。
+  - そのあと、300 行のメモに 200 文字打ちます（CPU 4 倍遅く）。次の 3 つの状態で測ります。
+    - ふつう
+    - 「メモリが足りない」知らせを 0.5 秒ごとに送り続ける
+    - JS のメモリを 160MB に絞る
+  - 結果は `memory-<時刻>.json` に出します。
+- 見張りが増えたときに、どこで付けられたかを探すには、CDP の `Runtime.queryObjects` で EventTarget の種類ごとに集め、`DOMDebugger.getEventListeners` の `scriptId` と行・列から、元のコードを引きます。
+- 試しのスクリプトは `tmp-*.mjs` という名前にすると、git に入りません。
