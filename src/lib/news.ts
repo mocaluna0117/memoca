@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-11-12-quick-copy-and-windows-resize",
+    date: "2026-11-12",
+    title: "即席メモのコピーと、Windows 版の窓の大きさ",
+    details: [
+      "即席メモや Todo からコピーしてほかのアプリに貼ると、行のあいだに空行が入っていました。ふつうのメモと同じように、書いたとおりの行で貼れるようにしました。",
+      "Windows 版で、即席メモの窓の端をドラッグして大きさを変えようとすると、窓が閉じてしまっていました。閉じずに大きさを変えられるようにしました（アプリが 0.4.12 に更新されると直ります）。",
+    ],
+  },
+  {
     id: "2026-11-11-sync-sign-in-and-images",
     date: "2026-11-11",
     title: "ほかの端末に届くのが遅れることがあったのを直しました",

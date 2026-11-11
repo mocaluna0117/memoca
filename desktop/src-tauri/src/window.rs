@@ -220,8 +220,14 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
 
     let handle = app.clone();
     window.on_window_event(move |event| match event {
-        // Put away when another app is clicked, unless pinned.
-        WindowEvent::Focused(false) if !handle.state::<Store>().get().pinned => hide(&handle),
+        // Put away when another app is clicked, unless pinned. On Windows,
+        // not as its edge is dragged to resize it (see after_focus_lost).
+        WindowEvent::Focused(false) if !handle.state::<Store>().get().pinned => {
+            #[cfg(target_os = "windows")]
+            after_focus_lost(&handle);
+            #[cfg(not(target_os = "windows"))]
+            hide(&handle);
+        }
         // ⌘W, say: put away, never closed, so it stays loaded.
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
@@ -230,6 +236,115 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         _ => {}
     });
     Ok(())
+}
+
+/// What to do, the window having lost the keyboard, from what the system
+/// says now: whether the window is still the one in front, whether a mouse
+/// button is held, and whether the pointer is at the window's edge.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub enum FocusLost {
+    /// Another app has the keyboard: put away.
+    Hide,
+    /// A drag under way (its edge, to resize it): looked at again when it is let go.
+    Wait,
+    /// Still the window in front (its own frame took the keyboard, as a drag
+    /// of its edge does on Windows): the keyboard back to the page.
+    Refocus,
+}
+
+/// See [`FocusLost`].
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
+pub fn focus_lost(in_front: bool, held: bool, at_edge: bool) -> FocusLost {
+    match (in_front, held, at_edge) {
+        (_, true, true) | (true, true, false) => FocusLost::Wait,
+        (true, false, _) => FocusLost::Refocus,
+        _ => FocusLost::Hide,
+    }
+}
+
+/// How far out from the window the pointer may be and still be at its edge:
+/// the frameless window's resize border lies in its shadow, outside it.
+#[cfg(target_os = "windows")]
+const EDGE_PX: i32 = 16;
+
+/// On Windows, a drag of the frameless window's edge, to resize it, takes the
+/// keyboard from the page into the frame: told as the window losing it,
+/// which put the window away at once and the drag with it. Looked at a
+/// moment after, then, and again until the drag is let go: put away only if
+/// another app has the keyboard (see [`focus_lost`]).
+#[cfg(target_os = "windows")]
+fn after_focus_lost(app: &AppHandle) {
+    use windows_sys::Win32::Foundation::POINT;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetForegroundWindow};
+
+    // One look at a time: told again during the drag, the look under way goes on.
+    static LOOKING: AtomicBool = AtomicBool::new(false);
+    if LOOKING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let looking = app.clone();
+    let spawned = std::thread::Builder::new()
+        .name("focus-lost".into())
+        .spawn(move || {
+            let app = looking;
+            struct Done;
+            impl Drop for Done {
+                fn drop(&mut self) {
+                    LOOKING.store(false, Ordering::SeqCst);
+                }
+            }
+            let _done = Done;
+            // A moment for the system to settle which window has the keyboard.
+            std::thread::sleep(Duration::from_millis(120));
+            loop {
+                let Some(window) = window(&app) else { return };
+                if !window.is_visible().unwrap_or(false) {
+                    return;
+                }
+                let ours = window.hwnd().ok().map(|hwnd| hwnd.0 as isize);
+                // SAFETY: plain reads of the system's state, no pointers kept.
+                let in_front = unsafe { GetForegroundWindow() } as isize;
+                let held = unsafe {
+                    // The physical buttons, as GetAsyncKeyState reads them: either, for buttons swapped.
+                    (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0
+                        || (GetAsyncKeyState(VK_RBUTTON as i32) as u16 & 0x8000) != 0
+                };
+                let mut point = POINT { x: 0, y: 0 };
+                let pointer = unsafe { GetCursorPos(&mut point) } != 0;
+                let at_edge = pointer
+                    && match (window.outer_position(), window.outer_size()) {
+                        (Ok(at), Ok(size)) => {
+                            point.x >= at.x - EDGE_PX
+                                && point.y >= at.y - EDGE_PX
+                                && point.x <= at.x + size.width as i32 + EDGE_PX
+                                && point.y <= at.y + size.height as i32 + EDGE_PX
+                        }
+                        _ => false,
+                    };
+                match focus_lost(ours == Some(in_front), held, at_edge) {
+                    FocusLost::Wait => std::thread::sleep(Duration::from_millis(50)),
+                    FocusLost::Refocus => {
+                        let _ = app.run_on_main_thread(move || {
+                            let _ = window.set_focus();
+                        });
+                        return;
+                    }
+                    FocusLost::Hide => {
+                        let handle = app.clone();
+                        let _ = app.run_on_main_thread(move || hide(&handle));
+                        return;
+                    }
+                }
+            }
+        });
+    if spawned.is_err() {
+        LOOKING.store(false, Ordering::SeqCst);
+        hide(app);
+    }
 }
 
 /// Keeps the window out of Alt-Tab, as it is out of the taskbar: a tool
@@ -473,6 +588,30 @@ pub fn reload(app: &AppHandle) {
 pub fn go(app: &AppHandle, url: Url) {
     if let Some(window) = window(app) {
         let _ = window.navigate(url);
+    }
+}
+
+#[cfg(test)]
+mod focus_tests {
+    use super::{focus_lost, FocusLost};
+
+    #[test]
+    fn another_app_clicked_puts_the_window_away() {
+        assert_eq!(focus_lost(false, false, false), FocusLost::Hide);
+        // Clicked elsewhere, the button not let go yet, away from the window.
+        assert_eq!(focus_lost(false, true, false), FocusLost::Hide);
+        // Let go at the edge, another app in front: away too.
+        assert_eq!(focus_lost(false, false, true), FocusLost::Hide);
+    }
+
+    #[test]
+    fn its_edge_dragged_to_resize_it_keeps_it_out() {
+        // The frame has the keyboard, the window still in front: until let go, then the page has it back.
+        assert_eq!(focus_lost(true, true, true), FocusLost::Wait);
+        assert_eq!(focus_lost(true, true, false), FocusLost::Wait);
+        assert_eq!(focus_lost(true, false, true), FocusLost::Refocus);
+        // Not in front, but the button held at its edge (the drag under way): looked at again when let go.
+        assert_eq!(focus_lost(false, true, true), FocusLost::Wait);
     }
 }
 

@@ -42,7 +42,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = ["std", 
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter", "UNError"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_Shell"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_System_Ole", "Win32_UI_Shell", "Win32_UI_Input_KeyboardAndMouse"] }
 # Windows Hello (device_unlock.rs): a key of its own, the secret its signature.
 windows = { version = "0.61", features = ["Security_Credentials", "Security_Cryptography", "Storage_Streams", "Foundation"] }
 # The Todo's reminders (reminders.rs), as Windows' own notifications.
