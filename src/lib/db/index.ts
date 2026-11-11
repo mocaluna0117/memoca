@@ -86,6 +86,12 @@ export type PendingUpload = {
   storageId?: string;
   uploadedAt?: number;
   commitOpId?: string;
+  /**
+   * Tries that could not get it up (the network too slow for it, say), and
+   * when it is tried again: longer each time. Not counted offline.
+   */
+  failures?: number;
+  retryAt?: number;
   mime: string;
   name: string;
   width: number | null;

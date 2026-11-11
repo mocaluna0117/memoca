@@ -336,11 +336,41 @@ export async function discardStaged(attachmentId: string): Promise<void> {
  * passing a check and together exceeding the allowance; the server replaces the
  * reservation with the real measured size at commit time.
  */
+/** How long a file's upload may take, by its size: as on a slow network (about 20 KB a second), and a while more. */
+export function uploadTimeoutMs(bytes: number): number {
+  return Math.min(30_000 + (bytes / 20_000) * 1000, 10 * 60_000);
+}
+
+/** How long a file waits after a try that could not get it up: twice as long each time, from 10 seconds to 5 minutes. */
+const uploadWaitMs = (failures: number) => Math.min(10_000 * 2 ** (failures - 1), 5 * 60_000);
+
+/**
+ * A try that could not get a file up: tried again after a wait, longer
+ * each time. Offline, or no one to the server (its sign-in lapsed), no
+ * wait is added: it goes as soon as either is back.
+ */
+async function couldNotSend(item: PendingUpload, error: unknown): Promise<void> {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return;
+  const message = error instanceof Error ? error.message : String(error);
+  if (message.includes("UNAUTHENTICATED")) return;
+  const failures = (item.failures ?? 0) + 1;
+  await updatePending(item.attachmentId, { failures, retryAt: Date.now() + uploadWaitMs(failures) });
+}
+
+/** Files waiting to be tried again after a try that could not get them up: how many. */
+export async function uploadsWaiting(): Promise<number> {
+  return db()
+    .pendingUploads.filter((item) => !item.storageId && (item.failures ?? 0) > 0)
+    .count();
+}
+
 export async function flushUploads(client: ConvexReactClient): Promise<void> {
   const database = db();
   const pending = await database.pendingUploads.toArray();
 
   for (const item of pending) {
+    // Waiting after a try that could not get it up: the others go meanwhile.
+    if (item.retryAt && item.retryAt > Date.now() && !item.storageId) continue;
     try {
       if (item.storageId && item.commitOpId) {
         // Up already: waits for the server to take its commit. The commit
@@ -440,11 +470,21 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
         throw new QuotaError(reservation.reason ?? "rejected");
       }
 
-      const response = await fetch(reservation.uploadUrl, {
-        method: "POST",
-        headers: { "Content-Type": body.type || "application/octet-stream" },
-        body,
-      });
+      // Given up after a while: one that never answered (a network too
+      // slow for it) held up every file after it, and the pass with them.
+      const slow = new AbortController();
+      const timer = setTimeout(() => slow.abort(), uploadTimeoutMs(body.size));
+      let response: Response;
+      try {
+        response = await fetch(reservation.uploadUrl, {
+          method: "POST",
+          headers: { "Content-Type": body.type || "application/octet-stream" },
+          body,
+          signal: slow.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+      }
       // Not taken (storage refused it, say): tried again with the next
       // pass. Taken as if it were, a commit with no file behind it would be
       // queued, which the server throws out, and the file with it.
@@ -478,12 +518,16 @@ export async function flushUploads(client: ConvexReactClient): Promise<void> {
           storageId,
           uploadedAt: Date.now(),
           commitOpId,
+          failures: undefined,
+          retryAt: undefined,
         });
       });
     } catch (error) {
       if (error instanceof QuotaError) throw error;
-      // Anything else (offline, transient failure) is retried next drain.
-      return;
+      // Anything else (offline, a network too slow, a server busy): this one
+      // tried again after a wait, the others now.
+      await couldNotSend(item, error).catch(() => undefined);
+      continue;
     }
   }
 

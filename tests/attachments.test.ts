@@ -17,6 +17,7 @@ import {
   resolveAttachment,
   stageUpload,
   updatePending,
+  uploadsWaiting,
   uploadAgain,
 } from "@/lib/media/attachments";
 import type { Note } from "@/lib/types";
@@ -676,5 +677,102 @@ describe("a file WebKit has lost on the device", () => {
     expect(written.blob).toBeInstanceOf(Blob);
     expect(written.blob).not.toBe(blob);
     expect(await written.blob.text()).toBe("画像");
+  });
+});
+
+describe("flushUploads on a network too slow for a file", () => {
+  const stage = (noteId: string, label: string) =>
+    stageUpload({
+      noteId,
+      file: new File([], `${label}.webp`, { type: "image/webp" }),
+      prepared: { blob: image(10, label), mime: "image/webp", width: 1, height: 1 },
+    });
+
+  test("a file that could not go up waits before it is tried again, longer each time, and the next goes up meanwhile", async () => {
+    await putNote("n1", false);
+    const first = idFromRef(await stage("n1", "first"))!;
+    const second = idFromRef(await stage("n1", "second"))!;
+    let reserved = 0;
+    const server = fakeConvex({
+      "attachments:reserve": (args) => ({ status: "ok", uploadUrl: `https://upload.test/${args.attachmentId}` }),
+    });
+    const fetchSpy = vi.fn(async (url: string) => {
+      reserved += 1;
+      return url.endsWith(first)
+        ? new Response("busy", { status: 503 })
+        : new Response(JSON.stringify({ storageId: "s2" }), { status: 200 });
+    });
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      await flushUploads(server.client);
+      // The second went up, though the first did not.
+      expect((await db().pendingUploads.get(second))?.storageId).toBe("s2");
+      const waiting = (await db().pendingUploads.get(first))!;
+      expect(waiting.storageId).toBeUndefined();
+      expect(waiting.failures).toBe(1);
+      expect(waiting.retryAt!).toBeGreaterThan(Date.now());
+      expect(await uploadsWaiting()).toBe(1);
+
+      // Not again until its wait is over.
+      const tried = reserved;
+      await flushUploads(server.client);
+      expect(reserved).toBe(tried);
+
+      // Its wait over, tried again: failing, a longer wait.
+      const firstWait = waiting.retryAt! - Date.now();
+      await updatePending(first, { retryAt: Date.now() - 1 });
+      await flushUploads(server.client);
+      const again = (await db().pendingUploads.get(first))!;
+      expect(again.failures).toBe(2);
+      expect(again.retryAt! - Date.now()).toBeGreaterThan(firstWait);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  test("an upload that does not answer is given up after a while", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    await putNote("n1", false);
+    const ref = idFromRef(await stage("n1", "slow"))!;
+    const server = fakeConvex({
+      "attachments:reserve": () => ({ status: "ok", uploadUrl: "https://upload.test/slow" }),
+    });
+    const fetchSpy = vi.fn(
+      (_url: string, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
+        }),
+    );
+    vi.stubGlobal("fetch", fetchSpy);
+    try {
+      const flushing = flushUploads(server.client);
+      // Under way, and not answering: given up once its time is over.
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalled());
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+      await flushing;
+      expect((await db().pendingUploads.get(ref))?.failures).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+
+  test("offline, no wait is added: it goes as soon as the network is back", async () => {
+    await putNote("n1", false);
+    const ref = idFromRef(await stage("n1", "offline"))!;
+    const server = fakeConvex({
+      "attachments:reserve": () => {
+        throw new Error("offline");
+      },
+    });
+    const online = vi.spyOn(navigator, "onLine", "get").mockReturnValue(false);
+    try {
+      await flushUploads(server.client);
+    } finally {
+      online.mockRestore();
+    }
+    const row = (await db().pendingUploads.get(ref))!;
+    expect(row.failures).toBeUndefined();
+    expect(row.retryAt).toBeUndefined();
   });
 });
