@@ -139,6 +139,7 @@ export function Sidebar({
           type="button"
           onClick={openQuickNote}
           className="hidden w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent/60 md:flex"
+          data-guide="open-quick"
         >
           <Zap className="size-4 text-primary" aria-hidden />
           {t.nav.quick}

@@ -244,6 +244,7 @@ export function MobileHeader({
   const unreadNews = useUnreadNews();
   return (
     <header
+      data-mobile-header
       className={cn(
         "sticky top-0 z-30 flex items-center gap-2 border-b bg-background/95 px-2 py-2 backdrop-blur supports-[backdrop-filter]:bg-background/80 md:hidden",
         className,

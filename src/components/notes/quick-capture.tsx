@@ -101,6 +101,7 @@ import { useQuickMode } from "@/lib/quick/mode";
 import { TODO_TAB_ID, isQuickTab } from "@/lib/quick/todo-id";
 import { moveIntoTodo, takeOutOfTodo } from "@/lib/quick/todo-move";
 import { SHELL_HIDDEN, SHELL_OPEN_TODO, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
+import { guideDid } from "@/lib/guide";
 import { SHARED, holdsShared, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, flushDoc, releaseDoc } from "@/lib/sync/docs";
 import { createNote, moveNote } from "@/lib/sync/mutations";
@@ -1010,6 +1011,7 @@ function Capture({
         writeSaved(body, now);
         await flushDoc(noteId).catch(() => undefined);
         report();
+        guideDid({ what: "quick-saved", noteId: saved, windowed });
         if (!windowed) {
           router.replace(`/app?${new URLSearchParams({ n: saved })}`);
         } else {
@@ -1144,7 +1146,12 @@ function Capture({
     status?.kind === "saved" ? (
       <>
         {t.quick.savedIn(status.folder)} ・{" "}
-        <button type="button" className={link} onClick={() => openNoteInApp(status.noteId)}>
+        <button
+          type="button"
+          className={link}
+          onClick={() => openNoteInApp(status.noteId)}
+          data-guide="quick-open-note"
+        >
           {t.quick.openNote}
         </button>
       </>
@@ -1208,6 +1215,7 @@ function Capture({
                 size="icon"
                 onClick={() => void showApp()}
                 aria-label={t.quick.openApp}
+                data-guide="quick-open-app"
               >
                 <AppWindow className="size-4" aria-hidden />
               </Button>
@@ -1271,6 +1279,7 @@ function Capture({
               onClick={save}
               disabled={saving || !changed}
               aria-keyshortcuts={SAVE_KEYS}
+              data-guide="quick-save"
             >
               <Check className="size-4" aria-hidden />
               {t.action.save}

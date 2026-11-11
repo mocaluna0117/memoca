@@ -1,8 +1,8 @@
 "use client";
 
 /**
- * The app's welcome for someone new to it: a few cards as they first come
- * in (components/onboarding/welcome-tour), once an account, and, for an
+ * The app's welcome for someone new to it: a guide to do the most used
+ * things by hand (components/onboarding/guide, lib/guide), and, for an
  * account just made, a note in its Inbox to try things in (lib/welcome-note,
  * loaded only then: it brings the editor's schema).
  */

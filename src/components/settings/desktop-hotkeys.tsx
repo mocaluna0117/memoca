@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { useClientValue } from "@/lib/hooks/use-client-value";
 import { formatHotkey, hotkeyFromEvent, sameHotkey } from "@/lib/desktop/hotkeys";
+import { guideDid } from "@/lib/guide";
 import type { HotkeyRefusal, ShellHotkeys } from "@/lib/quick/shell";
 
 type Which = "quick" | "app";
@@ -73,6 +74,7 @@ export function DesktopHotkeys() {
     setRefused(null);
     try {
       setNow(await hotkeys.set(which, keys));
+      guideDid({ what: "hotkey-set", which });
     } catch (error) {
       setRefused({ which, text: refusalText(String(error), which, mac) });
     } finally {
@@ -144,7 +146,7 @@ export function DesktopHotkeys() {
         // Memoca's own on the quick note's keys (as both start): the quick note's.
         const shadowed = which === "app" && sameHotkey(now.app, now.quick, platform);
         return (
-          <div key={which} className="space-y-1">
+          <div key={which} className="space-y-1" data-guide={`hotkey-${which}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm">{label}</span>
               <div className="flex items-center gap-2">

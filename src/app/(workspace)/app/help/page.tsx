@@ -29,7 +29,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { SHOW_WELCOME } from "@/components/onboarding/welcome-tour";
+import { SHOW_WELCOME } from "@/lib/guide";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { Button } from "@/components/ui/button";
 import { useClientValue } from "@/lib/hooks/use-client-value";

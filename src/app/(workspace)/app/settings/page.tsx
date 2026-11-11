@@ -10,7 +10,7 @@ import { useClientValue, useMediaQuery } from "@/lib/hooks/use-client-value";
 import { SIDEBAR_MODES, type SidebarMode, useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
 import { api } from "@convex/_generated/api";
 import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
-import { SHOW_WELCOME } from "@/components/onboarding/welcome-tour";
+import { SHOW_WELCOME } from "@/lib/guide";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";

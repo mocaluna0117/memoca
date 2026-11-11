@@ -1,6 +1,7 @@
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
+import { Guide } from "@/components/onboarding/guide";
 import { SyncProvider } from "@/components/providers/sync-provider";
 import { AccountGate } from "@/components/shell/gate";
 import { ASKED_FOR, HOME, safeNext, signInReturningTo } from "@/lib/auth/next";
@@ -23,7 +24,10 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
   return (
     // Who is signed in, for the device's data to be shown only to its owner.
     <SyncProvider signedInAs={tokenSubject(await getToken())}>
-      <AccountGate>{children}</AccountGate>
+      <AccountGate>
+        {children}
+        <Guide />
+      </AccountGate>
     </SyncProvider>
   );
 }

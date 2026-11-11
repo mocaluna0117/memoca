@@ -4,7 +4,6 @@ import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect } from "react";
 import { toast } from "sonner";
 import { OpenNoteFromQuickWindow, QuickNoteShortcut } from "@/components/notes/quick-entry";
-import { WelcomeTour } from "@/components/onboarding/welcome-tour";
 import { CommandPalette } from "@/components/search/command-palette";
 import { AppShell } from "@/components/shell/app-shell";
 import { PwaPrompts } from "@/components/shell/pwa-prompts";
@@ -111,7 +110,6 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
         <AppShell>{children}</AppShell>
       </WorkspaceDnd>
       <CommandPalette />
-      <WelcomeTour />
       <QuickNoteShortcut />
       <OpenNoteFromQuickWindow />
       <PwaPrompts />

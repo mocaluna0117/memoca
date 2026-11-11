@@ -20,6 +20,7 @@ export function MobileNav({ ref }: { ref?: Ref<HTMLElement> }) {
   return (
     <nav
       ref={ref}
+      data-mobile-nav
       className="bg-background/95 supports-[backdrop-filter]:bg-background/80 fixed inset-x-0 bottom-0 z-40 border-t backdrop-blur md:hidden"
       style={{ paddingBottom: "env(safe-area-inset-bottom, 0px)" }}
     >
@@ -30,6 +31,7 @@ export function MobileNav({ ref }: { ref?: Ref<HTMLElement> }) {
             <li key={href}>
               <Link
                 href={href}
+                data-guide={href === "/quick" ? "open-quick" : undefined}
                 className={cn(
                   "flex flex-col items-center gap-0.5 py-2 text-[11px]",
                   active ? "text-foreground" : "text-muted-foreground",
