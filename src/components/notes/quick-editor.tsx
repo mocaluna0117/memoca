@@ -32,6 +32,7 @@ import type * as Y from "yjs";
 import { MemocaFormattingToolbar } from "@/components/editor/image-crop";
 import { imeCommit } from "@/components/editor/ime-commit";
 import { japaneseLists } from "@/components/editor/japanese-lists";
+import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { type LinesAnchor, type LinesTaken, linesForTodo, putBackLines, removeLines } from "@/lib/quick/move-lines";
 import { listKeys } from "@/components/editor/list-keys";
 import { InlineBlockBar } from "@/components/editor/mobile-block-toolbar";
@@ -191,6 +192,9 @@ export const QuickEditor = memo(function QuickEditor({
   const editor = useCreateBlockNote(options, [doc]);
   // As Memoca's own parts take it: they need none of the columns' types.
   const plain = editor as unknown as BlockNoteEditor;
+  // Copied, the lines as they read, as from a note: BlockNote's own plain
+  // text is Markdown, a blank line between every two lines.
+  usePlainTextCopy(plain);
   useLayoutEffect(() => {
     editorRef.current = plain;
   }, [plain]);

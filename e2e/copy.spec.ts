@@ -71,3 +71,43 @@ test.describe("copying from a note", () => {
     expect((await copied(page)).plain).toBe(AS_IT_READS);
   });
 });
+
+test.describe("copying from the quick note", () => {
+  test.beforeEach(({}, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "copied by the keyboard");
+  });
+
+  test("gives an app that takes plain text the lines as they read, with no blank line between them", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    const quick = page.locator('[contenteditable="true"]').first();
+    await quick.click();
+    await page.keyboard.type("一行目");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("二行目");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("- 牛乳");
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.keyboard.press("ControlOrMeta+a");
+    await page.keyboard.press("ControlOrMeta+a");
+    expect((await copied(page)).plain).toBe("一行目\n二行目\n・牛乳");
+  });
+
+  test("the Todo's items too", async ({ page }) => {
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    await page.getByRole("button", { name: "Todo を開く" }).click();
+    const todo = page.getByLabel("Todo", { exact: true });
+    await todo.click();
+    await page.keyboard.type("牛乳");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("卵");
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await page.keyboard.press("ControlOrMeta+a");
+    const { plain } = await copied(page);
+    expect(plain.split("\n")).toHaveLength(2);
+    expect(plain).toMatch(/牛乳\n.*卵$/);
+  });
+});

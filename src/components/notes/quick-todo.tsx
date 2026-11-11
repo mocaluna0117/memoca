@@ -29,6 +29,7 @@ import { DISABLED_EXTENSIONS } from "@/components/editor/quotes";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { sortTodo, todoDue } from "@/components/editor/todo-due";
 import { japaneseChecks } from "@/components/editor/japanese-lists";
+import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { TODO_TIDY, lineAt, makeDetail, makeItem, todoOnly } from "@/components/editor/todo-only";
 import { TodoDuePicker } from "@/components/notes/todo-due-picker";
 import { TodoNotify, useSendReminders } from "@/components/notes/todo-notify";
@@ -432,6 +433,8 @@ const TodoEditor = memo(function TodoEditor({
   );
   const editor = useCreateBlockNote(options, [doc]);
   const plain = editor as unknown as BlockNoteEditor;
+  // Copied, its items as they read (☐ 牛乳), one a line, as from a note.
+  usePlainTextCopy(plain);
 
   /** The caret after the last item to do (or in the first item, if all are done). */
   const toEnd = useCallback(() => {
