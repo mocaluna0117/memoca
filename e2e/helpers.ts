@@ -125,6 +125,20 @@ export async function settle(locator: Locator): Promise<void> {
 }
 
 /** Closes the folder drawer if it is open. */
+/**
+ * Every note's list, no folder chosen: the app's name atop the sidebar, or
+ * ホーム in a phone's bottom bar (the sidebar has no row for it).
+ */
+export async function showAllNotes(page: Page): Promise<void> {
+  if (isNarrow(page)) {
+    await hideFolders(page);
+    await page.getByRole("link", { name: "ホーム" }).filter({ visible: true }).first().click();
+  } else {
+    await page.locator("aside").getByRole("link", { name: "Memoca", exact: true }).click();
+  }
+  await expect.poll(() => new URL(page.url()).search).toBe("");
+}
+
 export async function hideFolders(page: Page): Promise<void> {
   if (!isNarrow(page)) return;
   const drawer = page.locator('[role="dialog"]');

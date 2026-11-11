@@ -5,6 +5,7 @@ import {
   folderPanel,
   hideFolders,
   openApp,
+  showAllNotes,
   showList,
   signUp,
   waitForSynced,
@@ -56,7 +57,7 @@ async function addFolder(page: Page) {
   await hideFolders(page);
 }
 
-/** Shows a folder's notes, or every note for 「すべてのメモ」. */
+/** Shows a folder's notes. */
 async function openFolder(page: Page, name: string) {
   const panel = await folderPanel(page);
   await panel.getByRole("button", { name: new RegExp(`^${name}`) }).first().click();
@@ -165,7 +166,7 @@ test.describe("an image copied into a locked note", () => {
     });
     await awayFromImage(page);
     await waitForSynced(page);
-    await openFolder(page, "すべてのメモ");
+    await showAllNotes(page);
     await openNote(page, /画像の元/);
     await lockFolder(page, "新しいフォルダ");
     const third = (await attachments(page)).find(

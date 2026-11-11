@@ -3,7 +3,6 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  FileText,
   FilePlus,
   FolderPlus,
   Megaphone,
@@ -96,6 +95,7 @@ export function Sidebar({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-3 py-3">
+        {/* Every note's list, as no folder is chosen (there is no row for it). */}
         <Link href="/app" className="text-sm font-semibold tracking-tight">
           {t.app.name}
         </Link>
@@ -140,22 +140,6 @@ export function Sidebar({
         >
           <Zap className="size-4 text-primary" aria-hidden />
           {t.nav.quick}
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            onSelectFolder(null);
-            onNavigate?.();
-          }}
-          className={cn(
-            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-            selectedFolderId === null && !pinnedSelected && pathname === "/app"
-              ? "bg-accent text-accent-foreground"
-              : "hover:bg-accent/60",
-          )}
-        >
-          <FileText className="size-4 opacity-70" aria-hidden />
-          {t.nav.allNotes}
         </button>
         <button
           type="button"

@@ -1,5 +1,15 @@
 import { expect, type Page, test } from "@playwright/test";
-import { createNote, editor, folderPanel, hideFolders, openApp, showList, signUp, waitForSynced } from "./helpers";
+import {
+  createNote,
+  editor,
+  folderPanel,
+  hideFolders,
+  openApp,
+  showAllNotes,
+  showList,
+  signUp,
+  waitForSynced,
+} from "./helpers";
 
 /** Each block of the open note, by its type and text. */
 const outline = (page: Page) =>
@@ -33,8 +43,7 @@ test.describe("templates", () => {
     // The folder of them, below Inbox; not among every note's.
     const panel = await folderPanel(page);
     await expect(panel.getByRole("button", { name: "テンプレート", exact: true })).toBeVisible();
-    await panel.getByRole("button", { name: "すべてのメモ" }).click();
-    await hideFolders(page);
+    await showAllNotes(page);
     await showList(page);
     const rows = page.locator("[data-note-row]").filter({ visible: true });
     await expect(rows).toHaveCount(1);

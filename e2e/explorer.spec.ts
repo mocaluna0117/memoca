@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { folderPanel, hideFolders, openApp, setExplorerMode, signUp, waitForSynced } from "./helpers";
+import { folderPanel, hideFolders, openApp, setExplorerMode, showAllNotes, signUp, waitForSynced } from "./helpers";
 
 /** A folder's row in the sidebar on screen, by its name. */
 const folderRow = (page: Page, name: string) =>
@@ -293,7 +293,7 @@ test.describe("folders' notes in the sidebar", () => {
     await newNoteIn(page, "趣味", "釣り");
     await expect(page.locator("#note-list-pane")).toBeHidden();
 
-    await page.locator("aside").getByRole("button", { name: "すべてのメモ" }).click();
+    await showAllNotes(page);
     const list = page.locator("#note-list-pane");
     await expect(list).toBeVisible();
     await list.locator("[data-note-row]").filter({ hasText: "釣り" }).click();

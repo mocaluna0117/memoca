@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-11-11-sidebar-no-all-notes",
+    date: "2026-11-11",
+    title: "サイドバーの「すべてのメモ」をなくしました",
+    details: [
+      "フォルダの欄をさらに 1 行分長くするため、サイドバーの「すべてのメモ」の行をなくしました。",
+      "すべてのメモの一覧は、サイドバーの左上の「Memoca」を押すと出ます（スマホでは下の「ホーム」）。",
+    ],
+  },
+  {
     id: "2026-11-11-desktop-hotkeys",
     date: "2026-11-11",
     title: "デスクトップ版のホットキーを設定から変えられるように",

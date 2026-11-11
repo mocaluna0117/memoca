@@ -5,6 +5,7 @@ import {
   folderPanel,
   hideFolders,
   openApp,
+  showAllNotes,
   showList,
   signUp,
   waitForSynced,
@@ -76,7 +77,7 @@ test.describe("the order of a folder's notes", () => {
       .poll(() => listed(page), { timeout: 25_000 })
       .toEqual(["あんず", "いちご", "うめ"]);
     // All notes are ordered on their own, and not by hand.
-    await (await folderPanel(page)).getByRole("button", { name: "すべてのメモ" }).click();
+    await showAllNotes(page);
     await page
       .getByRole("button", { name: /^並び順/ })
       .first()

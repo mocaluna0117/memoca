@@ -4,6 +4,7 @@ import {
   folderPanel,
   hideFolders,
   openApp,
+  showAllNotes,
   showList,
   signIn,
   signUp,
@@ -22,7 +23,7 @@ async function addFolder(page: Page, name: string) {
   await hideFolders(page);
 }
 
-/** Opens a list from the sidebar (or the drawer): a folder, すべてのメモ or ピン留め. */
+/** Opens a list from the sidebar (or the drawer): a folder, or ピン留め. */
 async function openList(page: Page, name: string) {
   const panel = await folderPanel(page);
   await panel
@@ -175,7 +176,7 @@ test.describe("pinning, on a computer", () => {
     await expect.poll(() => names(page)).toEqual(["📌ここで作った", "📌受信のメモ"]);
 
     // すべてのメモ: the pinned first there too, in their order.
-    await openList(page, "すべてのメモ");
+    await showAllNotes(page);
     await expect
       .poll(() => names(page))
       .toEqual(["📌ここで作った", "📌仕事のメモ", "📌受信のメモ", "ピンなし"]);
