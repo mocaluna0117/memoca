@@ -14,6 +14,8 @@ const h = vi.hoisted(() => ({
     stuck: 0,
     uploadRefused: false,
     saveFailed: false,
+    signInWait: false,
+    uploadsWaiting: 0,
   } as SyncStatus,
   /** Edits in the outbox, as the badge counts them. */
   queued: 0,
@@ -99,3 +101,16 @@ test("with nothing waiting, the badge says all is synced", () => {
   expect(shown.getAttribute("aria-label")).toBe(t.sync.idle);
 });
 
+
+test("edits waiting for the sign-in to come back are said, though some are queued, and not as an error", () => {
+  const shown = badge({ signInWait: true }, 3);
+  expect(shown.getAttribute("aria-label")).toBe(t.sync.signInWait);
+  expect(shown.className).not.toContain("text-destructive");
+  badge({ signInWait: false }, 0);
+});
+
+test("files waiting to be tried again are said, after anything wrong", () => {
+  expect(badge({ uploadsWaiting: 2 }).getAttribute("aria-label")).toBe(t.sync.uploadsWaiting);
+  expect(badge({ uploadsWaiting: 2, stuck: 1 }).getAttribute("aria-label")).toBe(t.sync.stuck);
+  expect(badge({ uploadsWaiting: 0, stuck: 0 }).getAttribute("aria-label")).toBe(t.sync.idle);
+});
