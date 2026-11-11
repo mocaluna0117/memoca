@@ -107,13 +107,16 @@ export function WelcomeTour() {
     !welcomeOff() &&
     !welcomeSeenHere(userKey);
   const open = again || due;
-  // The note to try things in, once made (as the account's sync starts).
+  // The note to try things in, once made (as the account's sync starts):
+  // looked for only while the welcome is open, not on every note's change.
   const practice = useLiveQuery(
     () =>
-      db()
-        .notes.filter((note) => note.title === PRACTICE_TITLE && note.deletedAt === null && !note.purged)
-        .first(),
-    [],
+      open
+        ? db()
+            .notes.filter((note) => note.title === PRACTICE_TITLE && note.deletedAt === null && !note.purged)
+            .first()
+        : undefined,
+    [open],
   );
 
   useEffect(() => {

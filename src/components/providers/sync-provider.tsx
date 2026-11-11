@@ -16,7 +16,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { uuidv7 } from "uuidv7";
-import { createPracticeNote, welcomeOff } from "@/lib/welcome";
+import { welcomeOff } from "@/lib/welcome";
 import { api } from "@convex/_generated/api";
 import { vault } from "@/lib/crypto/vault";
 import { db, getMeta, setMeta } from "@/lib/db";
@@ -355,7 +355,11 @@ export function SyncProvider({
       // After the start, which wipes another account's data from the device.
       const made = madeNow;
       madeNow = null;
-      if (made && !welcomeOff()) void createPracticeNote(made.inboxFolderId).catch(() => undefined);
+      // Loaded only now: it brings the editor's schema, which the shell does not need.
+      if (made && !welcomeOff())
+        void import("@/lib/welcome-note")
+          .then(({ createPracticeNote }) => createPracticeNote(made.inboxFolderId))
+          .catch(() => undefined);
       return next;
     });
     return () => {

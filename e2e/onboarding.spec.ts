@@ -1,5 +1,6 @@
 import { type Page, expect, test } from "@playwright/test";
 import { editor, folderPanel, openApp, setExplorerMode, signIn, signUp, waitForSynced } from "./helpers";
+import { readTable } from "./local-db";
 
 /**
  * The welcome (components/onboarding/welcome-tour) and 使い方, as someone new
@@ -57,6 +58,10 @@ test("an account just made: the welcome, its note to try things in, once on ever
   await other.goto("/app");
   await waitForSynced(other);
   await expect(welcome(other)).toHaveCount(0);
+  const practice = (await readTable<{ title: string }>(other, "notes")).filter(
+    (note) => note.title === "はじめに読むメモ",
+  );
+  expect(practice).toHaveLength(1);
   await fresh.close();
 
   // 使い方, from the sidebar's row of pages.

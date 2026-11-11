@@ -8,10 +8,12 @@ import {
   CloudOff,
   EllipsisVertical,
   FilePlus,
+  FilePlus2,
   FolderPlus,
   GripVertical,
   ImageUp,
   KeyRound,
+  LayoutTemplate,
   ListChecks,
   Loader2,
   type LucideIcon,
@@ -165,7 +167,7 @@ export default function HelpPage() {
           <ol className="list-decimal space-y-1 pl-5">
             <li>
               サイドバーの「フォルダ」の横の <Ico icon={FilePlus} />（メモを追加）を押します。
-              フォルダの中に作るときは、フォルダの右の <Ico icon={MoreHorizontal} /> から<strong>「新しいメモ」</strong>を選びます。
+              フォルダの中に作るときは、フォルダの右の <Ico icon={MoreHorizontal} /> から<strong>「新しいメモ」</strong>を選びます（設定の「フォルダのメモ」を「横の一覧に表示」にしているときは、フォルダを選んで、一覧の上の <Ico icon={FilePlus2} />）。
             </li>
             <li>いちばん上の行にタイトルを、その下に本文を書きます。</li>
             <li>書いた内容はすぐに保存されます。ほかのメモに移っても、そのまま残ります。</li>
@@ -270,7 +272,7 @@ export default function HelpPage() {
               <strong>名前を変える</strong>：フォルダの右の <Ico icon={MoreHorizontal} /> から「名前を変更」を選びます。
             </li>
             <li>
-              <strong>メモを移す</strong>：メモをドラッグして、移したいフォルダの上で離します。メモの <Ico icon={MoreHorizontal} /> の「移動」からも移せます。
+              <strong>メモを移す</strong>：メモの <Ico icon={MoreHorizontal} /> の「移動」で、移したいフォルダを選びます。パソコンでは、メモをドラッグして、フォルダの上で離しても移せます。
             </li>
             <li>
               <strong>フォルダの中にフォルダ</strong>：フォルダの <Ico icon={MoreHorizontal} /> から「サブフォルダを追加」を選びます。フォルダごと移すときは「別のフォルダへ移動」です。
@@ -303,7 +305,7 @@ export default function HelpPage() {
 
         <Section id="trash" title={title("trash")}>
           <p>
-            消したメモやフォルダは、サイドバーの下の <Ico icon={Trash2} />（ゴミ箱）にしばらく残ります（はじめは 30 日。設定で変えられます）。ゴミ箱で「復元」を押すと、元の場所に戻ります。
+            消したメモやフォルダは、サイドバーの下の <Ico icon={Trash2} />（ゴミ箱）にしばらく残ります（はじめは 30 日。設定で変えられます）。ゴミ箱で「復元」を押すと、元のフォルダに戻ります（そのフォルダもゴミ箱にあるときは、メモは Inbox に戻ります）。
           </p>
           <p>
             メモの中身を前の状態に戻したいときは、メモの <Ico icon={MoreHorizontal} /> の<strong>「変更履歴」</strong>から選べます。
@@ -322,7 +324,7 @@ export default function HelpPage() {
               <tbody>
                 {BADGE.map((row) => (
                   <tr key={row.said} className="border-b last:border-b-0">
-                    <td className="py-1.5 pr-4 font-medium whitespace-nowrap">
+                    <td className="py-1.5 pr-4 font-medium sm:whitespace-nowrap">
                       <row.icon className="text-muted-foreground mr-1.5 inline size-3.5 align-[-2px]" aria-hidden />
                       {row.said}
                     </td>
@@ -366,7 +368,7 @@ export default function HelpPage() {
               <strong>ロック（金庫）</strong>：大事なメモやフォルダは、<Ico icon={MoreHorizontal} /> の「ロックする」で暗号化できます。開くには金庫のパスワードが要ります。
             </li>
             <li>
-              <strong>テンプレート</strong>：よく使う形のメモは、メモの <Ico icon={MoreHorizontal} /> の「テンプレートとして保存」でテンプレートにしておくと、フォルダの <Ico icon={MoreHorizontal} /> の「テンプレートから作成」で同じ形から作れます。
+              <strong>テンプレート</strong>：よく使う形のメモは、メモの <Ico icon={MoreHorizontal} /> の「テンプレートとして保存」でテンプレートにしておくと、「テンプレートから作成」で同じ形から作れます（フォルダの <Ico icon={MoreHorizontal} /> の中、または一覧の上の <Ico icon={LayoutTemplate} />）。
             </li>
             <li>
               <strong>書き出し</strong>：設定の「書き出し」で、すべてのメモをまとめて保存できます。1 つのメモは、<Ico icon={MoreHorizontal} /> の「PDF で書き出す」で PDF にできます。

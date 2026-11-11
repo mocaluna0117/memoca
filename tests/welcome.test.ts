@@ -3,14 +3,8 @@ import { beforeEach, describe, expect, test } from "vitest";
 import { db, resetLocalData } from "@/lib/db";
 import { withStoredDoc } from "@/lib/sync/docs";
 import { bodyFragment } from "@/lib/sync/ydoc";
-import {
-  PRACTICE_TITLE,
-  WELCOME_OFF,
-  createPracticeNote,
-  rememberWelcomeSeen,
-  welcomeOff,
-  welcomeSeenHere,
-} from "@/lib/welcome";
+import { PRACTICE_TITLE, WELCOME_OFF, rememberWelcomeSeen, welcomeOff, welcomeSeenHere } from "@/lib/welcome";
+import { createPracticeNote } from "@/lib/welcome-note";
 import { seedInbox } from "./helpers/seed";
 
 beforeEach(async () => {
