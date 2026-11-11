@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import { Geist, Geist_Mono } from "next/font/google";
 import { SerwistProvider } from "@serwist/turbopack/react";
+import { CachePages } from "@/components/providers/cache-pages";
 import { AppProviders } from "@/components/providers/app-providers";
 import { getToken } from "@/lib/auth/server";
 import { NONCE_HEADER } from "@/lib/csp";
@@ -42,7 +43,11 @@ export default async function RootLayout({ children }: LayoutProps<"/">) {
       <body className="bg-background text-foreground flex min-h-full flex-col overscroll-y-none">
         {/* Not reloaded when the network returns: sync picks up by itself, and a
             reload would throw away what was being typed, a draft included. */}
-        <SerwistProvider swUrl="/serwist/sw.js" cacheOnNavigation reloadOnOnline={false}>
+        {/* Pages moved to within the app kept for offline once each, by
+            CachePages: not Serwist's cacheOnNavigation, which fetched the
+            workspace again at each note opened (see cache-pages.tsx). */}
+        <SerwistProvider swUrl="/serwist/sw.js" cacheOnNavigation={false} reloadOnOnline={false}>
+          <CachePages />
           <AppProviders initialToken={initialToken} nonce={nonce}>{children}</AppProviders>
         </SerwistProvider>
       </body>

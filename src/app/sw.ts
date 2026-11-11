@@ -40,9 +40,9 @@ const REFRESH_TIMEOUT_MS = 5_000;
 
 /**
  * A page itself, not a file it is made of: loaded as one, or asked for by
- * SerwistProvider once the app has moved to it within itself
- * (cacheOnNavigation), which the worker fetches as a request of its own, on
- * a message rather than a fetch. Next asks for a route's payload with an RSC
+ * CachePages (src/components/providers/cache-pages.tsx) once the app has
+ * moved to it within itself, which the worker fetches as a request of its
+ * own, on a message rather than a fetch. Next asks for a route's payload with an RSC
  * header.
  */
 const isPage = (request: Request, event: ExtendableEvent) =>
