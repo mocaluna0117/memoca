@@ -30,19 +30,26 @@ import { ORIGIN, bodyFragment } from "@/lib/sync/ydoc";
 
 /** How long after the Todo changes its reminders are worked out and sent: once for a run of typing. */
 const SEND_AFTER_MS = 1500;
-/** What was sent last from this device, so that the same is not sent again as the Todo opens. */
+/**
+ * What was sent last from this device, for this Todo (an account's own), so
+ * that the same is not sent again as the Todo opens. Forgotten as another
+ * device's change comes in: it sends its own, and the server's are then
+ * not what this device sent.
+ */
 const SENT_KEY = "memoca:reminders-sent";
+const sentKey = (todoId: string) => `${SENT_KEY}:${todoId}`;
 
-const readSent = () => {
+const readSent = (todoId: string) => {
   try {
-    return localStorage.getItem(SENT_KEY);
+    return localStorage.getItem(sentKey(todoId));
   } catch {
     return null;
   }
 };
-const writeSent = (sent: string) => {
+const writeSent = (todoId: string, sent: string | null) => {
   try {
-    localStorage.setItem(SENT_KEY, sent);
+    if (sent === null) localStorage.removeItem(sentKey(todoId));
+    else localStorage.setItem(sentKey(todoId), sent);
   } catch {
     // Sent again next time.
   }
@@ -57,10 +64,10 @@ const writeSent = (sent: string) => {
  * of the account asked for them (ON_KEY): no calls for those who never do.
  * What another device changes, it sends itself.
  */
-export function useSendReminders(doc: Y.Doc | null) {
+export function useSendReminders(doc: Y.Doc | null, todoId: string | null) {
   const convex = useConvex();
   useEffect(() => {
-    if (!doc) return;
+    if (!doc || !todoId) return;
     const body = bodyFragment(doc);
     const dues = doc.getMap<string>(DUE_MAP);
     const notify = doc.getMap<string>(NOTIFY_MAP);
@@ -77,11 +84,11 @@ export function useSendReminders(doc: Y.Doc | null) {
       }
       const reminders = remindersIn(doc, DUE_MAP, Date.now());
       const sent = JSON.stringify(reminders);
-      if (sent === readSent()) return;
+      if (sent === readSent(todoId)) return;
       sending = true;
       try {
         const result = await convex.mutation(api.reminders.replace, { reminders });
-        if (result.status === "ok") writeSent(sent);
+        if (result.status === "ok") writeSent(todoId, sent);
       } catch {
         // Offline, or the server not reached: sent as the network comes back, or next change.
       } finally {
@@ -97,8 +104,13 @@ export function useSendReminders(doc: Y.Doc | null) {
       timer = setTimeout(() => void send(), SEND_AFTER_MS);
     };
     const changed = (_event: unknown, transaction: Y.Transaction) => {
-      // Another device's change: it sends its own.
-      if (transaction.origin === ORIGIN.remote || transaction.origin === ORIGIN.load) return;
+      // Another device's change: it sends its own, and what this device
+      // sent last is no longer what the server has.
+      if (transaction.origin === ORIGIN.remote) {
+        writeSent(todoId, null);
+        return;
+      }
+      if (transaction.origin === ORIGIN.load) return;
       soon();
     };
     const now = () => {
@@ -122,7 +134,7 @@ export function useSendReminders(doc: Y.Doc | null) {
       // Leaving the Todo with a change not sent yet: sent now.
       now();
     };
-  }, [doc, convex]);
+  }, [doc, todoId, convex]);
 }
 
 /** Said in the page as this computer's choice changes (the bell's switch): read again where it is followed. */

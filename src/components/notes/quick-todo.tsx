@@ -28,6 +28,7 @@ import { listKeys } from "@/components/editor/list-keys";
 import { DISABLED_EXTENSIONS } from "@/components/editor/quotes";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { sortTodo, todoDue } from "@/components/editor/todo-due";
+import { japaneseChecks } from "@/components/editor/japanese-lists";
 import { TODO_TIDY, lineAt, makeDetail, makeItem, todoOnly } from "@/components/editor/todo-only";
 import { TodoDuePicker } from "@/components/notes/todo-due-picker";
 import { TodoNotify, useSendReminders } from "@/components/notes/todo-notify";
@@ -64,6 +65,8 @@ const NOT_ITEMS = [
   "toggle-list-item-shortcuts",
   "divider-block-shortcuts",
   "paragraph-shortcuts",
+  // ``` and a space would make an item a code block, its text gone with it.
+  "code-block-keyboard-shortcuts",
 ];
 
 /** An input method still choosing a word: its keys are its own. */
@@ -130,7 +133,7 @@ export function TodoCapture({
   const status = useSyncStatusStore();
   const engine = useSyncEngine();
   // Its reminders sent as it is changed here.
-  useSendReminders(loaded?.doc ?? null);
+  useSendReminders(loaded?.doc ?? null, noteId);
 
   useEffect(() => {
     // Let go of exactly once, as the note editor does (see NoteEditor).
@@ -411,6 +414,8 @@ const TodoEditor = memo(function TodoEditor({
         disableExtensions: NOT_ITEMS,
         extensions: [
           todoOnly(),
+          // 「」 and a space, as [] and a space, taken off an item's start.
+          japaneseChecks,
           listKeys(),
           imeCommit(),
           todoDue({ map: doc.getMap<string>(DUE_MAP), onPick: (id, at) => setPicking({ id, at }) }),

@@ -73,7 +73,7 @@ function todo(): Y.Doc {
 }
 
 function Sender({ doc }: { doc: Y.Doc }) {
-  useSendReminders(doc);
+  useSendReminders(doc, "todo-note");
   return null;
 }
 
@@ -125,6 +125,28 @@ describe("the Todo's reminders, sent as it is changed here", () => {
     doc.transact(() => doc.getMap<string>(DUE_MAP).set("a", tomorrow()), ORIGIN.remote);
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(h.mutation).toHaveBeenCalledTimes(1);
+  });
+
+  test("changed back to what this device last sent, after another device changed them: sent again", async () => {
+    vi.useFakeTimers();
+    const doc = todo();
+    doc.transact(() => doc.getMap<string>(NOTIFY_MAP).set(ON_KEY, "1"), TODO_DUE);
+    doc.transact(() => doc.getMap<string>(DUE_MAP).set("a", tomorrow()), TODO_DUE);
+    await act(async () => root.render(<Sender doc={doc} />));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(h.mutation).toHaveBeenCalledTimes(1);
+    const due = doc.getMap<string>(DUE_MAP).get("a")!;
+
+    // Another device takes the due off: it sends none, and the server has none.
+    doc.transact(() => doc.getMap<string>(DUE_MAP).delete("a"), ORIGIN.remote);
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(h.mutation).toHaveBeenCalledTimes(1);
+
+    // Put back here, as it was: what this device last sent, but not what the server has.
+    doc.transact(() => doc.getMap<string>(DUE_MAP).set("a", due), TODO_DUE);
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(h.mutation).toHaveBeenCalledTimes(2);
+    expect((h.mutation.mock.calls[1]![1] as { reminders: unknown[] }).reminders.length).toBeGreaterThan(0);
   });
 
   test("not sent (offline): sent again as the network comes back", async () => {

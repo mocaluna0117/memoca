@@ -2,6 +2,7 @@ import { BlockNoteEditor } from "@blocknote/core";
 import { TextSelection } from "prosemirror-state";
 import { ySyncPluginKey } from "y-prosemirror";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { japaneseChecks } from "@/components/editor/japanese-lists";
 import { TODO_TIDY, todoOnly } from "@/components/editor/todo-only";
 
 let editor: BlockNoteEditor;
@@ -292,5 +293,72 @@ describe("the Todo's ids", () => {
     });
     view.dispatch(view.state.tr.setNodeMarkup(at, undefined, { ...view.state.doc.nodeAt(at)!.attrs, id: "initialBlockId" }));
     expect(editor.document[0]!.id).not.toBe("initialBlockId");
+  });
+});
+
+describe("⌘A in the Todo", () => {
+  test("selects every line, and Backspace then leaves one empty item to write in", () => {
+    editor.replaceBlocks(editor.document, [
+      withDetails("[ ] 牛乳", "駅前の店で"),
+      { type: "checkListItem", props: { checked: false }, content: "卵" },
+      { type: "checkListItem", props: { checked: true }, content: "パン" },
+    ]);
+    caretIn("卵", 1);
+    press("a", { ctrlKey: true });
+    expect(view().state.selection.toJSON()).toEqual({ type: "all" });
+    press("Backspace");
+    expect(list()).toEqual(["[ ] "]);
+    type("新しい項目");
+    expect(list()).toEqual(["[ ] 新しい項目"]);
+  });
+});
+
+describe("an item started as with a Japanese input method", () => {
+  /** Typed a character at a time, as the editor takes it (its input rules among it). */
+  const typeAsTyped = (target: BlockNoteEditor, text: string) => {
+    const view = target.prosemirrorView!;
+    for (const char of text) {
+      const { from, to } = view.state.selection;
+      const insert = () => view.state.tr.insertText(char, from, to);
+      if (!view.someProp("handleTextInput", (handle) => handle(view, from, to, char, insert))) view.dispatch(insert());
+    }
+  };
+
+  test("「」 and a space go, as [] and a space do; 「x」 ticks it", () => {
+    const todo = BlockNoteEditor.create({ extensions: [todoOnly(), japaneseChecks], trailingBlock: false });
+    const place = document.createElement("div");
+    document.body.append(place);
+    todo.mount(place);
+    try {
+      todo.replaceBlocks(todo.document, [{ type: "checkListItem", props: { checked: false }, content: "" }]);
+      const view = todo.prosemirrorView!;
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)));
+      typeAsTyped(todo, "「」　りんご");
+      expect(todo.document.map((block) => [textOf(block), (block.props as { checked: boolean }).checked])).toEqual([
+        ["りんご", false],
+      ]);
+      todo.replaceBlocks(todo.document, [{ type: "checkListItem", props: { checked: false }, content: "" }]);
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, 3)));
+      typeAsTyped(todo, "「x」　済み");
+      expect(todo.document.map((block) => [textOf(block), (block.props as { checked: boolean }).checked])).toEqual([
+        ["済み", true],
+      ]);
+    } finally {
+      todo.unmount();
+      place.remove();
+    }
+  });
+});
+
+describe("Enter at the start of an item", () => {
+  test("puts an empty item above it: the item keeps its id (its due, its reminders) and its tick", () => {
+    items("[ ] 牛乳を買う", "[ ] 卵");
+    const id = blockWith("牛乳を買う").id;
+    caretIn("牛乳を買う", 0);
+    press("Enter");
+    expect(list()).toEqual(["[ ] ", "[ ] 牛乳を買う", "[ ] 卵"]);
+    expect(blockWith("牛乳を買う").id).toBe(id);
+    // The caret stays with the item's text, to go on writing it.
+    expect(caret()).toEqual({ text: "牛乳を買う", offset: 0 });
   });
 });

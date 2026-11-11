@@ -1,6 +1,6 @@
 import { createExtension } from "@blocknote/core";
 import { Fragment, type Node, type ResolvedPos } from "prosemirror-model";
-import { type EditorState, Plugin, TextSelection, type Transaction } from "prosemirror-state";
+import { AllSelection, type EditorState, Plugin, TextSelection, type Transaction } from "prosemirror-state";
 import { uuidv4 } from "uuidv7";
 import { ySyncPluginKey } from "y-prosemirror";
 import { TODO_SORT, duesIn } from "@/components/editor/todo-due";
@@ -405,12 +405,13 @@ const flushDom = (view: unknown) =>
  * The quick note's Todo: every line a tick box, the done going to the foot
  * (see {@link tidyTodo}), and under an item, lines of its details (an
  * explanation, a link), with no tick box. And its keys: Enter in an empty
- * item does nothing (BlockNote would make it a line of text, put back as
+ * item does nothing, and at the start of one puts an empty one above it (BlockNote would make it a line of text, put back as
  * an item at once); Shift + Enter starts a line of details; Tab makes an
  * item a line of the details of the one above, Shift + Tab a line of
  * details an item; Backspace at a line's start joins it to the line above;
  * ⌘ + Enter ticks the item (the one of the details the caret is in), or
  * unticks it, the caret going on to the next to do, for the next ⌘ + Enter.
+ * ⌘A selects every line, as in a note.
  */
 export const todoOnly = createExtension(({ editor }) => {
   const view = () => editor.prosemirrorView;
@@ -433,9 +434,25 @@ export const todoOnly = createExtension(({ editor }) => {
         if (line.kind === "detail") return run((now) => enterInDetail(now, line));
         if (line.text.content.size === 0) return true;
         if (detailsOf(line.container)) return run((now) => enterInItemWithDetails(now, line));
+        // At its start, an item with no details too: the new, empty item
+        // above it, the item staying the block it is. BlockNote's split
+        // would carry its text into a new block, its due and reminders
+        // (kept by its id) left on the empty one above.
+        if (line.$from.parentOffset === 0) {
+          return run((now) => now.tr.insert(line.containerPos, newItem(now)).scrollIntoView());
+        }
         return false;
       },
       "Shift-Enter": () => run(addDetail),
+      // Every line, to delete or copy at once. Left to the browser, as in a
+      // note, its select-all came back here as the caret where it was (the
+      // tick boxes and due chips around the text), and nothing was selected.
+      "Mod-a": () => {
+        const current = view();
+        if (!current) return false;
+        current.dispatch(current.state.tr.setSelection(new AllSelection(current.state.doc)));
+        return true;
+      },
       // Kept in the Todo either way: the browser would take the caret out
       // of it, to the next button.
       Tab: () => {
