@@ -18,6 +18,9 @@ fn main() {
             "reminders_turn_on",
             "reminders_turn_off",
             "set_reminders",
+            "hotkeys_get",
+            "hotkeys_set",
+            "hotkeys_recording",
         ]),
     ))
     .expect("failed to run tauri-build");

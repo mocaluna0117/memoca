@@ -40,20 +40,23 @@ import { UnsentDialog } from "@/components/auth/unsent-warning";
 import { type Unsent, anyUnsent, unsentOnDevice } from "@/lib/sync/unsent";
 import { formatBytes } from "@/lib/bytes";
 import { resetLocalData } from "@/lib/db";
+import { DesktopHotkeys } from "@/components/settings/desktop-hotkeys";
 import { turnOff } from "@/lib/notify/push";
 import { t } from "@/lib/i18n/ja";
 
 function Section({
+  id,
   title,
   description,
   children,
 }: {
+  id?: string;
   title: string;
   description?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="space-y-3">
+    <section id={id} className="scroll-mt-6 space-y-3">
       <div>
         <h2 className="text-sm font-semibold">{title}</h2>
         {description ? (
@@ -94,6 +97,15 @@ export default function SettingsPage() {
   const [deleting, setDeleting] = useState(false);
   const standalone = useMediaQuery("(display-mode: standalone)");
   const isIOS = useClientValue(() => /iPad|iPhone|iPod/.test(navigator.userAgent), false);
+  const desktop = useClientValue(() => window.memocaShell !== undefined, false);
+
+  // Opened from the desktop app's menu (ホットキーを変える…): at its hotkeys,
+  // drawn only once the page knows it is in the app.
+  useEffect(() => {
+    if (desktop && window.location.hash === "#hotkeys") {
+      document.getElementById("hotkeys")?.scrollIntoView();
+    }
+  }, [desktop]);
 
   useEffect(() => {
     // An installed web app should ask the browser to keep its data, which is
@@ -121,6 +133,20 @@ export default function SettingsPage() {
         </Section>
 
         <Separator />
+
+        {desktop ? (
+          <>
+            <Section
+              id="hotkeys"
+              title="デスクトップ版のホットキー"
+              description="どのアプリを使っているときでも、このキーで Memoca の窓を出せます。このパソコンだけの設定です。"
+            >
+              <DesktopHotkeys />
+            </Section>
+
+            <Separator />
+          </>
+        ) : null}
 
         <Section
           title="フォルダのメモ"

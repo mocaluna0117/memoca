@@ -133,6 +133,11 @@ pub fn bridge() -> String {
             reminders: Array.from(list, ({{ key, at, title, body }}) => ({{ key: String(key), at: Number(at), title: String(title), body: String(body) }})),
           }}).catch(() => undefined),
       }}),
+      hotkeys: Object.freeze({{
+        get: () => invoke("hotkeys_get"),
+        set: (which, keys) => invoke("hotkeys_set", {{ which: String(which), keys: String(keys) }}),
+        recording: (on) => invoke("hotkeys_recording", {{ on: Boolean(on) }}),
+      }}),
       platform: {platform:?},
     }}),
   }});

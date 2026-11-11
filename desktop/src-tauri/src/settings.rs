@@ -94,10 +94,6 @@ impl Store {
             eprintln!("Memoca: could not save {}: {error}", self.path.display());
         }
     }
-
-    pub fn path(&self) -> &PathBuf {
-        &self.path
-    }
 }
 
 enum Read {
@@ -175,9 +171,9 @@ mod tests {
     fn a_change_from_the_menu_keeps_a_hotkey_written_into_the_file_since() {
         let dir = scratch("keep");
         let store = store(&dir);
-        std::fs::write(store.path(), r#"{ "shortcut": "Ctrl+Shift+Space" }"#).unwrap();
+        std::fs::write(&store.path, r#"{ "shortcut": "Ctrl+Shift+Space" }"#).unwrap();
         store.update(|settings| settings.pinned = true);
-        let Read::Found(saved) = read(store.path()) else {
+        let Read::Found(saved) = read(&store.path) else {
             panic!("not saved")
         };
         assert_eq!(saved.shortcut, "Ctrl+Shift+Space");
@@ -190,10 +186,10 @@ mod tests {
     fn a_file_that_cannot_be_read_is_left_as_it_is() {
         let dir = scratch("broken");
         let store = store(&dir);
-        std::fs::write(store.path(), "{ shortcut: oops").unwrap();
+        std::fs::write(&store.path, "{ shortcut: oops").unwrap();
         store.update(|settings| settings.pinned = true);
         assert_eq!(
-            std::fs::read_to_string(store.path()).unwrap(),
+            std::fs::read_to_string(&store.path).unwrap(),
             "{ shortcut: oops"
         );
         // The change holds meanwhile.
@@ -205,7 +201,7 @@ mod tests {
         let dir = scratch("missing");
         let store = store(&dir);
         store.update(|settings| settings.hot_corner = Some(Corner::TopRight));
-        let Read::Found(saved) = read(store.path()) else {
+        let Read::Found(saved) = read(&store.path) else {
             panic!("not saved")
         };
         assert_eq!(saved.hot_corner, Some(Corner::TopRight));

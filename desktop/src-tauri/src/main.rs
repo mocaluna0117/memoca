@@ -142,6 +142,9 @@ fn main() {
             reminders::reminders_turn_on,
             reminders::reminders_turn_off,
             reminders::set_reminders,
+            shortcut::hotkeys_get,
+            shortcut::hotkeys_set,
+            shortcut::hotkeys_recording,
         ])
         .setup(|app| {
             // A menu bar app: no Dock icon, and not in ⌘Tab.
@@ -175,7 +178,10 @@ fn main() {
                         .permission("allow-reminders-state")
                         .permission("allow-reminders-turn-on")
                         .permission("allow-reminders-turn-off")
-                        .permission("allow-set-reminders"),
+                        .permission("allow-set-reminders")
+                        .permission("allow-hotkeys-get")
+                        .permission("allow-hotkeys-set")
+                        .permission("allow-hotkeys-recording"),
                 )?;
             }
 

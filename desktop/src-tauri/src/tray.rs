@@ -107,13 +107,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             .map(|(_, item)| item as &dyn IsMenuItem<Wry>)
             .collect::<Vec<_>>(),
     )?;
-    let hotkey = MenuItem::with_id(
-        app,
-        "settings",
-        "ホットキーを変える（設定ファイルを開く）…",
-        true,
-        None::<&str>,
-    )?;
+    let hotkey = MenuItem::with_id(app, "settings", "ホットキーを変える…", true, None::<&str>)?;
     let browser = MenuItem::with_id(
         app,
         "browser",
@@ -221,9 +215,10 @@ fn chosen(app: &AppHandle, id: &str) {
         "pin" => app
             .state::<Store>()
             .update(|settings| settings.pinned = !settings.pinned),
+        // Memoca's settings page, where they are changed at once (the file
+        // may still be written by hand: docs/DESKTOP.md).
         "settings" => {
-            let path = app.state::<Store>().path().clone();
-            let _ = app.opener().open_path(path.to_string_lossy(), None::<&str>);
+            app_window::open_at(app, window::origin().join("/app/settings#hotkeys").unwrap());
         }
         "browser" => {
             let _ = app.opener().open_url(

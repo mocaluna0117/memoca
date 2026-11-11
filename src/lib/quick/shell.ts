@@ -63,8 +63,32 @@ export type MemocaShell = {
     turnOff(): Promise<void>;
     set(reminders: readonly ShellReminder[]): void;
   };
+  /**
+   * The app's hotkeys (desktop/src-tauri/src/shortcut.rs), changed from the
+   * settings page and in use at once. Not before 0.4.11.
+   */
+  hotkeys?: {
+    get(): Promise<ShellHotkeys>;
+    /**
+     * One changed: what they are after; or, turned away, an error that is
+     * one of {@link HotkeyRefusal}, the hotkeys left as they were.
+     */
+    set(which: "quick" | "app", keys: string): Promise<ShellHotkeys>;
+    /** Keys being recorded: the hotkeys let go of meanwhile (for a minute at most), so the page sees them. */
+    recording(on: boolean): Promise<void>;
+  };
   platform: "macos" | "windows";
 };
+
+/** The app's hotkeys, as settings.json writes them ("CmdOrCtrl+Shift+M"), and what each is unless changed. */
+export type ShellHotkeys = { quick: string; app: string; quickDefault: string; appDefault: string };
+
+/**
+ * Why the app turned keys away: not a hotkey; one that would take what is
+ * typed (no ⌘, ⌃ or ⌥ held, but for F1 to F24); the other one's keys; or
+ * another app's.
+ */
+export type HotkeyRefusal = "invalid" | "needsModifier" | "same" | "taken";
 
 export type DeviceUnlockKind = "touchId" | "windowsHello";
 
