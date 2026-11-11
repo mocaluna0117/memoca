@@ -4,6 +4,7 @@
 import { defaultCache } from "@serwist/turbopack/worker";
 import {
   CacheExpiration,
+  CacheFirst,
   ExpirationPlugin,
   NetworkFirst,
   NetworkOnly,
@@ -143,6 +144,20 @@ const serwist: Serwist = new Serwist({
       matcher: ({ url }) =>
         url.origin === self.location.origin && url.pathname.startsWith("/kuromoji/"),
       handler: { handle: ({ request }) => fetch(request) },
+    },
+    {
+      // The fonts (src/app/layout.tsx), not precached: the looks' Japanese
+      // ones are a hundred slices a weight, of which a page in that look
+      // fetches the few its characters are in. Kept as fetched, for offline,
+      // as many as a person's notes come to; their names change with them.
+      matcher: ({ url }) =>
+        url.origin === self.location.origin &&
+        url.pathname.startsWith("/_next/static/media/") &&
+        url.pathname.endsWith(".woff2"),
+      handler: new CacheFirst({
+        cacheName: "memoca-fonts",
+        plugins: [new ExpirationPlugin({ maxEntries: 800, maxAgeSeconds: 365 * 24 * 60 * 60 })],
+      }),
     },
     {
       // pdf.js's worker and what it reads (character maps, fonts), only for

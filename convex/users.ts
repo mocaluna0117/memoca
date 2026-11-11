@@ -5,6 +5,7 @@ import { type MutationCtx, internalMutation, mutation, query } from "./_generate
 import { authComponent } from "./auth";
 import { DEFAULTS } from "./lib/constants";
 import { openSeq } from "./lib/seq";
+import { styleValidator } from "./lib/style";
 import { getConfig, getUser, hasAdminAccess, isAdminEmail, requireUser } from "./lib/user";
 
 async function getOrCreateConfig(ctx: MutationCtx): Promise<Doc<"appConfig">> {
@@ -174,6 +175,7 @@ export const markWelcomed = mutation({
 export const updateSettings = mutation({
   args: {
     theme: v.optional(v.union(v.literal("system"), v.literal("light"), v.literal("dark"))),
+    style: v.optional(styleValidator),
     trashRetentionDays: v.optional(v.number()),
     autoLockMinutes: v.optional(v.number()),
     prefetchBodies: v.optional(v.boolean()),
@@ -184,6 +186,7 @@ export const updateSettings = mutation({
     const settings = {
       ...user.settings,
       ...(args.theme !== undefined ? { theme: args.theme } : {}),
+      ...(args.style !== undefined ? { style: args.style } : {}),
       ...(args.trashRetentionDays !== undefined &&
       allowedRetention.includes(args.trashRetentionDays)
         ? { trashRetentionDays: args.trashRetentionDays }

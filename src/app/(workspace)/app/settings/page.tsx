@@ -43,6 +43,7 @@ import { type Unsent, anyUnsent, unsentOnDevice } from "@/lib/sync/unsent";
 import { formatBytes } from "@/lib/bytes";
 import { resetLocalData } from "@/lib/db";
 import { DesktopHotkeys } from "@/components/settings/desktop-hotkeys";
+import { StylePicker } from "@/components/settings/style-picker";
 import { turnOff } from "@/lib/notify/push";
 import { t } from "@/lib/i18n/ja";
 
@@ -137,7 +138,17 @@ export default function SettingsPage() {
 
         <Separator />
 
-        <Section title="外観">
+        <Section
+          id="style"
+          title="デザイン"
+          description="色や角の丸さ、文字の形が変わります。このアカウントのすべての端末で同じになります。"
+        >
+          <StylePicker />
+        </Section>
+
+        <Separator />
+
+        <Section title="外観" description="明るい画面（ライト）か、暗い画面（ダーク）か。この端末だけの設定です。">
           <Select value={theme ?? "system"} onValueChange={setTheme}>
             <SelectTrigger className="w-48">
               <SelectValue />

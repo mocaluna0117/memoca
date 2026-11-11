@@ -1,5 +1,6 @@
 import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
+import { styleValidator } from "./lib/style";
 
 /**
  * A hybrid logical clock stamp. `t` is wall-clock milliseconds nudged forward so
@@ -53,6 +54,8 @@ export default defineSchema({
     reservedBytes: v.number(),
     settings: v.object({
       theme: v.union(v.literal("system"), v.literal("light"), v.literal("dark")),
+      /** The app's look (src/lib/style.ts), on every device of the account: unset, the first (stylish). */
+      style: v.optional(styleValidator),
       trashRetentionDays: v.number(),
       autoLockMinutes: v.number(),
       prefetchBodies: v.boolean(),

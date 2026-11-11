@@ -16,7 +16,9 @@ export const { dynamic, dynamicParams, revalidate, generateStaticParams, GET } =
     // The WebP encoder (about 300 KB) is only for browsers whose canvas cannot
     // write WebP, and cached by a runtime rule on first use too.
     // So is pdf.js's (about 6 MB), for notes with a PDF.
-    globIgnores: ["**/kuromoji/**", "**/webp/**", "**/pdfjs/**"],
+    // And the fonts: the looks' Japanese ones (src/lib/style.ts) are hundreds
+    // of slices, of which a page fetches the few it uses (sw.ts keeps them).
+    globIgnores: ["**/kuromoji/**", "**/webp/**", "**/pdfjs/**", "**/*.woff2"],
     additionalPrecacheEntries: [
       { url: "/offline", revision: process.env.VERCEL_GIT_COMMIT_SHA ?? "dev" },
     ],

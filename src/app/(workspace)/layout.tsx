@@ -2,6 +2,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import type { ReactNode } from "react";
 import { Guide } from "@/components/onboarding/guide";
+import { StyleSync } from "@/components/providers/style-sync";
 import { SyncProvider } from "@/components/providers/sync-provider";
 import { AccountGate } from "@/components/shell/gate";
 import { ASKED_FOR, HOME, safeNext, signInReturningTo } from "@/lib/auth/next";
@@ -27,6 +28,7 @@ export default async function WorkspaceLayout({ children }: { children: ReactNod
       <AccountGate>
         {children}
         <Guide />
+        <StyleSync />
       </AccountGate>
     </SyncProvider>
   );

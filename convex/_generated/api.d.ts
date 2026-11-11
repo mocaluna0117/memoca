@@ -21,6 +21,7 @@ import type * as lib_hlc from "../lib/hlc.js";
 import type * as lib_ops from "../lib/ops.js";
 import type * as lib_refs from "../lib/refs.js";
 import type * as lib_seq from "../lib/seq.js";
+import type * as lib_style from "../lib/style.js";
 import type * as lib_user from "../lib/user.js";
 import type * as lib_versions from "../lib/versions.js";
 import type * as notes from "../notes.js";
@@ -55,6 +56,7 @@ declare const fullApi: ApiFromModules<{
   "lib/ops": typeof lib_ops;
   "lib/refs": typeof lib_refs;
   "lib/seq": typeof lib_seq;
+  "lib/style": typeof lib_style;
   "lib/user": typeof lib_user;
   "lib/versions": typeof lib_versions;
   notes: typeof notes;

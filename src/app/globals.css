@@ -52,7 +52,8 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-:root {
+:root,
+[data-style="stylish"] {
   /* Latin from Geist, Japanese from whatever the platform already has: no
      multi-megabyte CJK webfont download on a phone. */
   --font-stack-sans:
@@ -95,7 +96,8 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-.dark {
+.dark,
+.dark [data-style="stylish"] {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
   --card: oklch(0.205 0 0);
@@ -128,6 +130,285 @@
   --sidebar-accent-foreground: oklch(0.985 0 0);
   --sidebar-border: oklch(1 0 0 / 10%);
   --sidebar-ring: oklch(0.556 0 0);
+}
+
+/* The looks chosen in the settings (src/lib/style.ts), on <html> as
+   data-style, or on a preview of one in the settings. Each says all of its
+   colours, light and dark: the dark one's selector outweighs the light
+   one's, which would otherwise win over .dark on the same element, and
+   reaches a .dark inside (the editor's, which BlockNote marks so). Letters
+   from a font of the look's own where it has one (src/app/layout.tsx, only
+   fetched once a page is drawn in it), the platform's Japanese after. */
+[data-style="cute"],
+[data-style="natural"],
+[data-style="fresh"],
+[data-style="retro"] {
+  --font-stack-jp:
+    -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP",
+    "Yu Gothic", Meiryo, sans-serif;
+}
+
+/* かわいい: pale pink and lavender, round corners and round letters. */
+[data-style="cute"] {
+  --font-stack-sans: var(--font-zen-maru), "Hiragino Maru Gothic ProN", var(--font-stack-jp);
+  --radius: 1rem;
+  --background: oklch(0.99 0.008 350);
+  --foreground: oklch(0.33 0.045 340);
+  --card: oklch(1 0.004 350);
+  --card-foreground: oklch(0.33 0.045 340);
+  --popover: oklch(1 0.004 350);
+  --popover-foreground: oklch(0.33 0.045 340);
+  --primary: oklch(0.6 0.17 355);
+  --primary-foreground: oklch(0.99 0.01 350);
+  --secondary: oklch(0.95 0.03 320);
+  --secondary-foreground: oklch(0.38 0.08 320);
+  --muted: oklch(0.965 0.02 340);
+  --muted-foreground: oklch(0.55 0.05 340);
+  --accent: oklch(0.945 0.035 350);
+  --accent-foreground: oklch(0.36 0.07 345);
+  --border: oklch(0.91 0.03 345);
+  --input: oklch(0.9 0.035 345);
+  --ring: oklch(0.75 0.12 355);
+  --sidebar: oklch(0.975 0.018 320);
+  --sidebar-foreground: oklch(0.33 0.045 330);
+  --sidebar-primary: oklch(0.6 0.17 355);
+  --sidebar-primary-foreground: oklch(0.99 0.01 350);
+  --sidebar-accent: oklch(0.935 0.04 330);
+  --sidebar-accent-foreground: oklch(0.36 0.07 330);
+  --sidebar-border: oklch(0.91 0.03 330);
+  --sidebar-ring: oklch(0.75 0.12 355);
+}
+.dark[data-style="cute"],
+.dark [data-style="cute"],
+[data-style="cute"] .dark {
+  --background: oklch(0.21 0.03 330);
+  --foreground: oklch(0.95 0.02 340);
+  --card: oklch(0.255 0.035 330);
+  --card-foreground: oklch(0.95 0.02 340);
+  --popover: oklch(0.255 0.035 330);
+  --popover-foreground: oklch(0.95 0.02 340);
+  --primary: oklch(0.8 0.11 355);
+  --primary-foreground: oklch(0.23 0.04 340);
+  --secondary: oklch(0.3 0.04 320);
+  --secondary-foreground: oklch(0.93 0.03 320);
+  --muted: oklch(0.29 0.035 330);
+  --muted-foreground: oklch(0.76 0.04 340);
+  --accent: oklch(0.32 0.05 340);
+  --accent-foreground: oklch(0.95 0.02 340);
+  --border: oklch(0.85 0.06 340 / 14%);
+  --input: oklch(0.85 0.06 340 / 20%);
+  --ring: oklch(0.65 0.1 355);
+  --sidebar: oklch(0.235 0.035 325);
+  --sidebar-foreground: oklch(0.95 0.02 340);
+  --sidebar-primary: oklch(0.8 0.11 355);
+  --sidebar-primary-foreground: oklch(0.23 0.04 340);
+  --sidebar-accent: oklch(0.31 0.045 330);
+  --sidebar-accent-foreground: oklch(0.95 0.02 340);
+  --sidebar-border: oklch(0.85 0.06 340 / 12%);
+  --sidebar-ring: oklch(0.65 0.1 355);
+}
+
+/* ナチュラル: unbleached paper and sage green. */
+[data-style="natural"] {
+  --font-stack-sans: var(--font-zen-kaku), var(--font-stack-jp);
+  --radius: 0.75rem;
+  --background: oklch(0.975 0.012 85);
+  --foreground: oklch(0.3 0.02 70);
+  --card: oklch(0.985 0.01 85);
+  --card-foreground: oklch(0.3 0.02 70);
+  --popover: oklch(0.985 0.01 85);
+  --popover-foreground: oklch(0.3 0.02 70);
+  --primary: oklch(0.5 0.075 145);
+  --primary-foreground: oklch(0.98 0.01 90);
+  --secondary: oklch(0.94 0.02 110);
+  --secondary-foreground: oklch(0.35 0.04 130);
+  --muted: oklch(0.95 0.015 85);
+  --muted-foreground: oklch(0.52 0.025 75);
+  --accent: oklch(0.93 0.025 115);
+  --accent-foreground: oklch(0.33 0.04 130);
+  --border: oklch(0.89 0.02 85);
+  --input: oklch(0.88 0.022 85);
+  --ring: oklch(0.65 0.06 145);
+  --sidebar: oklch(0.955 0.018 85);
+  --sidebar-foreground: oklch(0.3 0.02 70);
+  --sidebar-primary: oklch(0.5 0.075 145);
+  --sidebar-primary-foreground: oklch(0.98 0.01 90);
+  --sidebar-accent: oklch(0.92 0.025 110);
+  --sidebar-accent-foreground: oklch(0.33 0.04 130);
+  --sidebar-border: oklch(0.88 0.022 85);
+  --sidebar-ring: oklch(0.65 0.06 145);
+}
+.dark[data-style="natural"],
+.dark [data-style="natural"],
+[data-style="natural"] .dark {
+  --background: oklch(0.22 0.012 70);
+  --foreground: oklch(0.93 0.015 85);
+  --card: oklch(0.26 0.014 70);
+  --card-foreground: oklch(0.93 0.015 85);
+  --popover: oklch(0.26 0.014 70);
+  --popover-foreground: oklch(0.93 0.015 85);
+  --primary: oklch(0.75 0.08 140);
+  --primary-foreground: oklch(0.22 0.02 120);
+  --secondary: oklch(0.3 0.018 110);
+  --secondary-foreground: oklch(0.93 0.015 85);
+  --muted: oklch(0.3 0.015 75);
+  --muted-foreground: oklch(0.73 0.02 80);
+  --accent: oklch(0.31 0.022 110);
+  --accent-foreground: oklch(0.93 0.015 85);
+  --border: oklch(0.9 0.03 85 / 12%);
+  --input: oklch(0.9 0.03 85 / 18%);
+  --ring: oklch(0.6 0.06 140);
+  --sidebar: oklch(0.25 0.013 70);
+  --sidebar-foreground: oklch(0.93 0.015 85);
+  --sidebar-primary: oklch(0.75 0.08 140);
+  --sidebar-primary-foreground: oklch(0.22 0.02 120);
+  --sidebar-accent: oklch(0.31 0.02 110);
+  --sidebar-accent-foreground: oklch(0.93 0.015 85);
+  --sidebar-border: oklch(0.9 0.03 85 / 10%);
+  --sidebar-ring: oklch(0.6 0.06 140);
+}
+
+/* さわやか: white, sky blue and teal, in the first look's letters. */
+[data-style="fresh"] {
+  --font-stack-sans: var(--font-geist-sans), var(--font-stack-jp);
+  --radius: 0.625rem;
+  --background: oklch(0.995 0.003 220);
+  --foreground: oklch(0.26 0.035 245);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.26 0.035 245);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.26 0.035 245);
+  --primary: oklch(0.56 0.13 232);
+  --primary-foreground: oklch(0.99 0.005 220);
+  --secondary: oklch(0.95 0.02 205);
+  --secondary-foreground: oklch(0.33 0.06 230);
+  --muted: oklch(0.965 0.01 220);
+  --muted-foreground: oklch(0.52 0.03 235);
+  --accent: oklch(0.945 0.03 200);
+  --accent-foreground: oklch(0.32 0.06 225);
+  --border: oklch(0.91 0.015 220);
+  --input: oklch(0.9 0.018 220);
+  --ring: oklch(0.7 0.1 220);
+  --sidebar: oklch(0.975 0.012 212);
+  --sidebar-foreground: oklch(0.26 0.035 245);
+  --sidebar-primary: oklch(0.56 0.13 232);
+  --sidebar-primary-foreground: oklch(0.99 0.005 220);
+  --sidebar-accent: oklch(0.935 0.03 205);
+  --sidebar-accent-foreground: oklch(0.32 0.06 225);
+  --sidebar-border: oklch(0.91 0.018 215);
+  --sidebar-ring: oklch(0.7 0.1 220);
+}
+.dark[data-style="fresh"],
+.dark [data-style="fresh"],
+[data-style="fresh"] .dark {
+  --background: oklch(0.2 0.03 250);
+  --foreground: oklch(0.96 0.01 220);
+  --card: oklch(0.24 0.035 250);
+  --card-foreground: oklch(0.96 0.01 220);
+  --popover: oklch(0.24 0.035 250);
+  --popover-foreground: oklch(0.96 0.01 220);
+  --primary: oklch(0.79 0.11 212);
+  --primary-foreground: oklch(0.2 0.03 250);
+  --secondary: oklch(0.29 0.035 245);
+  --secondary-foreground: oklch(0.96 0.01 220);
+  --muted: oklch(0.28 0.03 250);
+  --muted-foreground: oklch(0.75 0.03 230);
+  --accent: oklch(0.31 0.045 232);
+  --accent-foreground: oklch(0.96 0.01 220);
+  --border: oklch(0.85 0.05 220 / 13%);
+  --input: oklch(0.85 0.05 220 / 19%);
+  --ring: oklch(0.62 0.1 215);
+  --sidebar: oklch(0.22 0.035 250);
+  --sidebar-foreground: oklch(0.96 0.01 220);
+  --sidebar-primary: oklch(0.79 0.11 212);
+  --sidebar-primary-foreground: oklch(0.2 0.03 250);
+  --sidebar-accent: oklch(0.3 0.045 235);
+  --sidebar-accent-foreground: oklch(0.96 0.01 220);
+  --sidebar-border: oklch(0.85 0.05 220 / 11%);
+  --sidebar-ring: oklch(0.62 0.1 215);
+}
+
+/* レトロ: cream paper and brown ink, in a pen's hand. */
+[data-style="retro"] {
+  --font-stack-sans: var(--font-klee), var(--font-stack-jp);
+  --radius: 0.375rem;
+  --background: oklch(0.955 0.03 85);
+  --foreground: oklch(0.33 0.05 50);
+  --card: oklch(0.97 0.025 85);
+  --card-foreground: oklch(0.33 0.05 50);
+  --popover: oklch(0.97 0.025 85);
+  --popover-foreground: oklch(0.33 0.05 50);
+  --primary: oklch(0.47 0.09 45);
+  --primary-foreground: oklch(0.96 0.03 85);
+  --secondary: oklch(0.92 0.035 80);
+  --secondary-foreground: oklch(0.36 0.06 50);
+  --muted: oklch(0.93 0.03 85);
+  --muted-foreground: oklch(0.5 0.05 55);
+  --accent: oklch(0.9 0.045 75);
+  --accent-foreground: oklch(0.34 0.06 50);
+  --border: oklch(0.85 0.04 75);
+  --input: oklch(0.83 0.045 75);
+  --ring: oklch(0.62 0.08 50);
+  --sidebar: oklch(0.925 0.04 80);
+  --sidebar-foreground: oklch(0.33 0.05 50);
+  --sidebar-primary: oklch(0.47 0.09 45);
+  --sidebar-primary-foreground: oklch(0.96 0.03 85);
+  --sidebar-accent: oklch(0.885 0.05 75);
+  --sidebar-accent-foreground: oklch(0.34 0.06 50);
+  --sidebar-border: oklch(0.84 0.045 75);
+  --sidebar-ring: oklch(0.62 0.08 50);
+}
+.dark[data-style="retro"],
+.dark [data-style="retro"],
+[data-style="retro"] .dark {
+  --background: oklch(0.22 0.025 55);
+  --foreground: oklch(0.88 0.06 80);
+  --card: oklch(0.26 0.03 55);
+  --card-foreground: oklch(0.88 0.06 80);
+  --popover: oklch(0.26 0.03 55);
+  --popover-foreground: oklch(0.88 0.06 80);
+  --primary: oklch(0.79 0.12 75);
+  --primary-foreground: oklch(0.22 0.03 55);
+  --secondary: oklch(0.3 0.03 55);
+  --secondary-foreground: oklch(0.88 0.06 80);
+  --muted: oklch(0.3 0.03 55);
+  --muted-foreground: oklch(0.72 0.05 75);
+  --accent: oklch(0.32 0.04 60);
+  --accent-foreground: oklch(0.9 0.06 80);
+  --border: oklch(0.85 0.08 75 / 15%);
+  --input: oklch(0.85 0.08 75 / 21%);
+  --ring: oklch(0.62 0.09 70);
+  --sidebar: oklch(0.25 0.03 55);
+  --sidebar-foreground: oklch(0.88 0.06 80);
+  --sidebar-primary: oklch(0.79 0.12 75);
+  --sidebar-primary-foreground: oklch(0.22 0.03 55);
+  --sidebar-accent: oklch(0.31 0.04 58);
+  --sidebar-accent-foreground: oklch(0.9 0.06 80);
+  --sidebar-border: oklch(0.85 0.08 75 / 12%);
+  --sidebar-ring: oklch(0.62 0.09 70);
+}
+
+/* In a look of its own, the editor on the page's colours, not BlockNote's
+   white (or its grey in the dark), and its menus on the popover's. */
+:root[data-style] .bn-root {
+  --bn-colors-editor-background: var(--background);
+  --bn-colors-editor-text: var(--foreground);
+  --bn-colors-menu-background: var(--popover);
+  --bn-colors-menu-text: var(--popover-foreground);
+  --bn-colors-tooltip-background: var(--muted);
+  --bn-colors-tooltip-text: var(--foreground);
+  --bn-colors-hovered-background: var(--accent);
+  --bn-colors-hovered-text: var(--accent-foreground);
+  --bn-colors-selected-background: var(--accent);
+  --bn-colors-selected-text: var(--accent-foreground);
+  --bn-colors-disabled-text: var(--muted-foreground);
+  --bn-colors-border: var(--border);
+  --bn-colors-side-menu: var(--muted-foreground);
+  /* And in the look's letters: BlockNote names fonts of its own. */
+  --bn-font-family: var(--font-stack-sans);
+}
+:root[data-style] .bn-default-styles {
+  font-family: var(--font-stack-sans);
 }
 
 @layer base {

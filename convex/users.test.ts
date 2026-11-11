@@ -50,3 +50,28 @@ describe("the welcome, shown once to each account", () => {
     await expect(t.mutation(api.users.markWelcomed, {})).rejects.toThrow();
   });
 });
+
+describe("the app's look, kept for the account", () => {
+  test("none chosen, none said (the first); chosen, kept with the other settings as they were", async () => {
+    const t = setup();
+    const me = await signedIn(t);
+    expect((await me.query(api.users.me, {}))?.settings.style).toBeUndefined();
+
+    await me.mutation(api.users.updateSettings, { style: "cute" });
+    const settings = (await me.query(api.users.me, {}))?.settings;
+    expect(settings?.style).toBe("cute");
+    expect(settings?.trashRetentionDays).toBe(30);
+
+    // Another setting changed: the look stays.
+    await me.mutation(api.users.updateSettings, { trashRetentionDays: 7 });
+    expect((await me.query(api.users.me, {}))?.settings.style).toBe("cute");
+  });
+
+  test("a look there is not, turned away", async () => {
+    const t = setup();
+    const me = await signedIn(t);
+    await expect(
+      me.mutation(api.users.updateSettings, { style: "neon" as unknown as "cute" }),
+    ).rejects.toThrow();
+  });
+});
