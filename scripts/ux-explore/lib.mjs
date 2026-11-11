@@ -11,6 +11,8 @@ export async function signUp(page) {
   await page.setExtraHTTPHeaders({ "x-forwarded-for": `10.${part()}.${part()}.${part()}` });
   const email = `ux-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@memoca.test`;
   await page.goto(BASE + "/");
+  // No welcome, nor note to try things in: they would stand over what is explored.
+  await page.evaluate(() => localStorage.setItem("memoca:welcome-off", "1"));
   const status = await page.evaluate(
     async ([address, password]) => {
       const res = await fetch("/api/auth/sign-up/email", {

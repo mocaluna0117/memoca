@@ -1,14 +1,16 @@
 "use client";
 
 import { useConvex, useMutation } from "convex/react";
-import { Loader2, LogOut, Smartphone } from "lucide-react";
+import { CircleHelp, Loader2, LogOut, Smartphone } from "lucide-react";
 import { useTheme } from "next-themes";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { useClientValue, useMediaQuery } from "@/lib/hooks/use-client-value";
 import { SIDEBAR_MODES, type SidebarMode, useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
 import { api } from "@convex/_generated/api";
 import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
+import { SHOW_WELCOME } from "@/components/onboarding/welcome-tour";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
@@ -118,6 +120,22 @@ export default function SettingsPage() {
       <MobileHeader title={t.nav.settings} />
       <div className="mx-auto w-full max-w-2xl space-y-8 px-4 py-6 sm:px-6">
         <h1 className="text-lg font-semibold tracking-tight">{t.nav.settings}</h1>
+
+        <Section title={t.nav.help} description="よく使う機能の説明です。はじめの案内も、もう一度見られます。">
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" className="gap-2" asChild>
+              <Link href="/app/help">
+                <CircleHelp className="size-4" aria-hidden />
+                使い方を見る
+              </Link>
+            </Button>
+            <Button variant="ghost" onClick={() => window.dispatchEvent(new Event(SHOW_WELCOME))}>
+              はじめの案内をもう一度見る
+            </Button>
+          </div>
+        </Section>
+
+        <Separator />
 
         <Section title="外観">
           <Select value={theme ?? "system"} onValueChange={setTheme}>

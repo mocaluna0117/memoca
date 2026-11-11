@@ -16,6 +16,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { uuidv7 } from "uuidv7";
+import { createPracticeNote, welcomeOff } from "@/lib/welcome";
 import { api } from "@convex/_generated/api";
 import { vault } from "@/lib/crypto/vault";
 import { db, getMeta, setMeta } from "@/lib/db";
@@ -200,8 +201,13 @@ async function provisionAccount(
   });
   if (result.status === "closed") return "closed";
   if (result.status === "badInvite") return "badInvite";
+  // Made just now, by this page: a note to try things in, once its sync has started.
+  if (result.status === "created") madeNow = { inboxFolderId: result.inboxFolderId };
   return "created";
 }
+
+/** The account this page made just now, its Inbox: given its note to try things in (lib/welcome) as its sync starts. */
+let madeNow: { inboxFolderId: string | null } | null = null;
 
 /**
  * Starts the background sync once an account exists, and keeps the rest of the
@@ -345,7 +351,13 @@ export function SyncProvider({
     const next = new SyncEngine(client);
     engineRef.current = next;
     const unsubscribe = next.subscribe(store.set);
-    startedRef.current = next.start(userKey).then(() => next);
+    startedRef.current = next.start(userKey).then(() => {
+      // After the start, which wipes another account's data from the device.
+      const made = madeNow;
+      madeNow = null;
+      if (made && !welcomeOff()) void createPracticeNote(made.inboxFolderId).catch(() => undefined);
+      return next;
+    });
     return () => {
       unsubscribe();
       next.stop();

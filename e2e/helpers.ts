@@ -28,6 +28,7 @@ export async function signUp(page: Page): Promise<string> {
   await ownAddress(page);
   await page.goto("/");
   await keepListMode(page);
+  await noWelcome(page);
   const status = await page.evaluate(
     async ([address, password]) => {
       const res = await fetch("/api/auth/sign-up/email", {
@@ -47,6 +48,7 @@ export async function signIn(page: Page, email: string): Promise<void> {
   await ownAddress(page);
   await page.goto("/");
   await keepListMode(page);
+  await noWelcome(page);
   await page.evaluate(
     async ([address, password]) => {
       await fetch("/api/auth/sign-in/email", {
@@ -70,6 +72,15 @@ async function keepListMode(page: Page): Promise<void> {
       localStorage.setItem("memoca:sidebar-mode", "list");
     }
   });
+}
+
+/**
+ * No welcome, nor note to try things in (lib/welcome), on this device: every
+ * test's account is new, and the welcome would stand over what it tests.
+ * e2e/onboarding.spec.ts, which tests the welcome, does not call this.
+ */
+async function noWelcome(page: Page): Promise<void> {
+  await page.evaluate(() => localStorage.setItem("memoca:welcome-off", "1"));
 }
 
 /** Folders' notes inside them in the sidebar, as VS Code's explorer shows files: the app's own default. */

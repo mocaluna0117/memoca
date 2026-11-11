@@ -58,6 +58,8 @@ export default defineSchema({
       prefetchBodies: v.boolean(),
     }),
     createdAt: v.number(),
+    /** When the account first saw the app's welcome (lib/welcome): shown until it has, once. */
+    welcomedAt: v.optional(v.number()),
   })
     .index("by_authId", ["authId"])
     .index("by_email", ["email"]),

@@ -21,6 +21,7 @@ export const ja = {
     allNotes: "すべてのメモ",
     pinned: "ピン留め",
     folders: "フォルダ",
+    help: "使い方",
   },
   action: {
     newNote: "新しいメモ",

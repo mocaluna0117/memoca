@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
+  CircleHelp,
   FilePlus,
   FolderPlus,
   Megaphone,
@@ -88,6 +89,7 @@ export function Sidebar({
     { href: "/app/search", label: t.nav.search, icon: Search },
     { href: "/app/trash", label: t.nav.trash, icon: Trash2 },
     { href: "/app/news", label: t.nav.news, icon: Megaphone },
+    { href: "/app/help", label: t.nav.help, icon: CircleHelp },
     { href: "/app/settings", label: t.nav.settings, icon: Settings },
     ...(me?.role === "admin" ? [{ href: "/app/admin", label: t.nav.admin, icon: Shield }] : []),
   ];

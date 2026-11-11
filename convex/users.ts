@@ -156,7 +156,18 @@ export const me = query({
       hasVault: vault !== null,
       limits: { maxImageBytes: config.maxImageBytes, maxVideoBytes: config.maxVideoBytes },
       createdAt: user.createdAt,
+      /** Whether the account has seen the app's welcome (on any device): shown until it has. */
+      welcomed: user.welcomedAt !== undefined,
     };
+  },
+});
+
+/** The welcome seen (closed, or gone through), on whichever device: not shown again. Once: when it was first is kept. */
+export const markWelcomed = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const user = await requireUser(ctx);
+    if (user.welcomedAt === undefined) await ctx.db.patch(user._id, { welcomedAt: Date.now() });
   },
 });
 
