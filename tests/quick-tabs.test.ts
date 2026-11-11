@@ -2,7 +2,21 @@ import "fake-indexeddb/auto";
 import { beforeEach, describe, expect, test } from "vitest";
 import { getMeta, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
-import { MAX_TABS, closeTab, keepDraft, loadDraft, loadTabs, openTab, showTab } from "@/lib/quick/draft";
+import {
+  MAX_TABS,
+  closeTab,
+  forgetTabs,
+  goneTabs,
+  keepDraft,
+  loadDraft,
+  loadTabs,
+  newTabId,
+  openTab,
+  showTab,
+  shownIsHidden,
+} from "@/lib/quick/draft";
+import { db } from "@/lib/db";
+import { TODO_TAB_ID } from "@/lib/quick/todo-id";
 
 const ME = "user-me";
 
@@ -76,5 +90,58 @@ describe("the quick note's tabs", () => {
     expect(after.ids).toHaveLength(1);
     expect(after.active).not.toBe(only);
     expect(await loadDraft(ME, after.active)).toBeNull();
+  });
+});
+
+describe("tabs closed on another device", () => {
+  const MINUTE = 60 * 1000;
+  test("are this device's no more: one whose note is in the trash, or one long made whose note is nowhere", () => {
+    const closed = newTabId();
+    const open = newTabId();
+    const purged = newTabId();
+    const justMade = newTabId();
+    const notes = [
+      { noteId: closed, deletedAt: Date.now(), purged: false },
+      { noteId: open, deletedAt: null, purged: false },
+    ];
+    const later = Date.now() + 30 * MINUTE;
+    // Just made, its note not written yet: kept.
+    expect(goneTabs([TODO_TAB_ID, closed, open, justMade], notes, Date.now())).toEqual([closed]);
+    // Long made, its note gone from this device (purged from the trash): gone.
+    expect(goneTabs([TODO_TAB_ID, closed, open, purged], notes, later)).toEqual([closed, purged]);
+  });
+
+  test("forgotten, they no longer count against the most there may be, and another is shown in their place", async () => {
+    const first = (await loadTabs(ME)).ids[0]!;
+    const gone: string[] = [];
+    for (let i = 1; i < MAX_TABS; i++) gone.push((await openTab(ME))!);
+    expect(await openTab(ME)).toBeNull();
+    const tabs = await forgetTabs(ME, gone);
+    expect(tabs.ids).toEqual([first]);
+    expect(tabs.active).toBe(first);
+    expect(await openTab(ME)).not.toBeNull();
+  });
+});
+
+describe("a tab of another device's, shown here", () => {
+  test("is made this device's own as it is shown, even as the one it already shows", async () => {
+    const theirs = newTabId();
+    const tabs = await loadTabs(ME);
+    await setMeta(`${META.quickTabs}:${ME}`, { ...tabs, active: theirs });
+    const shown = await showTab(ME, theirs);
+    expect(shown.ids).toContain(theirs);
+    expect(shown.active).toBe(theirs);
+  });
+});
+
+describe("the empty tab made for this device, shown", () => {
+  test("is out of sight while another tab of the account's has something in it", async () => {
+    const tabs = await loadTabs(ME);
+    const mine = { ...tabs, fresh: tabs.active };
+    expect(await shownIsHidden(mine, "")).toBe(false);
+    await db().notes.add({ noteId: newTabId(), preview: "ほかの端末のメモ", deletedAt: null, purged: false } as never);
+    expect(await shownIsHidden(mine, "")).toBe(true);
+    // Something in it: in sight.
+    expect(await shownIsHidden(mine, "下書き")).toBe(false);
   });
 });

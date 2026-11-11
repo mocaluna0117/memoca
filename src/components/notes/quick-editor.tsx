@@ -32,6 +32,7 @@ import type * as Y from "yjs";
 import { MemocaFormattingToolbar } from "@/components/editor/image-crop";
 import { imeCommit } from "@/components/editor/ime-commit";
 import { japaneseLists } from "@/components/editor/japanese-lists";
+import { type LinesAnchor, type LinesTaken, linesForTodo, putBackLines, removeLines } from "@/lib/quick/move-lines";
 import { listKeys } from "@/components/editor/list-keys";
 import { InlineBlockBar } from "@/components/editor/mobile-block-toolbar";
 import { pasteLink } from "@/components/editor/paste-link";
@@ -55,11 +56,11 @@ export type QuickEditorHandle = {
    * The lines to move into the Todo: those the selection is in, or, with
    * none selected (the caret alone), all of them; and whether that is all.
    */
-  linesForTodo: () => { blocks: Block[]; all: boolean; after: string | null };
+  linesForTodo: () => LinesTaken;
   /** Takes these blocks out, as an edit of the editor's own (⌘ + Z puts them back). */
   remove: (ids: string[]) => void;
-  /** Puts blocks back: after the block of `after`'s id, or at the top. */
-  putBack: (blocks: Block[], after: string | null) => void;
+  /** Puts blocks back where they were taken from. */
+  putBack: (blocks: Block[], anchor: LinesAnchor) => void;
   /** Images (chosen by the button) put in where the caret is, each made ready as one pasted is. */
   insertImages: (files: File[]) => void;
 };
@@ -238,38 +239,9 @@ export const QuickEditor = memo(function QuickEditor({
         editor.focus();
       },
       focused: () => editor.prosemirrorView?.hasFocus() ?? false,
-      linesForTodo: () => {
-        const all = plain.document;
-        const state = plain.prosemirrorView?.state;
-        const selected = state && !state.selection.empty ? plain.getSelection()?.blocks : undefined;
-        if (!selected || selected.length === 0) return { blocks: all, all: true, after: null };
-        const ids = new Set(selected.map((block) => block.id));
-        const first = all.findIndex((block) => ids.has(block.id));
-        return {
-          blocks: selected,
-          all: all.every((block) => ids.has(block.id)),
-          after: first > 0 ? all[first - 1]!.id : null,
-        };
-      },
-      remove: (ids) => {
-        const there = new Set(ids);
-        const gone = plain.document.filter((block) => there.has(block.id));
-        if (gone.length === 0) return;
-        // All of it: an empty line left, to write the next in.
-        if (gone.length === plain.document.length) {
-          plain.replaceBlocks(gone, [{ type: "paragraph" }]);
-        } else {
-          plain.removeBlocks(gone);
-        }
-      },
-      putBack: (blocks, after) => {
-        const document = plain.document;
-        const only = document.length === 1 && document[0]!.type === "paragraph" && !document[0]!.content?.length;
-        const anchor = after ? document.find((block) => block.id === after) : undefined;
-        if (only) plain.replaceBlocks(document, blocks);
-        else if (anchor) plain.insertBlocks(blocks, anchor, "after");
-        else if (document[0]) plain.insertBlocks(blocks, document[0], "before");
-      },
+      linesForTodo: () => linesForTodo(plain),
+      remove: (ids) => removeLines(plain, ids),
+      putBack: (blocks, anchor) => putBackLines(plain, blocks, anchor),
       insertImages: (files) => void insertImages(files),
     }),
     [editor, plain, insertImages],

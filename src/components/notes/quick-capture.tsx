@@ -68,11 +68,13 @@ import {
   type SavedAs,
   addFreshTab,
   closeTab,
+  forgetTabs,
   loadTabs,
   openTab,
   openTodoTab,
   rememberUnsaved,
   restoreTab,
+  shownIsHidden,
   showTab,
   unsaved,
   useQuickTabs,
@@ -298,9 +300,13 @@ function Tabbed({
             await releaseDoc(tabs.active);
           }
         }
-        // Into the tab shown if it is empty (or holds it already); never the Todo's.
+        // Into the tab shown if it is empty (or holds it already); never the
+        // Todo's, nor the empty one made for this device, out of sight while
+        // the account has tabs of its own (useQuickTabs): a new one, shown.
         const busy =
-          tabs.active === TODO_TAB_ID || (there.trim() !== "" && !holdsShared(there, shared));
+          tabs.active === TODO_TAB_ID ||
+          (await shownIsHidden(tabs, there)) ||
+          (there.trim() !== "" && !holdsShared(there, shared));
         const tab = busy ? ((await openTab(userKey)) ?? tabs.active) : tabs.active;
         if (current) setShare({ tab, text: shared });
       }
@@ -342,6 +348,11 @@ function Tabbed({
   useEffect(() => {
     if (none) void addFreshTab(userKey);
   }, [none, userKey]);
+  // Tabs closed on another device: no longer this one's (see goneTabs).
+  const gone = live?.gone.join(",") ?? "";
+  useEffect(() => {
+    if (gone) void forgetTabs(userKey, gone.split(","));
+  }, [gone, userKey]);
 
   // Said by the tab shown next, once one is saved and closed.
   const [notice, setNotice] = useState<Status>(null);
@@ -472,6 +483,9 @@ function Tabbed({
           escapeEnabled={closing === null && !picking}
           onText={(text, images, changed) => {
             setTyped({ id: active, text, images, unsaved: changed });
+            // Written in here: this device's tab, not to go as it is emptied
+            // (one of another device's, shown in place of this one's empty one).
+            if (live && !live.own.includes(active)) void showTab(userKey, active).catch(() => undefined);
             // For the tab once it is not shown: closed, asked about or not.
             void rememberUnsaved(userKey, active, changed).catch(() => undefined);
           }}
@@ -1031,9 +1045,10 @@ function Capture({
         toast(t.quick.nothingToMove);
         return;
       }
-      // Its lines go; an image (or a table) stays where it is.
+      // Its lines go; an image (or a table) stays where it is, under a
+      // line that goes too.
       const lines = taken.blocks.filter((block) => Array.isArray(block.content));
-      const stays = lines.length < taken.blocks.length;
+      const stays = taken.keepsSomething;
       if (taken.all && !stays) {
         await flushDoc(noteId).catch(() => undefined);
         onMovedAll(ids);
@@ -1048,7 +1063,7 @@ function Capture({
           onClick: () => {
             // Gone from here (another tab shown): left in the Todo.
             if (!here || editor.current !== here) return;
-            here.putBack(lines, taken.after);
+            here.putBack(lines, taken.anchor);
             void takeOutOfTodo(ids, sync).catch(() => toast.error(t.quick.moveFailed));
           },
         },

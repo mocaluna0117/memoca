@@ -322,6 +322,67 @@ const tabsKey = (userKey: string) => `${META.quickTabs}:${userKey}`;
  */
 export const newTabId = () => `${QUICK_TAB_PREFIX}${uuidv7()}`;
 
+/** When a tab was made: its id is a v7 UUID, which begins with the time. */
+function tabMadeAt(tabId: string): number {
+  const hex = tabId.slice(QUICK_TAB_PREFIX.length).replace(/-/g, "").slice(0, 12);
+  const at = Number.parseInt(hex, 16);
+  return Number.isFinite(at) ? at : 0;
+}
+
+/** How long a tab just made may have no note yet (written as it is first shown): one older with none is long gone. */
+const NOTE_MADE_WITHIN_MS = 10 * 60 * 1000;
+
+/**
+ * This device's tabs closed elsewhere: their notes in the trash, or, made
+ * long ago, nowhere on this device (purged from the trash, and the row
+ * with it). Kept, they counted against MAX_TABS (+ doing nothing at all),
+ * and one purged came back as an empty tab whose note the server no
+ * longer takes.
+ */
+export function goneTabs(
+  ids: readonly string[],
+  notes: readonly { noteId: string; deletedAt: number | null; purged?: boolean }[],
+  now: number,
+): string[] {
+  const rows = new Map(notes.map((note) => [note.noteId, note]));
+  return ids.filter((id) => {
+    if (!isQuickTab(id)) return false;
+    const note = rows.get(id);
+    if (note) return note.purged === true || note.deletedAt !== null;
+    return now - tabMadeAt(id) > NOTE_MADE_WITHIN_MS;
+  });
+}
+
+/**
+ * Whether the tab shown here is the empty one made for this device, out of
+ * sight while the account has tabs with something in them (as
+ * useQuickTabs hides it): nothing put into it would be seen.
+ */
+export async function shownIsHidden(tabs: QuickTabs, text: string): Promise<boolean> {
+  if (!tabs.fresh || tabs.active !== tabs.fresh || text.trim() !== "") return false;
+  const others = await db()
+    .notes.where("noteId")
+    .startsWith(QUICK_TAB_PREFIX)
+    .filter((note) => note.noteId !== tabs.fresh && !note.purged && note.deletedAt === null && (note.preview ?? "").trim() !== "")
+    .count();
+  return others > 0;
+}
+
+/** Tabs closed elsewhere taken out of this device's: another shown in place of the one shown, if it went. */
+export function forgetTabs(userKey: string, gone: readonly string[]): Promise<QuickTabs> {
+  return changeTabs(userKey, (tabs) => {
+    if (!gone.some((id) => tabs.ids.includes(id))) return tabs;
+    const ids = tabs.ids.filter((id) => !gone.includes(id));
+    if (ids.length === 0) return fresh(userKey);
+    return {
+      ...tabs,
+      ids,
+      active: ids.includes(tabs.active) ? tabs.active : ids.at(-1)!,
+      fresh: tabs.fresh && ids.includes(tabs.fresh) ? tabs.fresh : undefined,
+    };
+  });
+}
+
 /** One empty tab, the one shown. */
 const fresh = (userKey: string): QuickTabs => {
   const id = newTabId();
@@ -422,10 +483,14 @@ export function openTodoTab(userKey: string): Promise<QuickTabs> {
   });
 }
 
-/** Shows a tab: one another device opened, among this one's from now on. */
+/**
+ * Shows a tab: one another device opened, among this one's from now on
+ * (shown already, as the one in place of this device's empty one, too: one
+ * not this device's goes from its tabs as it is emptied).
+ */
 export function showTab(userKey: string, tabId: string): Promise<QuickTabs> {
   return changeTabs(userKey, (tabs) => {
-    if (tabs.active === tabId) return tabs;
+    if (tabs.active === tabId && tabs.ids.includes(tabId)) return tabs;
     const ids = tabs.ids.includes(tabId) ? tabs.ids : [...tabs.ids, tabId];
     return { ...tabs, ids, active: tabId };
   });
@@ -487,7 +552,7 @@ export type TabFace = { text: string; images: number; unsaved: boolean };
  */
 export function useQuickTabs(
   userKey: string,
-): { tabs: QuickTabs; faces: ReadonlyMap<string, TabFace>; own: readonly string[] } | undefined {
+): { tabs: QuickTabs; faces: ReadonlyMap<string, TabFace>; own: readonly string[]; gone: readonly string[] } | undefined {
   return useLiveQuery(async () => {
     const kept = await getMeta<QuickTabs | null>(tabsKey(userKey), null);
     if (!kept || kept.userKey !== userKey || kept.ids.length === 0) return undefined;
@@ -511,9 +576,11 @@ export function useQuickTabs(
       if (!own.has(note.noteId) && text.trim() === "" && count === 0) continue;
       faces.set(note.noteId, { text, images: count, unsaved: seen[note.noteId] ?? (text.trim() !== "" || count > 0) });
     }
+    // Closed on another device: to be taken out of this one's (Tabbed).
+    const gone = goneTabs(kept.ids, notes, Date.now());
     // Opened here a moment ago, its note not made yet: shown, empty.
     for (const id of kept.ids) {
-      if (isQuickTab(id) && !known.has(id)) faces.set(id, { text: "", images: 0, unsaved: false });
+      if (isQuickTab(id) && !known.has(id) && !gone.includes(id)) faces.set(id, { text: "", images: 0, unsaved: false });
     }
     // The empty one made for this device, out of sight while the account
     // has tabs of its own: the newest of those shown in its place.
@@ -527,6 +594,6 @@ export function useQuickTabs(
     const active = ids.includes(kept.active)
       ? kept.active
       : ((hidden && kept.active === kept.fresh ? drafts.at(-1) : drafts[0]) ?? ids[0] ?? "");
-    return { tabs: { userKey, ids, active }, faces, own: kept.ids };
+    return { tabs: { userKey, ids, active }, faces, own: kept.ids, gone };
   }, [userKey]);
 }
