@@ -1,4 +1,4 @@
-import { createExtension } from "@blocknote/core";
+import { type Extension, createExtension } from "@blocknote/core";
 import type { Node } from "prosemirror-model";
 import { type EditorState, Plugin, type Transaction } from "prosemirror-state";
 
@@ -189,11 +189,40 @@ let ownPaste = false;
  * And what the input method makes of BlockNote's own shortcuts: ー, －, ＊
  * or ＋ and a space (half or full width) a bullet; １．, 1。 and a space a
  * numbered list, from that number; 「」 and a space a check list item,
- * 「x」 one ticked. Not １、 nor ①: those begin sentences.
+ * 「x」 one ticked; ＃ to ＃＃＃ and a space a heading, ＞ and one a quote.
+ * Not １、 nor ①: those begin sentences.
  *
  * And lines written with ・ at their start, made a bullet list together,
  * lose it: see {@link listFromMarks}.
  */
+// 「」 and a space: a check list item, as [] and a space is; 「x」, 「×」
+// or 「✓」: one ticked.
+const CHECK_RULES: NonNullable<Extension["inputRules"]> = [
+  {
+    find: /^\s?「[\s　]*」\s$/,
+    replace({ editor }) {
+      const { block } = editor.getTextCursorPosition();
+      if (block.type === "heading") return undefined;
+      return { type: "checkListItem", props: { checked: false } };
+    },
+  },
+  {
+    find: /^\s?「[xXｘＸ×✓✔]」\s$/,
+    replace({ editor }) {
+      const { block } = editor.getTextCursorPosition();
+      if (block.type === "heading") return undefined;
+      return { type: "checkListItem", props: { checked: true } };
+    },
+  },
+];
+
+/**
+ * The Todo's: 「」 and a space, and 「x」 and one, as the input method
+ * types [] and [x], taken off the start of an item (its own lines are all
+ * items, and the other lists' marks stay as they were typed).
+ */
+export const japaneseChecks = createExtension({ key: "memocaJapaneseChecks", inputRules: CHECK_RULES });
+
 export const japaneseLists = createExtension({
   key: "memocaJapaneseLists",
   inputRules: [
@@ -203,6 +232,19 @@ export const japaneseLists = createExtension({
         const { block } = editor.getTextCursorPosition();
         if (block.type !== "paragraph") return undefined;
         return { type: "bulletListItem", props: {} };
+      },
+    },
+    // A space typed into a bullet item with nothing in it yet: the one a
+    // Japanese list puts after its ・ (・　牛乳), which made the line an
+    // item already, not kept at the item's start. One typed before text
+    // already there stays.
+    {
+      find: /^\s$/,
+      replace({ editor }) {
+        const { block } = editor.getTextCursorPosition();
+        if (block.type !== "bulletListItem") return undefined;
+        if (!Array.isArray(block.content) || block.content.length > 0) return undefined;
+        return { type: "bulletListItem", props: block.props };
       },
     },
     // With the input method on, - comes out as ー (or －), * as ＊, + as ＋,
@@ -227,22 +269,24 @@ export const japaneseLists = createExtension({
         return { type: "numberedListItem", props: start === 1 ? {} : { start } };
       },
     },
-    // 「」 and a space: a check list item, as [] and a space is; 「x」, 「×」
-    // or 「✓」: one ticked.
+    ...CHECK_RULES,
+    // ＃ (to ＃＃＃) and a space: a heading of that level, as # is; ＞ and a
+    // space a quote, as > is (quotes.ts). A line of text, or a heading's
+    // level changed, as BlockNote's own.
     {
-      find: /^\s?「[\s　]*」\s$/,
-      replace({ editor }) {
+      find: /^\s?(＃{1,3})\s$/,
+      replace({ editor, match }) {
         const { block } = editor.getTextCursorPosition();
-        if (block.type === "heading") return undefined;
-        return { type: "checkListItem", props: { checked: false } };
+        if (block.type !== "paragraph" && block.type !== "heading") return undefined;
+        return { type: "heading", props: { level: match[1]!.length as 1 | 2 | 3 } };
       },
     },
     {
-      find: /^\s?「[xXｘＸ×✓✔]」\s$/,
+      find: /^\s?＞\s$/,
       replace({ editor }) {
         const { block } = editor.getTextCursorPosition();
-        if (block.type === "heading") return undefined;
-        return { type: "checkListItem", props: { checked: true } };
+        if (block.type !== "paragraph") return undefined;
+        return { type: "quote", props: {} };
       },
     },
   ],

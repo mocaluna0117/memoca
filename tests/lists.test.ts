@@ -112,6 +112,26 @@ describe("・ typed at the start of a line", () => {
   });
 });
 
+describe("・ and a space after it, as a Japanese list is written (・　牛乳)", () => {
+  test("the space, full or half width, does not stay at the start of the item", () => {
+    for (const space of ["　", " "]) {
+      const editor = editorOf([{ type: "paragraph", content: "" }]);
+      caret(editor, "");
+      type(editor, `・${space}牛乳`);
+      expect(outline(editor)).toEqual(["bulletListItem:牛乳"]);
+      unmount?.();
+      unmount = null;
+    }
+  });
+
+  test("a space typed at the start of an item with text in it stays", () => {
+    const editor = editorOf([{ type: "bulletListItem", content: "牛乳" }]);
+    caret(editor, "牛乳");
+    type(editor, "　");
+    expect(outline(editor)).toEqual(["bulletListItem:　牛乳"]);
+  });
+});
+
 describe("- and Enter, then Backspace", () => {
   test("gives back the - alone, with no line break in its text", () => {
     const editor = editorOf([{ type: "paragraph", content: "" }]);
@@ -341,11 +361,16 @@ describe("Enter at the start of a list item with text", () => {
     expect(outline(editor)).toEqual(["checkListItem:", "checkListItem:次済み checked=true"]);
   });
 
-  test("and where the numbers start stays with the text", () => {
+  test("and the numbers still start where they did: the empty one first, the text the next", () => {
     const editor = editorOf([{ type: "numberedListItem", content: "五から", props: { start: 5 } }]);
     caret(editor, "五から", 0);
     expect(press(editor, "Enter")).toBe(true);
-    expect(outline(editor)).toEqual(["numberedListItem:", "numberedListItem:五から start=5"]);
+    expect(outline(editor)).toEqual(["numberedListItem: start=5", "numberedListItem:五から"]);
+    // As shown: 5. and 6. (BlockNote numbers a list from its first item's start).
+    const shown = [...editor.prosemirrorView!.dom.querySelectorAll<HTMLElement>("[data-index]")].map(
+      (element) => element.dataset.index,
+    );
+    expect(shown).toEqual(["5", "6"]);
   });
 });
 
@@ -368,5 +393,90 @@ describe("Backspace at the start of a closed toggle's own line", () => {
     caret(editor, "空", 0);
     press(editor, "Backspace");
     expect(outline(editor)).toEqual(["paragraph:空"]);
+  });
+});
+
+describe("Tab and Shift+Tab in a code block", () => {
+  /** The code block's text, and what is selected of it. */
+  const code = (editor: BlockNoteEditor) => {
+    const view = editor.prosemirrorView!;
+    let text = "";
+    view.state.doc.descendants((node) => {
+      if (node.type.name === "codeBlock") text = node.textContent;
+      return !text;
+    });
+    return { text, selected: view.state.doc.textBetween(view.state.selection.from, view.state.selection.to, "\n") };
+  };
+  /** From `from` characters into the code block's text to `to`. */
+  function selectIn(editor: BlockNoteEditor, from: number, to: number) {
+    const view = editor.prosemirrorView!;
+    let at = -1;
+    view.state.doc.descendants((node, pos) => {
+      if (at < 0 && node.type.name === "codeBlock") at = pos + 1;
+      return at < 0;
+    });
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, at + from, at + to)));
+  }
+
+  test("with lines selected: each line in a step, and out again; none of them lost", () => {
+    const editor = editorOf([{ type: "codeBlock", content: "a = 1\nb = 2\nc = 3" }]);
+    selectIn(editor, 0, 11);
+    expect(press(editor, "Tab")).toBe(true);
+    expect(code(editor).text).toBe("  a = 1\n  b = 2\nc = 3");
+    expect(press(editor, "Tab", { shiftKey: true })).toBe(true);
+    expect(code(editor).text).toBe("a = 1\nb = 2\nc = 3");
+  });
+
+  test("Shift+Tab with the caret alone: its line out a step, and the caret stays in the note", () => {
+    const editor = editorOf([{ type: "codeBlock", content: "  x\ny" }]);
+    selectIn(editor, 3, 3);
+    expect(press(editor, "Tab", { shiftKey: true })).toBe(true);
+    expect(code(editor).text).toBe("x\ny");
+    // Nothing to take off: still kept from the browser.
+    selectIn(editor, 3, 3);
+    expect(press(editor, "Tab", { shiftKey: true })).toBe(true);
+    expect(code(editor).text).toBe("x\ny");
+  });
+
+  test("selected on past the code block: nothing written over", () => {
+    const editor = editorOf([
+      { type: "codeBlock", content: "a\nb" },
+      { type: "paragraph", content: "あと" },
+    ]);
+    const view = editor.prosemirrorView!;
+    let start = -1;
+    view.state.doc.descendants((node, pos) => {
+      if (start < 0 && node.type.name === "codeBlock") start = pos + 1;
+      return start < 0;
+    });
+    view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, start, view.state.doc.content.size - 3)));
+    press(editor, "Tab");
+    expect(code(editor).text).toBe("a\nb");
+    expect(outline(editor).at(-1)).toBe("paragraph:あと");
+  });
+});
+
+describe("headings and quotes as typed with a Japanese input method", () => {
+  test("＃ to ＃＃＃ and a space (full or half width) a heading of that level; ＞ and one a quote", () => {
+    for (const [typed, line] of [
+      ["＃　見出し", "heading:見出し level=1"],
+      ["＃＃　見出し", "heading:見出し level=2"],
+      ["＃＃＃ 見出し", "heading:見出し level=3"],
+      ["＞　引用", "quote:引用"],
+    ] as const) {
+      const editor = editorOf([{ type: "paragraph", content: "" }]);
+      caret(editor, "");
+      type(editor, typed);
+      expect(outline(editor)).toEqual([line]);
+      unmount?.();
+      unmount = null;
+    }
+  });
+
+  test("＃ further in a line, or four of them, stay as they are", () => {
+    const editor = editorOf([{ type: "paragraph", content: "" }]);
+    caret(editor, "");
+    type(editor, "番号＃　1");
+    expect(outline(editor)).toEqual(["paragraph:番号＃　1"]);
   });
 });

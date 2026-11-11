@@ -114,10 +114,14 @@ function KeyboardBlockBar({ inset, inline = false }: { inset: number; inline?: b
     editor.transact(() => {
       for (const each of selected) {
         const spec = (editor.schema.blockSchema as Record<string, { content: string }>)[each.type];
-        if (spec?.content !== "inline") continue;
+        // A code block's text is of its own kind ("plain"): handed over as
+        // the line's, or it could never be made anything else again.
+        const code = spec?.content === "plain";
+        if (spec?.content !== "inline" && !code) continue;
         editor.updateBlock(each, {
           type: same ? "paragraph" : type,
           ...(level !== undefined && !same ? { props: { level } } : {}),
+          ...(code ? { content: each.content } : {}),
         } as Parameters<typeof editor.updateBlock>[1]);
       }
     });

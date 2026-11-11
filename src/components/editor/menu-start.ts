@@ -18,11 +18,12 @@ export const atWordStart = (tr: Transaction) => wordBefore(tr) === "";
  * The / menu: at the end of a word too (typed after a line's text, it makes
  * that line a heading or a list, see slash-turn-line), but not in what reads
  * as a URL or a path, a word with ":", "/" or "." in it ("https://example.com/a"),
- * nor after a number (a date's "11/30"): opened there, it took the next
- * Enter, choosing a block and the text after "/" gone. And not in a table's
- * cells, as BlockNote's own is not.
+ * nor after a number (a date's "11/30") or a letter ("A/B", "I/O", "w/o"):
+ * opened there, it took the next Enter, choosing a block (B for a
+ * subheading) and the text after "/" gone. And not in a table's cells, as
+ * BlockNote's own is not.
  */
 export function slashMenuOpens(tr: Transaction): boolean {
   if (tr.selection.$from.parent.type.isInGroup("tableContent")) return false;
-  return !/[:/.]|\d$/.test(wordBefore(tr));
+  return !/[:/.]|[0-9A-Za-z]$/.test(wordBefore(tr));
 }

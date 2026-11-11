@@ -50,4 +50,12 @@ test("the / menu after a line's text (to turn it), but not in a URL, a path or a
   expect(slashMenuOpens(after("https://example.com"))).toBe(false);
   expect(slashMenuOpens(after("見て example.com"))).toBe(false);
   expect(slashMenuOpens(after("締切 11"))).toBe(false);
+  // Between letters, as A/B, I/O and w/o are written: opened, Enter after "B"
+  // made the line a heading (B for subheading) and "/B" was gone.
+  expect(slashMenuOpens(after("比較は A"))).toBe(false);
+  expect(slashMenuOpens(after("I"))).toBe(false);
+  expect(slashMenuOpens(after("w"))).toBe(false);
+  // After Japanese, as a line is turned: still.
+  expect(slashMenuOpens(after("比較はA/Bテスト"))).toBe(false);
+  expect(slashMenuOpens(after("会議のメモ"))).toBe(true);
 });
