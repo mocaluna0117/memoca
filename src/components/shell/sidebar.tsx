@@ -238,29 +238,46 @@ export function Sidebar({
         />
       </ScrollArea>
 
-      <Separator className="my-2" />
-
-      <nav className="flex flex-col gap-0.5 px-2">
-        {links.map(({ href, label, icon: Icon }) => (
-          <Link
-            key={href}
-            href={href}
-            onClick={onNavigate}
-            className={cn(
-              "flex items-center gap-2 rounded-md px-2 py-1.5 text-sm",
-              pathname === href ? "bg-accent text-accent-foreground" : "hover:bg-accent/60",
-            )}
-          >
-            <Icon className="size-4 opacity-70" aria-hidden />
-            {label}
-            {href === "/app/news" && unreadNews > 0 ? (
-              <UnreadDot count={unreadNews} className="ml-auto" />
-            ) : null}
-          </Link>
-        ))}
+      {/* The other pages, as a row of icons named on hover (and to screen
+          readers): the height they took as a list goes to the folders. As
+          many cells as pages, sharing the width, so they fit the narrowest
+          sidebar too. */}
+      <nav className="mt-1 grid auto-cols-fr grid-flow-col gap-0.5 border-t px-2 pt-1.5">
+        {links.map(({ href, label, icon: Icon }) => {
+          const here = pathname === href;
+          const unread = href === "/app/news" && unreadNews > 0;
+          return (
+            <Tooltip key={href}>
+              <TooltipTrigger asChild>
+                <Link
+                  href={href}
+                  onClick={onNavigate}
+                  aria-current={here ? "page" : undefined}
+                  className={cn(
+                    "flex h-9 items-center justify-center rounded-md md:h-8",
+                    here
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground hover:bg-accent/60 hover:text-foreground",
+                  )}
+                >
+                  <span className="sr-only">{label}</span>
+                  <span className="relative">
+                    <Icon className="size-4" aria-hidden />
+                    {unread ? (
+                      <UnreadDot count={unreadNews} className="absolute -top-1 -right-1.5" />
+                    ) : null}
+                  </span>
+                </Link>
+              </TooltipTrigger>
+              <TooltipContent side="top">
+                {unread ? `${label}（未読 ${unreadNews} 件）` : label}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
       </nav>
 
-      <div className="px-3 py-3">
+      <div className="px-3 pt-2 pb-3">
         <QuotaBar />
       </div>
     </div>

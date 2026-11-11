@@ -13,9 +13,11 @@ export function QuotaBar() {
   const ratio = me.quotaBytes > 0 ? Math.min(100, (used / me.quotaBytes) * 100) : 0;
 
   return (
-    <div className="space-y-1.5">
-      <Progress value={ratio} className="h-1" />
-      <p className="text-muted-foreground text-xs">
+    // One line, the bar beside its figures (the sidebar's height is the
+    // folders'): the figures below it in a sidebar too narrow for both.
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <Progress value={ratio} className="h-1 min-w-12 flex-1" />
+      <p className="text-muted-foreground shrink-0 text-xs">
         {t.quota.used(formatBytes(used), formatBytes(me.quotaBytes))}
       </p>
     </div>
