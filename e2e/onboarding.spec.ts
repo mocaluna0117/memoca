@@ -70,8 +70,11 @@ test("an account just made: done by hand, the quick note to the note's lines, on
   await page.keyboard.press("Enter");
   await page.keyboard.press("Enter");
   await page.keyboard.type("/");
-  await expect(card(page)).toContainText("これで基本はおしまいです");
+  // The menu tried: the last card once it is closed, not under it.
+  await expect(page.locator(".bn-suggestion-menu")).toBeVisible();
+  await expect(card(page)).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(card(page)).toContainText("これで基本はおしまいです");
   await card(page).getByRole("button", { name: "閉じる" }).click();
   await expect(card(page)).toHaveCount(0);
 
@@ -219,5 +222,6 @@ test("the desktop app's: its hotkey, its two windows, and Memoca's own hotkey se
   await card(app).getByRole("button", { name: "閉じる" }).click();
   await expect(card(app)).toHaveCount(0);
   await expect(card(quick)).toHaveCount(0);
-  expect(await app.evaluate(() => localStorage.getItem("memoca:desktop-guide-done"))).toBe("1");
+  // Asked for: not the computer's once, which is still to come of itself.
+  expect(await app.evaluate(() => localStorage.getItem("memoca:desktop-guide-done"))).toBeNull();
 });

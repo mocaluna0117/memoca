@@ -11,7 +11,7 @@ import {
   type GuideState,
   type GuideWindow,
   SHOW_WELCOME,
-  STALE_MS,
+  clearStaleGuide,
   guideFrom,
   rememberDesktopGuideDone,
   setGuide,
@@ -19,6 +19,7 @@ import {
   subscribeGuide,
 } from "@/lib/guide";
 import { useClientValue } from "@/lib/hooks/use-client-value";
+import { inShell } from "@/lib/quick/shell";
 import { rememberWelcomeSeen, welcomeOff, welcomeSeenHere } from "@/lib/welcome";
 
 /** The cards, loaded only once there is a guide to show. */
@@ -43,6 +44,9 @@ export function Guide() {
   const pathname = usePathname();
   const markWelcomed = useMutation(api.users.markWelcomed);
   const shell = useClientValue(shellOf, null);
+  // The desktop app's window, by its bridge or by its name (a page of it
+  // that has no bridge yet): never the web's guide there.
+  const desktop = useClientValue(inShell, false);
   const raw = useSyncExternalStore(subscribeGuide, storedGuide, () => null);
   const [declinedBy, setDeclinedBy] = useState<string | null>(null);
   const here: GuideWindow = pathname.startsWith("/quick") ? "quick" : "app";
@@ -56,16 +60,11 @@ export function Guide() {
   const kept = stored && stored.flow === flowHere ? stored : null;
 
   // Left at a step for long: over.
-  useEffect(() => {
-    const parsed = guideFrom(raw, 0);
-    if (parsed && !guideFrom(raw)) setGuide(null);
-    if (!parsed || Date.now() - parsed.at < STALE_MS) return;
-    setGuide(null);
-  }, [raw]);
+  useEffect(() => clearStaleGuide(), [raw]);
 
   // Asked for again: from its start, in this window.
   useEffect(() => {
-    const show = () => setGuide({ flow: flowHere, step: "intro", at: Date.now(), startedIn: here });
+    const show = () => setGuide({ flow: flowHere, step: "intro", at: Date.now(), startedIn: here, asked: true });
     window.addEventListener(SHOW_WELCOME, show);
     return () => window.removeEventListener(SHOW_WELCOME, show);
   }, [flowHere, here]);
@@ -75,9 +74,9 @@ export function Guide() {
   const step = kept?.step;
   useEffect(() => {
     if (kept?.flow === "web" && step === "open-quick" && here === "quick") {
-      setGuide({ flow: "web", step: "save-quick", at: Date.now(), done: true });
+      setGuide({ flow: "web", step: "save-quick", at: Date.now(), done: true, asked: kept.asked });
     }
-  }, [kept?.flow, step, here]);
+  }, [kept?.flow, kept?.asked, step, here]);
 
   // The desktop app's window out, however it was (the quick note's button,
   // the menu bar's menu): the guide goes on in it.
@@ -85,17 +84,17 @@ export function Guide() {
     if (kept?.flow !== "desktop" || step !== "open-app" || here !== "app") return;
     const out = () => {
       if (document.visibilityState === "visible" && document.hasFocus()) {
-        setGuide({ flow: "desktop", step: "app-here", at: Date.now(), done: true });
+        setGuide({ flow: "desktop", step: "app-here", at: Date.now(), done: true, asked: kept.asked });
       }
     };
     window.addEventListener("focus", out);
     return () => window.removeEventListener("focus", out);
-  }, [kept?.flow, step, here]);
+  }, [kept?.flow, kept?.asked, step, here]);
 
   // A new account's first /app, in a browser or on a phone: its first card,
   // until it is taken up or turned down.
   const due =
-    !shell &&
+    !desktop &&
     here === "app" &&
     userKey !== null &&
     me?.welcomed === false &&
@@ -106,7 +105,10 @@ export function Guide() {
   // The first card only where it was started; the others say where to go on.
   if (shown.step === "intro" && shown.startedIn && shown.startedIn !== here) return null;
 
-  /** Taken up or turned down: the web's not offered this account again, nor the desktop app's this computer. */
+  /**
+   * Taken up or turned down: the web's not offered this account again, nor
+   * the desktop app's this computer (one asked for leaves that as it was).
+   */
   const settle = (flow: GuideFlow) => {
     if (flow === "web") {
       if (userKey) {
@@ -114,7 +116,7 @@ export function Guide() {
         rememberWelcomeSeen(userKey);
         void markWelcomed({}).catch(() => undefined);
       }
-    } else {
+    } else if (!shown.asked) {
       rememberDesktopGuideDone();
     }
   };
@@ -128,11 +130,16 @@ export function Guide() {
         settle(shown.flow);
         if (shown.flow === "desktop" && here === "app") {
           // On in the quick note's window, brought out for it.
-          setGuide({ flow: "desktop", step: "write", at: Date.now() });
+          setGuide({ flow: "desktop", step: "write", at: Date.now(), asked: shown.asked });
           window.memocaShell?.showQuick?.();
           return;
         }
-        setGuide({ flow: shown.flow, step: shown.flow === "web" ? "open-quick" : "write", at: Date.now() });
+        setGuide({
+          flow: shown.flow,
+          step: shown.flow === "web" ? "open-quick" : "write",
+          at: Date.now(),
+          asked: shown.asked,
+        });
       }}
       onEnd={() => {
         settle(shown.flow);

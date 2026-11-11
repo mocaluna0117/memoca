@@ -66,11 +66,34 @@ function onScreen(selector: string): Element | null {
 }
 
 type Box = { left: number; top: number; width: number; height: number };
-type Place = { ring: Box | null; atTop: boolean; navHeight: number; headerBottom: number };
+type Place = {
+  ring: Box | null;
+  atTop: boolean;
+  below: number;
+  headerBottom: number;
+  /** The "/" menu open: the card for after it waits for it to close, rather than go under it. */
+  menu: boolean;
+};
 
-/** Where the thing pointed at is, and so where the card goes: looked at again as the page moves. */
-function usePlace(selector: string | null): Place {
-  const [place, setPlace] = useState<Place>({ ring: null, atTop: false, navHeight: 0, headerBottom: 0 });
+/** Where the caret is on the screen, if it is in something typed in. */
+function caretBox(): DOMRect | null {
+  const selection = document.getSelection();
+  if (!selection?.rangeCount) return null;
+  const range = selection.getRangeAt(0);
+  const box = range.getBoundingClientRect();
+  if (box.height > 0) return box;
+  const node = range.startContainer;
+  const element = node instanceof Element ? node : node.parentElement;
+  return element?.closest("[contenteditable='true']") ? element.getBoundingClientRect() : null;
+}
+
+/**
+ * Where the thing pointed at is, and so where the card goes: looked at
+ * again as the page moves. With a phone's keyboard up, away from the caret
+ * (the "/" menu opens by it), and above the bar on the keyboard.
+ */
+function usePlace(selector: string | null, keyboard: number): Place {
+  const [place, setPlace] = useState<Place>({ ring: null, atTop: false, below: 0, headerBottom: 0, menu: false });
   useEffect(() => {
     let last = "";
     const look = () => {
@@ -79,15 +102,23 @@ function usePlace(selector: string | null): Place {
       const ring = box
         ? { left: box.left - 4, top: box.top - 4, width: box.width + 8, height: box.height + 8 }
         : null;
-      const atTop = box ? box.top + box.height / 2 > window.innerHeight * 0.55 : false;
-      // A phone's bars, top and foot: the card between them.
+      const caret = keyboard > 0 ? caretBox() : null;
+      const seen = window.innerHeight - keyboard;
+      const atTop = caret
+        ? caret.top + caret.height / 2 > seen / 2
+        : box
+          ? box.top + box.height / 2 > window.innerHeight * 0.55
+          : false;
+      // A phone's bars, top and foot (the bottom bar, the one on the keyboard): the card between them.
       const nav = onScreen("[data-mobile-nav]");
+      const bar = keyboard > 0 ? onScreen("[data-keyboard-bar]") : null;
       const header = onScreen("[data-mobile-header]");
       const next = {
         ring,
         atTop,
-        navHeight: nav ? nav.getBoundingClientRect().height : 0,
+        below: (nav ? nav.getBoundingClientRect().height : 0) + (bar ? bar.getBoundingClientRect().height : 0),
         headerBottom: header ? Math.max(0, header.getBoundingClientRect().bottom) : 0,
+        menu: onScreen(".bn-suggestion-menu") !== null,
       };
       const said = JSON.stringify(next);
       if (said !== last) {
@@ -101,7 +132,7 @@ function usePlace(selector: string | null): Place {
       window.cancelAnimationFrame(first);
       window.clearInterval(every);
     };
-  }, [selector]);
+  }, [selector, keyboard]);
   return place;
 }
 
@@ -167,9 +198,13 @@ export function GuideCard({
   const { flow, step } = state;
   const where = step === "intro" ? (state.startedIn ?? here) : (WHERE[flow][step] ?? here);
   const mine = where === here;
-  const place = usePlace(mine ? (TARGET[step] ?? null) : flow === "web" && where === "quick" ? TARGET["open-quick"]! : null);
+  const place = usePlace(
+    mine ? (TARGET[step] ?? null) : flow === "web" && where === "quick" ? TARGET["open-quick"]! : null,
+    inset,
+  );
 
-  const go = (next: GuideStep) => setGuide({ flow, step: next, at: Date.now(), done: true });
+  const { asked } = state;
+  const go = (next: GuideStep) => setGuide({ flow, step: next, at: Date.now(), done: true, asked });
 
   // Done, said above the next step's words for a while.
   useEffect(() => {
@@ -184,7 +219,7 @@ export function GuideCard({
   // What the step waits on, in the window it is done in.
   useEffect(() => {
     if (!mine) return;
-    const advance = (next: GuideStep) => setGuide({ flow, step: next, at: Date.now(), done: true });
+    const advance = (next: GuideStep) => setGuide({ flow, step: next, at: Date.now(), done: true, asked });
     const did = (handle: (detail: GuideDid) => void) => {
       const listener = (event: Event) => handle((event as CustomEvent<GuideDid>).detail);
       window.addEventListener(GUIDE_DID, listener);
@@ -259,10 +294,12 @@ export function GuideCard({
       default:
         return;
     }
-  }, [mine, flow, step, shell]);
+  }, [mine, flow, step, shell, asked]);
 
   const content = mine ? stepContent() : elsewhere();
   if (!content) return null;
+  // Just tried, the "/" menu: the last card once it is closed.
+  if (step === "finish" && flow === "web" && place.menu) return null;
   const { title, body, primary, secondary, endLabel = "終わる", icon } = content;
 
   function stepContent(): Content | null {
@@ -360,7 +397,7 @@ export function GuideCard({
             ? {
                 label: "設定を開く",
                 run: () => {
-                  setGuide({ flow, step: "hotkey", at: Date.now() });
+                  setGuide({ flow, step: "hotkey", at: Date.now(), asked });
                   router.push("/app/settings#hotkeys");
                 },
               }
@@ -448,7 +485,7 @@ export function GuideCard({
   const ring = mine || (flow === "web" && where === "quick") ? place.ring : null;
   const side = place.atTop
     ? { top: place.headerBottom ? `${place.headerBottom + 8}px` : "calc(env(safe-area-inset-top, 0px) + 0.75rem)" }
-    : { bottom: `calc(env(safe-area-inset-bottom, 0px) + ${place.navHeight + inset + 12}px)` };
+    : { bottom: `calc(env(safe-area-inset-bottom, 0px) + ${place.below + inset + 12}px)` };
 
   return (
     <>

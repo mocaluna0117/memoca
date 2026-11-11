@@ -35,6 +35,11 @@ export type GuideState = {
   startedIn?: GuideWindow;
   /** The step before was just done: said so above this one's words. */
   done?: boolean;
+  /**
+   * Asked for (「はじめの案内をもう一度見る」), not offered of itself: done,
+   * it does not count as the computer's once (the desktop app's).
+   */
+  asked?: boolean;
 };
 
 /** Said in the page to start the guide again (the settings', 使い方's 「はじめの案内をもう一度見る」). */
@@ -75,8 +80,20 @@ function read(key: string): string | null {
   }
 }
 
-/** The guide as it is stored, as a string (what a snapshot compares). */
-export const storedGuide = (): string | null => read(KEY);
+/**
+ * The guide as it is stored, as a string (what a snapshot compares): none
+ * once left for long, so a card left up goes as its window is looked at again.
+ */
+export const storedGuide = (): string | null => {
+  const raw = read(KEY);
+  return guideFrom(raw) ? raw : null;
+};
+
+/** A guide left for long, taken out of storage. */
+export function clearStaleGuide(): void {
+  const raw = read(KEY);
+  if (raw !== null && !guideFrom(raw)) setGuide(null);
+}
 
 let parsedFrom: string | null = null;
 let parsed: GuideState | null = null;
