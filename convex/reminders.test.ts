@@ -160,6 +160,9 @@ describe("the devices reminders are sent to", () => {
     const t = setup();
     delete process.env.VAPID_PUBLIC_KEY;
     expect(await t.query(api.pushSubscriptions.publicKey, {})).toBeNull();
+    // Set with nothing piped in: none either.
+    process.env.VAPID_PUBLIC_KEY = "";
+    expect(await t.query(api.pushSubscriptions.publicKey, {})).toBeNull();
     process.env.VAPID_PUBLIC_KEY = "BPublic";
     expect(await t.query(api.pushSubscriptions.publicKey, {})).toBe("BPublic");
     delete process.env.VAPID_PUBLIC_KEY;

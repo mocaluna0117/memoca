@@ -49,10 +49,37 @@ export type MemocaShell = {
   completeSignIn?(code: string): Promise<"ok" | "not-started">;
   /** What /desktop/complete takes, handed over once, just after the shell sends the window there. */
   takeSignIn?(): Promise<{ code: string; verifier: string } | null>;
+  /**
+   * The Todo's reminders, shown by the computer's own notifications
+   * (desktop/src-tauri/src/reminders.rs) at their times: whether this
+   * computer shows them, and the account's, as the server keeps them,
+   * handed over as they change (from the quick note's window alone). Not
+   * before 0.4.10.
+   */
+  reminders?: {
+    state(): Promise<ShellReminderState>;
+    /** The system asked (a Mac shows its question): where it stands after. */
+    turnOn(): Promise<ShellReminderState>;
+    turnOff(): Promise<void>;
+    set(reminders: readonly ShellReminder[]): void;
+  };
   platform: "macos" | "windows";
 };
 
 export type DeviceUnlockKind = "touchId" | "windowsHello";
+
+/**
+ * Where the computer stands on the Todo's reminders: "blocked" when chosen
+ * but its settings keep them from showing; "unsupported" when the app can
+ * show none (a Mac's not in an Applications folder).
+ */
+export type ShellReminderState = "on" | "off" | "blocked" | "unsupported";
+
+/** A reminder as the shell is given it: as convex/reminders.ts `list` has it. */
+export type ShellReminder = { key: string; at: number; title: string; body: string };
+
+/** What the shell tells the page as one of the Todo's reminders is clicked: the Todo shown. */
+export const SHELL_OPEN_TODO = "memoca-shell-open-todo";
 
 declare global {
   interface Window {

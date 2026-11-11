@@ -89,6 +89,73 @@ test.describe("the Todo's reminders", () => {
     await expect.poll(() => new URL(page.url()).searchParams.has("todo")).toBe(false);
   });
 
+  test("in the desktop app, the account's reminders are handed to it, and one clicked opens the Todo", async ({ page }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "the desktop app's window, with a pointer over the items");
+    test.slow();
+    await signUp(page);
+    // The app's window, as its shell makes it (0.4.10 on): its reminders a
+    // stand-in that keeps what it is handed, and this computer's choice
+    // across loads, as the app's settings do.
+    await page.addInitScript(() => {
+      const KEY = "e2e:shell-reminders";
+      const shown = window as unknown as { __handed: { title: string }[][] };
+      shown.__handed = [];
+      Object.defineProperty(window, "memocaShell", {
+        value: {
+          platform: "macos",
+          hide() {},
+          openExternal() {},
+          reminders: {
+            state: async () => localStorage.getItem(KEY) ?? "off",
+            turnOn: async () => {
+              localStorage.setItem(KEY, "on");
+              return "on";
+            },
+            turnOff: async () => localStorage.setItem(KEY, "off"),
+            set: (list: { title: string }[]) => shown.__handed.push(list),
+          },
+        },
+      });
+    });
+    await page.goto("/quick?window=1");
+    await openTodo(page);
+    await todo(page).click();
+    await page.keyboard.type("書類を提出");
+    await todo(page).locator(".bn-inline-content", { hasText: /^書類を提出$/ }).hover();
+    await dueButton(page, "書類を提出").click();
+    const picker = page.getByRole("dialog", { name: "期日" });
+    await picker.getByRole("button", { name: "明日" }).click();
+    await picker.getByRole("button", { name: "完了" }).click();
+    await expect(picker).toBeHidden();
+
+    const bell = await openBell(page);
+    await expect(bell.getByText("このパソコンで通知を受け取る")).toBeVisible();
+    await bell.getByRole("switch").click();
+    await expect(bell.getByRole("switch")).toBeChecked();
+    await page.keyboard.press("Escape");
+
+    // Sent by this device, kept by the server, and handed to the app as the server has them.
+    const handed = () =>
+      page.evaluate(() => {
+        const last = (window as unknown as { __handed: { title: string }[][] }).__handed.at(-1);
+        return last ? [...new Set(last.map((each) => each.title))] : null;
+      });
+    await expect.poll(handed, { timeout: 30_000 }).toEqual(["書類を提出"]);
+
+    // Opened again: this computer's choice kept, and the list handed over again, the Todo not open.
+    // (The bell's tip, out as it has the focus back, put away first.)
+    await todo(page).click();
+    await page.getByRole("button", { name: "新しいタブ" }).click();
+    await expect(page.getByRole("tab", { name: "Todo" })).toHaveAttribute("aria-selected", "false");
+    await page.reload();
+    await expect.poll(handed, { timeout: 30_000 }).toEqual(["書類を提出"]);
+
+    // One clicked: the app tells the page, and the Todo is shown.
+    await page.evaluate(() => window.dispatchEvent(new Event("memoca-shell-open-todo")));
+    await expect(page.getByRole("tab", { name: "Todo" })).toHaveAttribute("aria-selected", "true");
+    await expect(todo(page)).toBeVisible();
+  });
+
   test("the bell says why a device cannot have them, and the times can still be chosen", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick?window=1");

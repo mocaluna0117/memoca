@@ -10,7 +10,8 @@ const MAX_KEY = 200;
 /** The key the server signs its pushes with (VAPID), public: a device subscribes with it. Null where none is set. */
 export const publicKey = query({
   args: {},
-  handler: async () => process.env.VAPID_PUBLIC_KEY ?? null,
+  // An empty one (set with nothing piped in) is none either.
+  handler: async () => process.env.VAPID_PUBLIC_KEY || null,
 });
 
 /**

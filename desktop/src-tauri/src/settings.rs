@@ -41,6 +41,9 @@ pub struct Settings {
     pub size: Option<(f64, f64)>,
     /// Where a pinned window was last put away, in points: it comes out there.
     pub position: Option<(f64, f64)>,
+    /// The Todo's reminders shown on this computer (reminders.rs): set from
+    /// the page's bell, not here.
+    pub reminders: bool,
 }
 
 impl Default for Settings {
@@ -52,6 +55,7 @@ impl Default for Settings {
             pinned: false,
             size: None,
             position: None,
+            reminders: false,
         }
     }
 }

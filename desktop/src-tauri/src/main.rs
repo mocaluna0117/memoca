@@ -15,6 +15,7 @@ mod clipboard;
 mod commands;
 mod corner;
 mod device_unlock;
+mod reminders;
 mod screen;
 mod settings;
 mod shortcut;
@@ -137,6 +138,10 @@ fn main() {
             clipboard::copy_images,
             device_unlock::device_unlock_kind,
             device_unlock::device_unlock_secret,
+            reminders::reminders_state,
+            reminders::reminders_turn_on,
+            reminders::reminders_turn_off,
+            reminders::set_reminders,
         ])
         .setup(|app| {
             // A menu bar app: no Dock icon, and not in ⌘Tab.
@@ -166,13 +171,18 @@ fn main() {
                         .permission("allow-show-app")
                         .permission("allow-copy-images")
                         .permission("allow-device-unlock-kind")
-                        .permission("allow-device-unlock-secret"),
+                        .permission("allow-device-unlock-secret")
+                        .permission("allow-reminders-state")
+                        .permission("allow-reminders-turn-on")
+                        .permission("allow-reminders-turn-off")
+                        .permission("allow-set-reminders"),
                 )?;
             }
 
             clipboard::clear(app.handle());
             let first_run = settings::init(app.handle())?;
             window::create(app.handle())?;
+            reminders::start(app.handle());
             tray::create(app.handle())?;
             shortcut::register(app.handle());
             corner::watch(app.handle().clone());

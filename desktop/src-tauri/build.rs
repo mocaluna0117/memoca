@@ -14,6 +14,10 @@ fn main() {
             "copy_images",
             "device_unlock_kind",
             "device_unlock_secret",
+            "reminders_state",
+            "reminders_turn_on",
+            "reminders_turn_off",
+            "set_reminders",
         ]),
     ))
     .expect("failed to run tauri-build");

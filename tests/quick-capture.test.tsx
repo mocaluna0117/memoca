@@ -72,7 +72,8 @@ vi.mock("@/lib/quick/tabs", async (original) => ({
 }));
 // All of a tab's note here at once: no server to wait for.
 vi.mock("@/lib/quick/todo", () => ({ wholeBody: async () => {} }));
-vi.mock("convex/react", () => ({ useConvex: () => ({}) }));
+// In a browser, the desktop app's reminders are not followed (useShellReminders): "skip".
+vi.mock("convex/react", () => ({ useConvex: () => ({}), useQuery: () => undefined }));
 // The editor, as a field of lines: each a paragraph of the tab's document,
 // with ids that follow from where it is, so that the same lines say the same.
 // Images, as the editor puts them: a block for each file pasted, shown

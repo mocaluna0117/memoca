@@ -29,6 +29,7 @@ import {
 import * as Y from "yjs";
 import { FolderPicker } from "@/components/folders/folder-picker";
 import { QuickTips, Tip } from "@/components/notes/quick-tip";
+import { useShellReminders } from "@/components/notes/todo-notify";
 import { TodoCapture } from "@/components/notes/quick-todo";
 import { QuickEditor, type QuickEditorHandle, type QuickImages } from "@/components/notes/quick-editor";
 import {
@@ -97,7 +98,7 @@ import { SAVE_KEYS } from "@/lib/quick/keys";
 import { useQuickMode } from "@/lib/quick/mode";
 import { TODO_TAB_ID, isQuickTab } from "@/lib/quick/todo-id";
 import { moveIntoTodo, takeOutOfTodo } from "@/lib/quick/todo-move";
-import { SHELL_HIDDEN, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
+import { SHELL_HIDDEN, SHELL_OPEN_TODO, closeQuickWindow, inShell, openNoteInApp } from "@/lib/quick/shell";
 import { SHARED, holdsShared, joinShared, quickLines } from "@/lib/quick/text";
 import { acquireDoc, flushDoc, releaseDoc } from "@/lib/sync/docs";
 import { createNote, moveNote } from "@/lib/sync/mutations";
@@ -184,6 +185,8 @@ const composing = (event: { isComposing: boolean; keyCode: number }) =>
  */
 export function QuickCapture() {
   const { me } = useSync();
+  // In the desktop app: the account's reminders handed to it, the Todo open or not.
+  useShellReminders(me != null);
   // The storage figures apart from the account (see sync-provider): a file
   // added is checked against them as they are.
   const usage = useStorageUsage();
@@ -361,6 +364,16 @@ function Tabbed({
     moving();
     void openTodoTab(userKey);
   };
+  // One of its reminders clicked, in the desktop app (this window kept loaded): the Todo.
+  useEffect(() => {
+    const clicked = () => {
+      setShare(null);
+      setNotice(null);
+      void openTodoTab(userKey);
+    };
+    window.addEventListener(SHELL_OPEN_TODO, clicked);
+    return () => window.removeEventListener(SHELL_OPEN_TODO, clicked);
+  }, [userKey]);
   /** Closes a tab: at once if there is nothing in it, asked about first if there is. */
   const close = async (id: string) => {
     const tab = tabs.find((each) => each.id === id);

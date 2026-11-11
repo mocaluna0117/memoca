@@ -53,6 +53,11 @@ fn quick_url() -> Url {
     origin().join("/quick?window=1").unwrap()
 }
 
+/// The quick note, opened on its Todo (src/components/notes/quick-capture.tsx).
+fn todo_url() -> Url {
+    origin().join("/quick?window=1&todo=1").unwrap()
+}
+
 /// The system, as the site is told it (src/lib/quick/shell.ts): "macos" or "windows".
 pub const PLATFORM: &str = if cfg!(target_os = "windows") {
     "windows"
@@ -119,6 +124,15 @@ pub fn bridge() -> String {
       beginSignIn: () => invoke("begin_sign_in"),
       completeSignIn: (code) => invoke("complete_sign_in", {{ code: String(code) }}),
       takeSignIn: () => invoke("take_sign_in"),
+      reminders: Object.freeze({{
+        state: () => invoke("reminders_state"),
+        turnOn: () => invoke("reminders_turn_on"),
+        turnOff: () => invoke("reminders_turn_off"),
+        set: (list) =>
+          void invoke("set_reminders", {{
+            reminders: Array.from(list, ({{ key, at, title, body }}) => ({{ key: String(key), at: Number(at), title: String(title), body: String(body) }})),
+          }}).catch(() => undefined),
+      }}),
       platform: {platform:?},
     }}),
   }});
@@ -345,6 +359,24 @@ pub fn show(app: &AppHandle, where_: Place) {
         let _ = window.show();
         let _ = window.set_focus();
     });
+}
+
+/// Brings the window out on the Todo: a reminder of its clicked
+/// (reminders.rs). The page is told to show it; one about to be loaded
+/// again on the way out is loaded on it.
+pub fn show_todo(app: &AppHandle) {
+    let Some(window) = window(app) else { return };
+    {
+        let loaded = app.state::<Loaded>();
+        let mut at = loaded.0.lock().unwrap();
+        if !window.is_visible().unwrap_or(false) && at.elapsed() >= STALE {
+            *at = Instant::now();
+            let _ = window.navigate(todo_url());
+        } else {
+            let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-open-todo'))");
+        }
+    }
+    show(app, Place::Cursor);
 }
 
 /// Puts the window away, as it is, and hands the keyboard back to the app

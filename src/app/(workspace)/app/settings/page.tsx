@@ -83,6 +83,8 @@ export default function SettingsPage() {
   const leave = async () => {
     // The Todo's reminders no longer sent to this device (another account may sign in on it).
     await turnOff(convex).catch(() => undefined);
+    // The desktop app's, too: whoever signs in next turns them on for themselves.
+    await window.memocaShell?.reminders?.turnOff().catch(() => undefined);
     await resetLocalData();
     // With no network the server is not told, but nothing of the account is
     // left here, and it goes on as the desktop shell's sign-out does.
@@ -282,6 +284,7 @@ export default function SettingsPage() {
                 setDeleting(true);
                 // This browser's push subscription dropped too: not handed to whoever signs in next.
                 await turnOff(convex).catch(() => undefined);
+                await window.memocaShell?.reminders?.turnOff().catch(() => undefined);
                 await deleteAccount();
                 await resetLocalData();
                 await signOut();
