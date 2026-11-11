@@ -4,6 +4,7 @@ import { ConvexReactClient } from "convex/react";
 import { ThemeProvider } from "next-themes";
 import { type ReactNode, useEffect } from "react";
 import { type AuthClientForConvex, ConvexWithBetterAuth } from "@/components/providers/convex-auth";
+import { LookFonts } from "@/components/style/look-fonts";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { authClient } from "@/lib/auth/client";
@@ -48,6 +49,7 @@ export function AppProviders({
       >
         <TooltipProvider delayDuration={300}>
           <ClicksKept />
+          <LookFonts />
           {children}
           <Toaster position="top-center" richColors closeButton />
         </TooltipProvider>

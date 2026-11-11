@@ -41,9 +41,11 @@ export const DEFAULT_STYLE: StyleId = "stylish";
 /** Where the device keeps the look it shows. */
 export const STYLE_KEY = "memoca:style";
 /**
- * A look chosen on this device that the account has not been told of yet
- * (chosen offline, say): sent again, and the account's not taken over it,
- * until it has.
+ * A look chosen on this device that the account has not been heard to have
+ * yet (chosen offline, say), with whose account it is: sent again, and the
+ * account's not taken over it, until the account says it (StyleSync), not
+ * only until the server answered, which a kept copy of the account from
+ * before would undo as the page is opened again.
  */
 export const STYLE_SENT_KEY = "memoca:style-sent";
 
@@ -74,14 +76,19 @@ export const styleHere = (): StyleId => {
   return isStyle(kept) ? kept : DEFAULT_STYLE;
 };
 
-/** A look chosen here, not yet heard of by the account. */
-export const styleUnsent = (): StyleId | null => {
-  const sent = read(STYLE_SENT_KEY);
-  return isStyle(sent) ? sent : null;
-};
+/** A look chosen here by this account, not yet heard of from it; another account's is none of its. */
+export function styleUnsent(userKey: string): StyleId | null {
+  try {
+    const sent = JSON.parse(read(STYLE_SENT_KEY) ?? "null") as { userKey?: unknown; style?: unknown } | null;
+    return sent && sent.userKey === userKey && isStyle(sent.style) ? sent.style : null;
+  } catch {
+    return null;
+  }
+}
 
-export function markStyleUnsent(style: StyleId | null): void {
-  write(STYLE_SENT_KEY, style);
+/** Chosen here by this account, to be sent until it is heard back; or (null) heard back. */
+export function markStyleUnsent(chosen: { style: StyleId; userKey: string } | null): void {
+  write(STYLE_SENT_KEY, chosen ? JSON.stringify(chosen) : null);
 }
 
 /** Said in the page as the look changes, for what shows it (the settings' choice). */

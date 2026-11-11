@@ -2,7 +2,7 @@
 
 import { useMutation } from "convex/react";
 import { Check } from "lucide-react";
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { api } from "@convex/_generated/api";
 import {
   DEFAULT_STYLE,
@@ -12,8 +12,9 @@ import {
   applyStyle,
   markStyleUnsent,
   styleHere,
-  styleUnsent,
 } from "@/lib/style";
+import { useSync } from "@/components/providers/sync-provider";
+import { loadLookFont } from "@/lib/look-fonts";
 import { cn } from "@/lib/utils";
 
 function subscribe(onChange: () => void): () => void {
@@ -59,16 +60,18 @@ function Preview({ style }: { style: StyleId }) {
 export function StylePicker() {
   const current = useSyncExternalStore(subscribe, styleHere, () => DEFAULT_STYLE);
   const updateSettings = useMutation(api.users.updateSettings);
+  const userKey = useSync().me?.userKey ?? null;
+  // Each look's letters, for its small page here.
+  useEffect(() => {
+    for (const style of STYLES) loadLookFont(style.id);
+  }, []);
 
   const choose = (style: StyleId) => {
+    // Kept to be sent again until the account says it has it (StyleSync,
+    // told as the page is put in it).
+    if (userKey) markStyleUnsent({ style, userKey });
     applyStyle(style);
-    markStyleUnsent(style);
-    void updateSettings({ style }).then(
-      () => {
-        if (styleUnsent() === style) markStyleUnsent(null);
-      },
-      () => undefined,
-    );
+    void updateSettings({ style }).catch(() => undefined);
   };
 
   return (

@@ -37,12 +37,16 @@ describe("the app's look on this device", () => {
     expect(styleHere()).toBe("stylish");
   });
 
-  test("one chosen here, until the account has it", () => {
-    expect(styleUnsent()).toBeNull();
-    markStyleUnsent("natural");
-    expect(styleUnsent()).toBe("natural");
+  test("one chosen here, until the account has it; another account's, none of this one's", () => {
+    expect(styleUnsent("me")).toBeNull();
+    markStyleUnsent({ style: "natural", userKey: "me" });
+    expect(styleUnsent("me")).toBe("natural");
+    expect(styleUnsent("someone-else")).toBeNull();
     markStyleUnsent(null);
-    expect(styleUnsent()).toBeNull();
+    expect(styleUnsent("me")).toBeNull();
+    // As an earlier version kept it (a bare look): none.
+    localStorage.setItem("memoca:style-sent", "cute");
+    expect(styleUnsent("me")).toBeNull();
   });
 
   test("the looks there are, and no others", () => {

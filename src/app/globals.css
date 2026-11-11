@@ -137,8 +137,8 @@
    colours, light and dark: the dark one's selector outweighs the light
    one's, which would otherwise win over .dark on the same element, and
    reaches a .dark inside (the editor's, which BlockNote marks so). Letters
-   from a font of the look's own where it has one (src/app/layout.tsx, only
-   fetched once a page is drawn in it), the platform's Japanese after. */
+   from a font of the look's own where it has one (src/lib/look-fonts.ts,
+   loaded once a page is in the look), the platform's Japanese after. */
 [data-style="cute"],
 [data-style="natural"],
 [data-style="fresh"],
@@ -150,7 +150,7 @@
 
 /* かわいい: pale pink and lavender, round corners and round letters. */
 [data-style="cute"] {
-  --font-stack-sans: var(--font-zen-maru), "Hiragino Maru Gothic ProN", var(--font-stack-jp);
+  --font-stack-sans: var(--font-zen-maru, "Hiragino Maru Gothic ProN"), "Hiragino Maru Gothic ProN", var(--font-stack-jp);
   --radius: 1rem;
   --background: oklch(0.99 0.008 350);
   --foreground: oklch(0.33 0.045 340);
@@ -210,7 +210,7 @@
 
 /* ナチュラル: unbleached paper and sage green. */
 [data-style="natural"] {
-  --font-stack-sans: var(--font-zen-kaku), var(--font-stack-jp);
+  --font-stack-sans: var(--font-zen-kaku, var(--font-stack-jp)), var(--font-stack-jp);
   --radius: 0.75rem;
   --background: oklch(0.975 0.012 85);
   --foreground: oklch(0.3 0.02 70);
@@ -330,7 +330,7 @@
 
 /* レトロ: cream paper and brown ink, in a pen's hand. */
 [data-style="retro"] {
-  --font-stack-sans: var(--font-klee), var(--font-stack-jp);
+  --font-stack-sans: var(--font-klee, var(--font-stack-jp)), var(--font-stack-jp);
   --radius: 0.375rem;
   --background: oklch(0.955 0.03 85);
   --foreground: oklch(0.33 0.05 50);

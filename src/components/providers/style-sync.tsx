@@ -1,11 +1,12 @@
 "use client";
 
 import { useMutation } from "convex/react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { api } from "@convex/_generated/api";
 import { useSync } from "@/components/providers/sync-provider";
 import {
   DEFAULT_STYLE,
+  STYLE_CHANGED,
   STYLE_KEY,
   applyStyle,
   isStyle,
@@ -26,23 +27,33 @@ export function StyleSync() {
   const { me } = useSync();
   const updateSettings = useMutation(api.users.updateSettings);
   const account = me ? (me.settings.style ?? DEFAULT_STYLE) : null;
+  const userKey = me?.userKey ?? null;
+  const said = useRef({ account, userKey });
+  useEffect(() => {
+    said.current = { account, userKey };
+  }, [account, userKey]);
+
+  // One chosen here that the account has already (chosen again): nothing to wait for.
+  useEffect(() => {
+    const chosen = () => {
+      const { account: now, userKey: who } = said.current;
+      if (who && now && styleUnsent(who) === now) markStyleUnsent(null);
+    };
+    window.addEventListener(STYLE_CHANGED, chosen);
+    return () => window.removeEventListener(STYLE_CHANGED, chosen);
+  }, []);
 
   useEffect(() => {
-    if (account === null) return;
-    const unsent = styleUnsent();
+    if (account === null || userKey === null) return;
+    const unsent = styleUnsent(userKey);
     if (unsent !== null) {
+      // Heard back: done. Not yet: sent (again), and kept until it is.
       if (unsent === account) markStyleUnsent(null);
-      else
-        void updateSettings({ style: unsent }).then(
-          () => {
-            if (styleUnsent() === unsent) markStyleUnsent(null);
-          },
-          () => undefined,
-        );
+      else void updateSettings({ style: unsent }).catch(() => undefined);
       return;
     }
     if (styleHere() !== account) applyStyle(account);
-  }, [account, updateSettings]);
+  }, [account, userKey, updateSettings]);
 
   useEffect(() => {
     const elsewhere = (event: StorageEvent) => {
