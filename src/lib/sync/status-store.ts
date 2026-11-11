@@ -10,6 +10,8 @@ const FIELDS = [
   "stuck",
   "uploadRefused",
   "saveFailed",
+  "signInWait",
+  "uploadsWaiting",
 ] as const satisfies readonly (keyof SyncStatus)[];
 
 /** Whether two statuses say the same, field by field. */

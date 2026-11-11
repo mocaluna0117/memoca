@@ -5,6 +5,7 @@ import {
   type AuthClientForConvex,
   useBetterAuthForConvex,
 } from "@/components/providers/convex-auth";
+import { SIGN_IN_LOST } from "@/lib/sync/sign-in-lost";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -93,6 +94,20 @@ async function pass(ms: number) {
 }
 
 describe("the token Convex signs in with", () => {
+  test("taken for no one by the server, as the sync finds: asked for again at once, a hidden page too, and not again and again", async () => {
+    answers = ["token-1", "token-2"];
+    await act(async () => expect(await latest()({ forceRefreshToken: true })).toBe("token-1"));
+    setVisibility("hidden");
+    const before = fetchers.length;
+    await act(async () => window.dispatchEvent(new Event(SIGN_IN_LOST)));
+    // A new way of fetching, which asks the server rather than handing back the one it had.
+    expect(fetchers.length).toBe(before + 1);
+    await act(async () => expect(await latest()()).toBe("token-2"));
+    // Said again at once: not asked for again yet.
+    await act(async () => window.dispatchEvent(new Event(SIGN_IN_LOST)));
+    expect(fetchers.length).toBe(before + 1);
+  });
+
   test("could not be had offline: asked for again, by a new way, once the network is back", async () => {
     answers = [null, "token-2"];
     setOnline(false);

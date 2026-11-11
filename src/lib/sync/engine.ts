@@ -26,6 +26,7 @@ import {
   withDetachedDoc,
   withDocFromStorage,
 } from "./docs";
+import { SIGN_IN_LOST } from "./sign-in-lost";
 import { sameStatus } from "./status-store";
 import { extractText, firstLine } from "./ydoc";
 import { linkTargets } from "@/lib/note-links";
@@ -91,7 +92,33 @@ export type SyncStatus = {
   uploadRefused: boolean;
   /** An edit could not be stored on this device, and is held in memory until one can. */
   saveFailed: boolean;
+  /**
+   * The server takes this device for no one (its sign-in lapsed, its token
+   * not renewed): edits wait here, sent once it is signed in again.
+   */
+  signInWait: boolean;
+  /** Files that could not go up, tried again after a wait (a network too slow for them, say): how many. */
+  uploadsWaiting: number;
 };
+
+export { SIGN_IN_LOST } from "./sign-in-lost";
+
+/** How long edits wait after a push was refused for want of sign-in: twice as long each time, up to the longest. */
+const SIGN_IN_FIRST_WAIT_MS = 5_000;
+const SIGN_IN_LONGEST_WAIT_MS = 60_000;
+/** How long the server may take this device for no one, having known it, before that is said. */
+const SIGNED_OUT_SAID_AFTER_MS = 5_000;
+
+/** A refusal for want of sign-in: Convex runs the function as no one, and requireUser throws. */
+function signedOutError(error: unknown): boolean {
+  const data = (error as { data?: unknown } | null)?.data as { code?: unknown } | undefined;
+  if (data?.code === "UNAUTHENTICATED") return true;
+  const message = error instanceof Error ? error.message : typeof error === "string" ? error : "";
+  return message.includes("UNAUTHENTICATED");
+}
+
+/** Thrown through a round of pushes: the device is no one to the server, and the round stops. */
+class SignedOut extends Error {}
 
 /** Tries an op the server throws on gets before it is set aside. */
 const STUCK_AFTER = 3;
@@ -166,7 +193,18 @@ export class SyncEngine {
     stuck: 0,
     uploadRefused: false,
     saveFailed: false,
+    signInWait: false,
+    uploadsWaiting: 0,
   };
+  /** How long pushes wait now, refused for want of sign-in; 0 when they are not. */
+  private signInWaitMs = 0;
+  /** Until when pushes wait, so refused. */
+  private signInPausedUntil = 0;
+  /** The pull has come as no one's (null) since this engine heard from the server: said after a moment. */
+  private pullSignedOut = false;
+  private pullSignedOutTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Whether the pull has ever come as this account's, since this engine started. */
+  private heardFromServer = false;
   /** A note being compacted, by its id: asked again meanwhile, the same attempt. */
   private compacting = new Map<string, Promise<boolean>>();
   /** When a note's compaction last failed or was refused, by its id. */
@@ -239,9 +277,12 @@ export class SyncEngine {
     // An edit that could not be stored here is said, until one is again.
     this.unwatchAlerts = onAlert((alert) => this.set({ saveFailed: alert === "saveFailed" }));
     this.set({ stuck: await this.stuckCount() });
+    await this.sendAgainSignedOut();
   }
 
   stop(): void {
+    clearTimeout(this.pullSignedOutTimer);
+    this.pullSignedOutTimer = undefined;
     // Its versions read already are kept still, if the page lives on.
     void this.keepVersionsNow();
     this.stopped = true;
@@ -497,8 +538,11 @@ export class SyncEngine {
       try {
         const result = watch.localQueryResult();
         // `null` means the server does not recognise this client yet, which is
-        // normal for the moment between page load and the token attaching.
+        // normal for the moment between page load and the token attaching;
+        // having known it, its sign-in lapsed (see pullAsNoOne).
+        if (result === null) this.pullAsNoOne();
         if (!result) return;
+        this.pullAsSomeone();
         this.receiving = this.receiving
           .then(() =>
             // One that has been let go of meanwhile, from where this device
@@ -800,12 +844,21 @@ export class SyncEngine {
   /** `final`: the last push of a page going away, sent though the lock has been let go (see letGo). */
   private async drain(final = false): Promise<void> {
     if ((!this.leader && !final) || this.stopped || this.draining) return;
+    // Refused for want of sign-in a moment ago: the round after the wait,
+    // not one per edit typed meanwhile (whose kick took the round planned
+    // for then: planned again).
+    if (!final && Date.now() < this.signInPausedUntil) {
+      if (this.timer) clearTimeout(this.timer);
+      this.timer = setTimeout(() => void this.drain(), this.signInPausedUntil - Date.now());
+      return;
+    }
+    let signedOutNow = false;
     this.draining = true;
     try {
       const database = db();
-      // Files first: an image the editor already shows should reach the server
-      // before the block that references it is compacted.
-      let uploadRefused = await this.sendFiles();
+      // Files go up on their own (sendFilesApart): a slow one, on a network
+      // too slow for it, held every edit back behind it.
+      this.sendFilesApart();
       const heldForVault = await this.rebaseRefused();
       // Ops the server threw on this round: left for the next round, so the
       // ones after them go now rather than wait on them.
@@ -879,9 +932,7 @@ export class SyncEngine {
         if (sent.length === entries.length && entries.length < PUSH_OP_LIMIT) break;
       }
       // A file for a note that has only now reached the server waited above.
-      if ((await database.pendingUploads.count()) > 0) {
-        uploadRefused = (await this.sendFiles()) || uploadRefused;
-      }
+      if ((await database.pendingUploads.count()) > 0) this.sendFilesApart();
       this.set({
         state: "idle",
         pending: await this.pendingCount(),
@@ -897,13 +948,30 @@ export class SyncEngine {
             .count()) > 0,
         heldForVault,
         stuck: await this.stuckCount(),
-        uploadRefused,
       });
+      // Pushed as this account again (or nothing to push): no wait for sign-in.
+      if (this.signInWaitMs > 0) {
+        this.signInWaitMs = 0;
+        this.signInPausedUntil = 0;
+        this.sayFromPull();
+        void this.sendAgainSignedOut();
+      }
       // Everything of ours is sent: a good moment, and this loop keeps
       // running while nothing else happens, which a quiet note needs.
       void this.reportRefs();
-    } catch {
-      this.set({ state: navigator.onLine === false ? "offline" : "error" });
+    } catch (error) {
+      if (error instanceof SignedOut) {
+        signedOutNow = true;
+        this.signInWaitMs = Math.min(
+          Math.max(SIGN_IN_FIRST_WAIT_MS, this.signInWaitMs * 2),
+          SIGN_IN_LONGEST_WAIT_MS,
+        );
+        this.signInPausedUntil = Date.now() + this.signInWaitMs;
+        this.set({ state: "idle", signInWait: true, pending: await this.pendingCount() });
+        this.askSignInAgain();
+      } else {
+        this.set({ state: navigator.onLine === false ? "offline" : "error" });
+      }
     } finally {
       this.draining = false;
       const again = this.again;
@@ -915,11 +983,13 @@ export class SyncEngine {
       // as paced (kickPaced).
       if (!this.stopped && this.leader) {
         if (this.timer) clearTimeout(this.timer);
-        const next = again
-          ? 0
-          : againPaced
-            ? Math.max(0, this.sentAt + PUSH_EVERY_MS - Date.now())
-            : this.interval;
+        const next = signedOutNow
+          ? this.signInWaitMs
+          : again
+            ? 0
+            : againPaced
+              ? Math.max(0, this.sentAt + PUSH_EVERY_MS - Date.now())
+              : this.interval;
         this.timer = setTimeout(() => void this.drain(), next);
       }
     }
@@ -931,6 +1001,98 @@ export class SyncEngine {
    * for it, which is to be said. Anything else (no network, say) is tried
    * again with the next round.
    */
+  /** Files going up now, apart from the edits' pushes; another pass asked for meanwhile. */
+  private uploading: Promise<void> | null = null;
+  private filesAgain = false;
+
+  /**
+   * Sends the files waiting to go up, apart from the edits: a file on a
+   * network too slow for it waits on its own (see flushUploads), not every
+   * edit behind it. One pass at a time; asked for meanwhile, another after
+   * it. What it found is said: a file refused, files waiting to be tried
+   * again. A file's commit it queues is pushed as any edit is (the outbox
+   * changing kicks a round).
+   */
+  private sendFilesApart(): void {
+    if (this.stopped) return;
+    if (this.uploading) {
+      this.filesAgain = true;
+      return;
+    }
+    this.uploading = (async () => {
+      do {
+        this.filesAgain = false;
+        const refused = await this.sendFiles();
+        const { uploadsWaiting } = await import("@/lib/media/attachments");
+        this.set({ uploadRefused: refused, uploadsWaiting: await uploadsWaiting() });
+      } while (this.filesAgain && !this.stopped);
+    })()
+      .catch(() => undefined)
+      .finally(() => {
+        this.uploading = null;
+      });
+  }
+
+  /** The sign-in asked for again (convex-auth): a window out of sight does not ask by itself. */
+  private askSignInAgain(): void {
+    if (typeof window !== "undefined") window.dispatchEvent(new Event(SIGN_IN_LOST));
+  }
+
+  /** Whether edits wait for sign-in, or the pull comes as no one's: said as one. */
+  private sayFromPull(): void {
+    this.set({ signInWait: this.signInWaitMs > 0 || this.pullSignedOut });
+  }
+
+  /**
+   * The pull came as no one's: the sign-in lapsed (its token not renewed),
+   * or, as the page loads, is still on its way. Said after a moment, once
+   * the server has known this device, and the sign-in asked for again:
+   * meanwhile nothing new comes in, with nothing to tell why.
+   */
+  private pullAsNoOne(): void {
+    if (!this.heardFromServer || this.pullSignedOutTimer || this.pullSignedOut) return;
+    this.pullSignedOutTimer = setTimeout(() => {
+      this.pullSignedOutTimer = undefined;
+      if (this.stopped) return;
+      this.pullSignedOut = true;
+      this.sayFromPull();
+      this.askSignInAgain();
+    }, SIGNED_OUT_SAID_AFTER_MS);
+  }
+
+  private pullAsSomeone(): void {
+    this.heardFromServer = true;
+    clearTimeout(this.pullSignedOutTimer);
+    this.pullSignedOutTimer = undefined;
+    if (this.pullSignedOut) {
+      this.pullSignedOut = false;
+      this.sayFromPull();
+    }
+    // This account's again: edits waiting for the sign-in go now, not at the end of their wait.
+    if (this.signInPausedUntil > Date.now()) {
+      this.signInPausedUntil = 0;
+      this.kick(0);
+    }
+  }
+
+  /**
+   * Edits set aside (by an earlier version of this, or before the server's
+   * answer said why) for a refusal that was for want of sign-in alone:
+   * nothing wrong with them, so sent again.
+   */
+  private async sendAgainSignedOut(): Promise<void> {
+    const changed = await db()
+      .outbox.filter((entry) => entry.stuck !== undefined && signedOutError(entry.lastError ?? ""))
+      .modify((entry) => {
+        delete entry.stuck;
+        entry.attempts = 0;
+      });
+    if (changed > 0) {
+      this.set({ stuck: await this.stuckCount() });
+      this.kick(0);
+    }
+  }
+
   private async sendFiles(): Promise<boolean> {
     const { flushUploads, QuotaError } = await import("@/lib/media/attachments");
     try {
@@ -963,11 +1125,15 @@ export class SyncEngine {
     } catch (error) {
       // Not reached: left as they are, for when the network is back.
       if (typeof navigator !== "undefined" && navigator.onLine === false) throw error;
+      // No one, to the server: nothing wrong with the edits, which wait as
+      // they are (not counted against, nor set aside) for the sign-in.
+      if (signedOutError(error)) throw new SignedOut();
       const first = entries[0]!;
       if (ops.length > 1) {
         try {
           return { response: await send([ops[0]!]), sent: [first] };
         } catch (alone) {
+          if (signedOutError(alone)) throw new SignedOut();
           await this.failedToSend(first, alone);
         }
       } else {

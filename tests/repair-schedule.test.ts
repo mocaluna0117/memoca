@@ -18,6 +18,8 @@ const status = (over: Partial<SyncStatus> = {}): SyncStatus => ({
   stuck: 0,
   uploadRefused: false,
   saveFailed: false,
+  signInWait: false,
+  uploadsWaiting: 0,
   ...over,
 });
 

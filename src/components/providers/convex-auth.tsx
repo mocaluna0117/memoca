@@ -2,6 +2,7 @@
 
 import { ConvexProviderWithAuth, type ConvexReactClient } from "convex/react";
 import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { SIGN_IN_LOST } from "@/lib/sync/sign-in-lost";
 
 /** The parts of the Better Auth client this needs: its session, and a Convex token. */
 export type AuthClientForConvex = {
@@ -25,6 +26,8 @@ let initialTokenUsed = false;
 /** The wait before asking again, online, after a token could not be had: it doubles up to the longest. */
 const FIRST_WAIT_MS = 2_000;
 const LONGEST_WAIT_MS = 60_000;
+/** How often a token is asked for again as the sync finds this device no one to the server, at most. */
+const LOST_ASKED_EVERY_MS = 10_000;
 
 /**
  * The hook Convex asks whether someone is signed in, and for their token:
@@ -77,6 +80,8 @@ export function useBetterAuthForConvex(
         const wait = useRef(FIRST_WAIT_MS);
         /** Mounted: once not, nothing more is tried. */
         const live = useRef(false);
+        /** When a token was last asked for again as the sync found this device no one to the server. */
+        const lostAt = useRef(0);
 
         const retry = useCallback(() => {
           // An ask still running settles it: a new way of fetching now would
@@ -93,14 +98,29 @@ export function useBetterAuthForConvex(
           const onVisible = () => {
             if (document.visibilityState === "visible") retry();
           };
+          // The server takes this device for no one, as the sync finds (a
+          // push refused, the pull no one's): its token lapsed and was not
+          // renewed. Asked for again now, from the server rather than the
+          // one kept, a window out of sight too, which waits for nothing
+          // else; not more than once in a while.
+          const onLost = () => {
+            const now = Date.now();
+            if (now - lostAt.current < LOST_ASKED_EVERY_MS) return;
+            lostAt.current = now;
+            lastToken.current = null;
+            missed.current = true;
+            retry();
+          };
           window.addEventListener("online", retry);
           document.addEventListener("visibilitychange", onVisible);
+          window.addEventListener(SIGN_IN_LOST, onLost);
           return () => {
             live.current = false;
             clearTimeout(later.current);
             later.current = undefined;
             window.removeEventListener("online", retry);
             document.removeEventListener("visibilitychange", onVisible);
+            window.removeEventListener(SIGN_IN_LOST, onLost);
           };
         }, [retry]);
 

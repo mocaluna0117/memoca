@@ -1,6 +1,6 @@
 import "fake-indexeddb/auto";
 import type { ConvexReactClient } from "convex/react";
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import * as Y from "yjs";
 import { toArrayBuffer } from "@/lib/bytes";
 import { db, resetLocalData, setMeta } from "@/lib/db";
@@ -48,9 +48,14 @@ afterEach(() => {
 });
 
 test("bodies that arrive after the engine stopped are not written, to what may be another account's data", async () => {
-  let answer!: (value: unknown) => void;
+  // Every ask answered at once, as the server would (one of the engine's
+  // own may come along with the one asked for here).
+  const asks: ((value: unknown) => void)[] = [];
+  const answer = (value: unknown) => {
+    for (const resolve of asks) resolve(value);
+  };
   const server = fakeConvex({
-    "notes:getBodies": () => new Promise((resolve) => (answer = resolve)),
+    "notes:getBodies": () => new Promise((resolve) => asks.push(resolve)),
   });
   const client = {
     ...server.client,
@@ -61,7 +66,8 @@ test("bodies that arrive after the engine stopped are not written, to what may b
   await engine.start("me");
 
   const fetching = engine.fetchBodies(["n1"]);
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  // Asked of the server (files go up meanwhile, apart: not at once, then).
+  await vi.waitFor(() => expect(server.callsTo("notes:getBodies").length).toBeGreaterThan(0));
   // Signing out, or another account signing in: the engine stops and the
   // local data is wiped while the server is still answering.
   engine.stop();
