@@ -60,4 +60,27 @@ test.describe("undo", () => {
     await expect(last).toHaveAttribute("data-content-type", "paragraph");
     await expect(last).toHaveText("# ");
   });
+
+  test("⌘Z just after Enter turned a line into a list leaves its mark, with no line break in the line", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    for (const [mark, kind] of [
+      ["-", "bulletListItem"],
+      ["1.", "numberedListItem"],
+      ["#", "heading"],
+    ] as const) {
+      await createNote(page, `Enter で ${mark}`);
+      await editor(page).click();
+      await page.keyboard.type(mark);
+      await page.keyboard.press("Enter");
+      const line = editor(page).locator(".bn-block-content").first();
+      await expect(line).toHaveAttribute("data-content-type", kind);
+      await page.keyboard.press("ControlOrMeta+z");
+      await expect(line).toHaveAttribute("data-content-type", "paragraph");
+      // The mark as it was typed: the Enter that ran the rule is not left as a break in the line.
+      expect(await line.locator(".bn-inline-content").evaluate((element) => element.textContent)).toBe(mark);
+    }
+  });
 });

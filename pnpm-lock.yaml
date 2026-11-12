@@ -20,7 +20,7 @@ patchedDependencies:
     hash: ba102451bd21da733d26cb23076f0c01c30c95ea8e6af4bffa3a550c5cbe320f
     path: patches/@blocknote__xl-multi-column@0.55.0.patch
   '@handlewithcare/prosemirror-inputrules@0.1.4':
-    hash: f91b241f2d219387a96d5841dfb4ac88cb267e2441e1eca7332d016cbf3806e3
+    hash: 7eead1ad750bcfbe85b5e94859f458cea479c1a358f57303990f1ef5e71eab24
     path: patches/@handlewithcare__prosemirror-inputrules@0.1.4.patch
   '@radix-ui/react-menu@2.1.24':
     hash: db0bae79a373d74725bc17748b477220a4badbf7211bca5bb596a67004c3a6d3
@@ -6047,7 +6047,7 @@ snapshots:
   '@blocknote/core@0.55.0(patch_hash=9066d39c81df935115ef0b1c93d45122c7ad9612475e515c903c0267438f54bf)(@types/hast@3.0.5)(y-prosemirror@1.3.7(patch_hash=95c3ed4f15fc73d4e829c3563d6961570dd5eed1b408114c6a2e3d9138c18419)(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-view@1.42.6)(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32))(y-protocols@1.0.7(yjs@13.6.32))(yjs@13.6.32)':
     dependencies:
       '@emoji-mart/data': 1.2.1
-      '@handlewithcare/prosemirror-inputrules': 0.1.4(patch_hash=f91b241f2d219387a96d5841dfb4ac88cb267e2441e1eca7332d016cbf3806e3)(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-view@1.42.6)
+      '@handlewithcare/prosemirror-inputrules': 0.1.4(patch_hash=7eead1ad750bcfbe85b5e94859f458cea479c1a358f57303990f1ef5e71eab24)(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-view@1.42.6)
       '@shikijs/types': 4.4.3
       '@tiptap/core': 3.31.3(@tiptap/pm@3.31.3)
       '@tiptap/extension-bold': 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
@@ -6561,7 +6561,7 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@handlewithcare/prosemirror-inputrules@0.1.4(patch_hash=f91b241f2d219387a96d5841dfb4ac88cb267e2441e1eca7332d016cbf3806e3)(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-view@1.42.6)':
+  '@handlewithcare/prosemirror-inputrules@0.1.4(patch_hash=7eead1ad750bcfbe85b5e94859f458cea479c1a358f57303990f1ef5e71eab24)(prosemirror-model@1.25.12)(prosemirror-state@1.4.4)(prosemirror-view@1.42.6)':
     dependencies:
       prosemirror-history: 1.5.0
       prosemirror-model: 1.25.12

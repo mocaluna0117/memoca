@@ -1,18 +1,28 @@
 diff --git a/dist/inputrules.js b/dist/inputrules.js
-index 6845d468baf8525800b086694432333c4e9c1277..a45c1da3f731673f27bec1504f30aa8733f70dd0 100644
+index 6845d468baf8525800b086694432333c4e9c1277..0fbf4385c7ba1a4430665f8099d5fa2b9ac3894e 100644
 --- a/dist/inputrules.js
 +++ b/dist/inputrules.js
-@@ -119,12 +119,28 @@ function run(view, from, to, text, rules, plugin) {
+@@ -117,14 +117,38 @@ function run(view, from, to, text, rules, plugin) {
+         let tr = rule.handler(state, match, mappedFrom - match[0].length, mappedTo);
+         if (!tr)
              continue;
-         view.dispatch(insertTr);
-         view.dispatch(closeHistory(view.state.tr));
 +        // Memoca: Yjs's undo (y-prosemirror's, in place of ProseMirror's
 +        // history) knows nothing of closeHistory, and takes what comes
 +        // within half a second as one step: ⌘Z just after "- " made a list
 +        // took the "- " typed with it, leaving an empty line. The typed
-+        // text ends its step here, so the rule's change is undone alone.
-+        const yUndo = view.state.plugins.find((each) => each.key === "y-undo$");
-+        yUndo?.getState(view.state)?.undoManager?.stopCapturing();
++        // text ends its step before the rule's change, which is undone
++        // alone. A rule run by Enter is handed a line break as its text
++        // (see below), not one to be left in the line: the step ends
++        // before it instead, and it is undone with the rule's change.
++        const yUndo = view.state.plugins
++            .find((each) => each.key === "y-undo$")
++            ?.getState(view.state)?.undoManager;
++        if (text === "\n")
++            yUndo?.stopCapturing();
+         view.dispatch(insertTr);
+         view.dispatch(closeHistory(view.state.tr));
++        if (text !== "\n")
++            yUndo?.stopCapturing();
          if (rule.undoable)
              tr.setMeta(plugin, {
                  transform: tr,
