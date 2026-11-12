@@ -16,6 +16,7 @@ test("a look chosen: the page in it at once, kept here from before it is drawn, 
   await page.goto("/app/settings");
   const looks = page.getByRole("radiogroup", { name: "デザイン" });
   await expect(looks.getByRole("radio", { name: /スタイリッシュ/ })).toHaveAttribute("aria-checked", "true");
+  await expect(looks.getByRole("radio")).toHaveCount(9);
   const before = await background(page);
 
   await looks.getByRole("radio", { name: /かわいい/ }).click();

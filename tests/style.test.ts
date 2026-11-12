@@ -50,7 +50,9 @@ describe("the app's look on this device", () => {
   });
 
   test("the looks there are, and no others", () => {
-    for (const style of ["stylish", "cute", "natural", "fresh", "retro"]) expect(isStyle(style)).toBe(true);
+    for (const style of ["stylish", "cute", "natural", "fresh", "retro", "wafu", "pop", "chic", "terminal"]) {
+      expect(isStyle(style)).toBe(true);
+    }
     expect(isStyle("neon")).toBe(false);
     expect(isStyle(null)).toBe(false);
   });

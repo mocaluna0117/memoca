@@ -57,6 +57,8 @@ describe("the app's look, kept for the account", () => {
     const me = await signedIn(t);
     expect((await me.query(api.users.me, {}))?.settings.style).toBeUndefined();
 
+    await me.mutation(api.users.updateSettings, { style: "wafu" });
+    expect((await me.query(api.users.me, {}))?.settings.style).toBe("wafu");
     await me.mutation(api.users.updateSettings, { style: "cute" });
     const settings = (await me.query(api.users.me, {}))?.settings;
     expect(settings?.style).toBe("cute");

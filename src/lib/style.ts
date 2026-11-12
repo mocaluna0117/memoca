@@ -15,7 +15,7 @@ export const STYLES = [
   {
     id: "cute",
     label: "かわいい",
-    description: "淡いピンクとラベンダー、丸い文字",
+    description: "ピンクとラベンダーに水玉とハート、まるい文字",
   },
   {
     id: "natural",
@@ -31,6 +31,26 @@ export const STYLES = [
     id: "retro",
     label: "レトロ",
     description: "クリーム色の紙に、茶色のインク",
+  },
+  {
+    id: "wafu",
+    label: "和風",
+    description: "和紙に藍と朱、明朝体",
+  },
+  {
+    id: "pop",
+    label: "ポップ",
+    description: "黄色とコーラル、ミント。太めの丸文字",
+  },
+  {
+    id: "chic",
+    label: "シック",
+    description: "グレージュと墨に、金のアクセント",
+  },
+  {
+    id: "terminal",
+    label: "ターミナル",
+    description: "黒い画面に緑の文字、等幅",
   },
 ] as const;
 

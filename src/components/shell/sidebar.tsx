@@ -95,10 +95,10 @@ export function Sidebar({
   ];
 
   return (
-    <div className="flex h-full min-h-0 flex-col overflow-hidden">
+    <div data-app-sidebar className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-3 py-3">
         {/* Every note's list, as no folder is chosen (there is no row for it). */}
-        <Link href="/app" className="text-sm font-semibold tracking-tight">
+        <Link href="/app" data-app-name className="text-sm font-semibold tracking-tight">
           {t.app.name}
         </Link>
         {/* The close control shares the header row so it can never sit on top

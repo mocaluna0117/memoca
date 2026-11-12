@@ -139,73 +139,85 @@
    reaches a .dark inside (the editor's, which BlockNote marks so). Letters
    from a font of the look's own where it has one (src/lib/look-fonts.ts,
    loaded once a page is in the look), the platform's Japanese after. */
-[data-style="cute"],
-[data-style="natural"],
-[data-style="fresh"],
-[data-style="retro"] {
+[data-style]:not([data-style="stylish"]) {
+  --font-stack-mincho: "Hiragino Mincho ProN", "Yu Mincho", YuMincho, serif;
   --font-stack-jp:
     -apple-system, BlinkMacSystemFont, "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP",
     "Yu Gothic", Meiryo, sans-serif;
 }
 
-/* かわいい: pale pink and lavender, round corners and round letters. */
+/* かわいい: pink and lavender, the roundest corners, soft round letters;
+   its headings and marks in pink, polka dots in the sidebar and a heart
+   by the app's name (the marks below, under "Each look's own touches"). */
 [data-style="cute"] {
-  --font-stack-sans: var(--font-zen-maru, "Hiragino Maru Gothic ProN"), "Hiragino Maru Gothic ProN", var(--font-stack-jp);
-  --radius: 1rem;
-  --background: oklch(0.99 0.008 350);
-  --foreground: oklch(0.33 0.045 340);
-  --card: oklch(1 0.004 350);
-  --card-foreground: oklch(0.33 0.045 340);
-  --popover: oklch(1 0.004 350);
-  --popover-foreground: oklch(0.33 0.045 340);
-  --primary: oklch(0.6 0.17 355);
-  --primary-foreground: oklch(0.99 0.01 350);
-  --secondary: oklch(0.95 0.03 320);
-  --secondary-foreground: oklch(0.38 0.08 320);
-  --muted: oklch(0.965 0.02 340);
-  --muted-foreground: oklch(0.55 0.05 340);
-  --accent: oklch(0.945 0.035 350);
-  --accent-foreground: oklch(0.36 0.07 345);
-  --border: oklch(0.91 0.03 345);
-  --input: oklch(0.9 0.035 345);
-  --ring: oklch(0.75 0.12 355);
-  --sidebar: oklch(0.975 0.018 320);
-  --sidebar-foreground: oklch(0.33 0.045 330);
-  --sidebar-primary: oklch(0.6 0.17 355);
-  --sidebar-primary-foreground: oklch(0.99 0.01 350);
-  --sidebar-accent: oklch(0.935 0.04 330);
-  --sidebar-accent-foreground: oklch(0.36 0.07 330);
-  --sidebar-border: oklch(0.91 0.03 330);
-  --sidebar-ring: oklch(0.75 0.12 355);
+  --font-stack-sans:
+    var(--font-nunito, "Hiragino Maru Gothic ProN"), var(--font-kiwi-maru, "Hiragino Maru Gothic ProN"),
+    "Hiragino Maru Gothic ProN", var(--font-stack-jp);
+  --radius: 1.25rem;
+  --background: oklch(0.985 0.014 350);
+  --foreground: oklch(0.38 0.07 350);
+  --card: oklch(0.995 0.008 350);
+  --card-foreground: oklch(0.38 0.07 350);
+  --popover: oklch(0.995 0.008 350);
+  --popover-foreground: oklch(0.38 0.07 350);
+  --primary: oklch(0.63 0.2 358);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.95 0.035 310);
+  --secondary-foreground: oklch(0.42 0.1 310);
+  --muted: oklch(0.96 0.025 345);
+  --muted-foreground: oklch(0.58 0.07 350);
+  --accent: oklch(0.935 0.05 352);
+  --accent-foreground: oklch(0.4 0.1 355);
+  --border: oklch(0.9 0.045 350);
+  --input: oklch(0.88 0.05 350);
+  --ring: oklch(0.78 0.13 358);
+  --sidebar: oklch(0.965 0.03 335);
+  --sidebar-foreground: oklch(0.38 0.07 345);
+  --sidebar-primary: oklch(0.63 0.2 358);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.92 0.06 350);
+  --sidebar-accent-foreground: oklch(0.4 0.1 355);
+  --sidebar-border: oklch(0.9 0.045 340);
+  --sidebar-ring: oklch(0.78 0.13 358);
+  --deco-heading: oklch(0.58 0.19 358);
+  --deco-marker: oklch(0.7 0.16 358);
+  --deco-quote: oklch(0.75 0.12 315);
+  --deco-selection: oklch(0.9 0.07 355);
+  --deco-dots: oklch(0.86 0.08 355 / 55%);
 }
 .dark[data-style="cute"],
 .dark [data-style="cute"],
 [data-style="cute"] .dark {
-  --background: oklch(0.21 0.03 330);
-  --foreground: oklch(0.95 0.02 340);
-  --card: oklch(0.255 0.035 330);
-  --card-foreground: oklch(0.95 0.02 340);
-  --popover: oklch(0.255 0.035 330);
-  --popover-foreground: oklch(0.95 0.02 340);
-  --primary: oklch(0.8 0.11 355);
-  --primary-foreground: oklch(0.23 0.04 340);
-  --secondary: oklch(0.3 0.04 320);
-  --secondary-foreground: oklch(0.93 0.03 320);
-  --muted: oklch(0.29 0.035 330);
-  --muted-foreground: oklch(0.76 0.04 340);
-  --accent: oklch(0.32 0.05 340);
-  --accent-foreground: oklch(0.95 0.02 340);
-  --border: oklch(0.85 0.06 340 / 14%);
-  --input: oklch(0.85 0.06 340 / 20%);
-  --ring: oklch(0.65 0.1 355);
-  --sidebar: oklch(0.235 0.035 325);
-  --sidebar-foreground: oklch(0.95 0.02 340);
-  --sidebar-primary: oklch(0.8 0.11 355);
-  --sidebar-primary-foreground: oklch(0.23 0.04 340);
-  --sidebar-accent: oklch(0.31 0.045 330);
-  --sidebar-accent-foreground: oklch(0.95 0.02 340);
-  --sidebar-border: oklch(0.85 0.06 340 / 12%);
-  --sidebar-ring: oklch(0.65 0.1 355);
+  --background: oklch(0.22 0.04 335);
+  --foreground: oklch(0.95 0.025 350);
+  --card: oklch(0.26 0.05 335);
+  --card-foreground: oklch(0.95 0.025 350);
+  --popover: oklch(0.26 0.05 335);
+  --popover-foreground: oklch(0.95 0.025 350);
+  --primary: oklch(0.8 0.13 358);
+  --primary-foreground: oklch(0.25 0.05 345);
+  --secondary: oklch(0.31 0.06 315);
+  --secondary-foreground: oklch(0.94 0.03 315);
+  --muted: oklch(0.3 0.045 335);
+  --muted-foreground: oklch(0.78 0.05 350);
+  --accent: oklch(0.34 0.07 350);
+  --accent-foreground: oklch(0.95 0.025 350);
+  --border: oklch(0.85 0.08 350 / 16%);
+  --input: oklch(0.85 0.08 350 / 22%);
+  --ring: oklch(0.68 0.12 358);
+  --sidebar: oklch(0.245 0.045 330);
+  --sidebar-foreground: oklch(0.95 0.025 350);
+  --sidebar-primary: oklch(0.8 0.13 358);
+  --sidebar-primary-foreground: oklch(0.25 0.05 345);
+  --sidebar-accent: oklch(0.34 0.07 345);
+  --sidebar-accent-foreground: oklch(0.95 0.025 350);
+  --sidebar-border: oklch(0.85 0.08 350 / 13%);
+  --sidebar-ring: oklch(0.68 0.12 358);
+  --deco-heading: oklch(0.83 0.12 358);
+  --deco-marker: oklch(0.78 0.13 358);
+  --deco-quote: oklch(0.7 0.1 315);
+  --deco-selection: oklch(0.45 0.12 355);
+  --deco-dots: oklch(0.55 0.1 350 / 35%);
 }
 
 /* ナチュラル: unbleached paper and sage green. */
@@ -388,6 +400,278 @@
   --sidebar-ring: oklch(0.62 0.09 70);
 }
 
+/* 和風: washi, sumi ink, indigo (藍) and vermilion (朱), in Mincho. */
+[data-style="wafu"] {
+  --font-stack-sans: var(--font-shippori, var(--font-stack-mincho)), var(--font-stack-mincho);
+  --radius: 0.25rem;
+  --background: oklch(0.965 0.018 90);
+  --foreground: oklch(0.25 0.015 60);
+  --card: oklch(0.975 0.014 90);
+  --card-foreground: oklch(0.25 0.015 60);
+  --popover: oklch(0.975 0.014 90);
+  --popover-foreground: oklch(0.25 0.015 60);
+  --primary: oklch(0.42 0.1 260);
+  --primary-foreground: oklch(0.97 0.01 90);
+  --secondary: oklch(0.93 0.02 85);
+  --secondary-foreground: oklch(0.35 0.06 260);
+  --muted: oklch(0.94 0.018 88);
+  --muted-foreground: oklch(0.5 0.02 70);
+  --accent: oklch(0.92 0.025 80);
+  --accent-foreground: oklch(0.3 0.05 260);
+  --border: oklch(0.87 0.025 85);
+  --input: oklch(0.85 0.028 85);
+  --ring: oklch(0.6 0.08 260);
+  --sidebar: oklch(0.945 0.022 88);
+  --sidebar-foreground: oklch(0.25 0.015 60);
+  --sidebar-primary: oklch(0.42 0.1 260);
+  --sidebar-primary-foreground: oklch(0.97 0.01 90);
+  --sidebar-accent: oklch(0.9 0.03 85);
+  --sidebar-accent-foreground: oklch(0.3 0.05 260);
+  --sidebar-border: oklch(0.86 0.028 85);
+  --sidebar-ring: oklch(0.6 0.08 260);
+  --deco-heading: oklch(0.4 0.1 260);
+  --deco-marker: oklch(0.58 0.17 35);
+  --deco-quote: oklch(0.58 0.17 35);
+  --deco-selection: oklch(0.88 0.06 40);
+}
+.dark[data-style="wafu"],
+.dark [data-style="wafu"],
+[data-style="wafu"] .dark {
+  --background: oklch(0.2 0.01 60);
+  --foreground: oklch(0.92 0.02 85);
+  --card: oklch(0.24 0.012 60);
+  --card-foreground: oklch(0.92 0.02 85);
+  --popover: oklch(0.24 0.012 60);
+  --popover-foreground: oklch(0.92 0.02 85);
+  --primary: oklch(0.72 0.09 250);
+  --primary-foreground: oklch(0.2 0.02 260);
+  --secondary: oklch(0.28 0.015 60);
+  --secondary-foreground: oklch(0.92 0.02 85);
+  --muted: oklch(0.28 0.012 60);
+  --muted-foreground: oklch(0.72 0.02 80);
+  --accent: oklch(0.3 0.02 60);
+  --accent-foreground: oklch(0.92 0.02 85);
+  --border: oklch(0.9 0.03 85 / 12%);
+  --input: oklch(0.9 0.03 85 / 18%);
+  --ring: oklch(0.6 0.07 250);
+  --sidebar: oklch(0.23 0.012 60);
+  --sidebar-foreground: oklch(0.92 0.02 85);
+  --sidebar-primary: oklch(0.72 0.09 250);
+  --sidebar-primary-foreground: oklch(0.2 0.02 260);
+  --sidebar-accent: oklch(0.3 0.02 60);
+  --sidebar-accent-foreground: oklch(0.92 0.02 85);
+  --sidebar-border: oklch(0.9 0.03 85 / 10%);
+  --sidebar-ring: oklch(0.6 0.07 250);
+  --deco-heading: oklch(0.76 0.09 250);
+  --deco-marker: oklch(0.68 0.16 35);
+  --deco-quote: oklch(0.68 0.16 35);
+  --deco-selection: oklch(0.4 0.08 35);
+}
+
+/* ポップ: cream, coral, sunny yellow and mint, in heavy round letters. */
+[data-style="pop"] {
+  --font-stack-sans: var(--font-mplus-rounded, "Hiragino Maru Gothic ProN"), "Hiragino Maru Gothic ProN", var(--font-stack-jp);
+  --radius: 1rem;
+  --background: oklch(0.99 0.012 95);
+  --foreground: oklch(0.28 0.04 280);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.28 0.04 280);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.28 0.04 280);
+  --primary: oklch(0.62 0.2 28);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.93 0.07 170);
+  --secondary-foreground: oklch(0.35 0.08 170);
+  --muted: oklch(0.965 0.03 95);
+  --muted-foreground: oklch(0.52 0.04 280);
+  --accent: oklch(0.94 0.08 95);
+  --accent-foreground: oklch(0.3 0.05 280);
+  --border: oklch(0.88 0.05 95);
+  --input: oklch(0.85 0.06 95);
+  --ring: oklch(0.75 0.15 28);
+  --sidebar: oklch(0.96 0.07 95);
+  --sidebar-foreground: oklch(0.28 0.04 280);
+  --sidebar-primary: oklch(0.62 0.2 28);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.9 0.11 95);
+  --sidebar-accent-foreground: oklch(0.28 0.04 280);
+  --sidebar-border: oklch(0.88 0.08 95);
+  --sidebar-ring: oklch(0.75 0.15 28);
+  --deco-heading: oklch(0.6 0.2 28);
+  --deco-marker: oklch(0.7 0.14 170);
+  --deco-quote: oklch(0.72 0.14 170);
+  --deco-selection: oklch(0.92 0.1 95);
+}
+.dark[data-style="pop"],
+.dark [data-style="pop"],
+[data-style="pop"] .dark {
+  --background: oklch(0.23 0.05 285);
+  --foreground: oklch(0.96 0.02 95);
+  --card: oklch(0.27 0.06 285);
+  --card-foreground: oklch(0.96 0.02 95);
+  --popover: oklch(0.27 0.06 285);
+  --popover-foreground: oklch(0.96 0.02 95);
+  --primary: oklch(0.74 0.17 30);
+  --primary-foreground: oklch(0.2 0.04 285);
+  --secondary: oklch(0.35 0.07 170);
+  --secondary-foreground: oklch(0.96 0.02 95);
+  --muted: oklch(0.3 0.05 285);
+  --muted-foreground: oklch(0.78 0.04 95);
+  --accent: oklch(0.34 0.07 285);
+  --accent-foreground: oklch(0.96 0.02 95);
+  --border: oklch(0.9 0.08 95 / 14%);
+  --input: oklch(0.9 0.08 95 / 20%);
+  --ring: oklch(0.65 0.15 30);
+  --sidebar: oklch(0.26 0.06 285);
+  --sidebar-foreground: oklch(0.96 0.02 95);
+  --sidebar-primary: oklch(0.74 0.17 30);
+  --sidebar-primary-foreground: oklch(0.2 0.04 285);
+  --sidebar-accent: oklch(0.36 0.08 285);
+  --sidebar-accent-foreground: oklch(0.96 0.02 95);
+  --sidebar-border: oklch(0.9 0.08 95 / 12%);
+  --sidebar-ring: oklch(0.65 0.15 30);
+  --deco-heading: oklch(0.87 0.15 95);
+  --deco-marker: oklch(0.8 0.13 170);
+  --deco-quote: oklch(0.74 0.17 30);
+  --deco-selection: oklch(0.45 0.12 30);
+}
+
+/* シック: greige and charcoal, a touch of gold, letters spaced out. */
+[data-style="chic"] {
+  --font-stack-sans: var(--font-geist-sans), var(--font-stack-jp);
+  --radius: 0.375rem;
+  --background: oklch(0.97 0.006 80);
+  --foreground: oklch(0.24 0.008 60);
+  --card: oklch(0.985 0.004 80);
+  --card-foreground: oklch(0.24 0.008 60);
+  --popover: oklch(0.985 0.004 80);
+  --popover-foreground: oklch(0.24 0.008 60);
+  --primary: oklch(0.26 0.01 60);
+  --primary-foreground: oklch(0.94 0.04 85);
+  --secondary: oklch(0.92 0.01 75);
+  --secondary-foreground: oklch(0.3 0.01 60);
+  --muted: oklch(0.935 0.008 75);
+  --muted-foreground: oklch(0.5 0.012 70);
+  --accent: oklch(0.91 0.02 85);
+  --accent-foreground: oklch(0.28 0.01 60);
+  --border: oklch(0.87 0.012 75);
+  --input: oklch(0.85 0.014 75);
+  --ring: oklch(0.7 0.08 85);
+  --sidebar: oklch(0.925 0.01 75);
+  --sidebar-foreground: oklch(0.24 0.008 60);
+  --sidebar-primary: oklch(0.26 0.01 60);
+  --sidebar-primary-foreground: oklch(0.94 0.04 85);
+  --sidebar-accent: oklch(0.88 0.02 80);
+  --sidebar-accent-foreground: oklch(0.24 0.008 60);
+  --sidebar-border: oklch(0.86 0.012 75);
+  --sidebar-ring: oklch(0.7 0.08 85);
+  --deco-marker: oklch(0.66 0.1 80);
+  --deco-quote: oklch(0.7 0.1 82);
+  --deco-selection: oklch(0.88 0.05 85);
+}
+.dark[data-style="chic"],
+.dark [data-style="chic"],
+[data-style="chic"] .dark {
+  --background: oklch(0.19 0.006 60);
+  --foreground: oklch(0.93 0.01 80);
+  --card: oklch(0.23 0.008 60);
+  --card-foreground: oklch(0.93 0.01 80);
+  --popover: oklch(0.23 0.008 60);
+  --popover-foreground: oklch(0.93 0.01 80);
+  --primary: oklch(0.82 0.09 85);
+  --primary-foreground: oklch(0.2 0.01 60);
+  --secondary: oklch(0.28 0.008 60);
+  --secondary-foreground: oklch(0.93 0.01 80);
+  --muted: oklch(0.27 0.008 60);
+  --muted-foreground: oklch(0.72 0.012 80);
+  --accent: oklch(0.3 0.015 70);
+  --accent-foreground: oklch(0.93 0.01 80);
+  --border: oklch(0.9 0.02 80 / 11%);
+  --input: oklch(0.9 0.02 80 / 17%);
+  --ring: oklch(0.65 0.08 85);
+  --sidebar: oklch(0.22 0.007 60);
+  --sidebar-foreground: oklch(0.93 0.01 80);
+  --sidebar-primary: oklch(0.82 0.09 85);
+  --sidebar-primary-foreground: oklch(0.2 0.01 60);
+  --sidebar-accent: oklch(0.3 0.015 70);
+  --sidebar-accent-foreground: oklch(0.93 0.01 80);
+  --sidebar-border: oklch(0.9 0.02 80 / 9%);
+  --sidebar-ring: oklch(0.65 0.08 85);
+  --deco-marker: oklch(0.78 0.1 85);
+  --deco-quote: oklch(0.78 0.1 85);
+  --deco-selection: oklch(0.4 0.06 85);
+}
+
+/* ターミナル: green on black (on pale green paper in the light), every
+   letter the same width, square corners. */
+[data-style="terminal"] {
+  --font-stack-sans: var(--font-geist-mono), var(--font-biz-ud, var(--font-stack-jp)), var(--font-stack-jp), monospace;
+  --font-stack-mono: var(--font-geist-mono), var(--font-biz-ud, var(--font-stack-jp)), monospace;
+  --radius: 0.125rem;
+  --background: oklch(0.975 0.012 145);
+  --foreground: oklch(0.3 0.07 150);
+  --card: oklch(0.985 0.008 145);
+  --card-foreground: oklch(0.3 0.07 150);
+  --popover: oklch(0.985 0.008 145);
+  --popover-foreground: oklch(0.3 0.07 150);
+  --primary: oklch(0.48 0.13 150);
+  --primary-foreground: oklch(0.98 0.01 145);
+  --secondary: oklch(0.93 0.03 145);
+  --secondary-foreground: oklch(0.3 0.07 150);
+  --muted: oklch(0.945 0.02 145);
+  --muted-foreground: oklch(0.5 0.05 150);
+  --accent: oklch(0.92 0.04 145);
+  --accent-foreground: oklch(0.28 0.07 150);
+  --border: oklch(0.86 0.04 145);
+  --input: oklch(0.84 0.045 145);
+  --ring: oklch(0.65 0.12 150);
+  --sidebar: oklch(0.955 0.02 145);
+  --sidebar-foreground: oklch(0.3 0.07 150);
+  --sidebar-primary: oklch(0.48 0.13 150);
+  --sidebar-primary-foreground: oklch(0.98 0.01 145);
+  --sidebar-accent: oklch(0.9 0.05 145);
+  --sidebar-accent-foreground: oklch(0.28 0.07 150);
+  --sidebar-border: oklch(0.85 0.045 145);
+  --sidebar-ring: oklch(0.65 0.12 150);
+  --deco-heading: oklch(0.42 0.13 150);
+  --deco-marker: oklch(0.5 0.14 150);
+  --deco-quote: oklch(0.55 0.13 150);
+  --deco-selection: oklch(0.88 0.08 145);
+}
+.dark[data-style="terminal"],
+.dark [data-style="terminal"],
+[data-style="terminal"] .dark {
+  --background: oklch(0.16 0.01 150);
+  --foreground: oklch(0.87 0.16 145);
+  --card: oklch(0.2 0.015 150);
+  --card-foreground: oklch(0.87 0.16 145);
+  --popover: oklch(0.2 0.015 150);
+  --popover-foreground: oklch(0.87 0.16 145);
+  --primary: oklch(0.82 0.19 145);
+  --primary-foreground: oklch(0.16 0.01 150);
+  --secondary: oklch(0.25 0.03 150);
+  --secondary-foreground: oklch(0.87 0.16 145);
+  --muted: oklch(0.23 0.02 150);
+  --muted-foreground: oklch(0.68 0.1 145);
+  --accent: oklch(0.27 0.04 150);
+  --accent-foreground: oklch(0.9 0.17 145);
+  --border: oklch(0.8 0.17 145 / 18%);
+  --input: oklch(0.8 0.17 145 / 24%);
+  --ring: oklch(0.65 0.15 145);
+  --sidebar: oklch(0.18 0.015 150);
+  --sidebar-foreground: oklch(0.87 0.16 145);
+  --sidebar-primary: oklch(0.82 0.19 145);
+  --sidebar-primary-foreground: oklch(0.16 0.01 150);
+  --sidebar-accent: oklch(0.27 0.05 150);
+  --sidebar-accent-foreground: oklch(0.9 0.17 145);
+  --sidebar-border: oklch(0.8 0.17 145 / 14%);
+  --sidebar-ring: oklch(0.65 0.15 145);
+  --deco-heading: oklch(0.92 0.18 145);
+  --deco-marker: oklch(0.82 0.19 145);
+  --deco-quote: oklch(0.7 0.15 145);
+  --deco-selection: oklch(0.42 0.1 145);
+}
+
 /* In a look of its own, the editor on the page's colours, not BlockNote's
    white (or its grey in the dark), and its menus on the popover's. */
 :root[data-style] .bn-root {
@@ -409,6 +693,68 @@
 }
 :root[data-style] .bn-default-styles {
   font-family: var(--font-stack-sans);
+}
+
+/* Each look's own touches, where it says them (--deco-*): its headings'
+   ink, the marks of its lists and checkboxes, its quotes' rule, what is
+   selected, the caret. A look that says none keeps the editor's own. */
+:root[data-style] .bn-editor .bn-block-content[data-content-type="heading"] .bn-inline-content {
+  color: var(--deco-heading, inherit);
+}
+:root[data-style] .bn-editor .bn-block-content[data-content-type="bulletListItem"]::before,
+:root[data-style] .bn-editor .bn-block-content[data-content-type="numberedListItem"]::before {
+  color: var(--deco-marker, inherit);
+}
+:root[data-style] input[type="checkbox"] {
+  accent-color: var(--deco-marker, var(--primary));
+}
+:root[data-style] [data-content-type="quote"] blockquote {
+  border-left-color: var(--deco-quote, currentColor);
+}
+:root[data-style] .bn-editor {
+  caret-color: var(--deco-marker, var(--primary));
+}
+:root[data-style] ::selection {
+  background-color: var(--deco-selection, Highlight);
+}
+
+/* かわいい: polka dots in the sidebar, and a heart by the app's name. */
+[data-style="cute"] [data-app-sidebar] {
+  background-image: radial-gradient(var(--deco-dots) 1.3px, transparent 1.8px);
+  background-size: 16px 16px;
+}
+[data-style="cute"] [data-app-name]::after {
+  content: "♡";
+  margin-left: 0.2em;
+  color: var(--primary);
+}
+/* シック: the app's name in spaced capitals, headings spaced out a little. */
+[data-style="chic"] [data-app-name] {
+  text-transform: uppercase;
+  letter-spacing: 0.18em;
+}
+[data-style="chic"] .bn-editor .bn-block-content[data-content-type="heading"] .bn-inline-content {
+  letter-spacing: 0.04em;
+}
+/* ターミナル: the app's name at a prompt, a cursor blinking after it. */
+[data-style="terminal"] [data-app-name]::before {
+  content: "> ";
+  color: var(--primary);
+}
+[data-style="terminal"] [data-app-name]::after {
+  content: "_";
+  color: var(--primary);
+  animation: memoca-blink 1.1s steps(1) infinite;
+}
+@keyframes memoca-blink {
+  50% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-style="terminal"] [data-app-name]::after {
+    animation: none;
+  }
 }
 
 @layer base {

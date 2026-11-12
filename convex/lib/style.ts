@@ -7,4 +7,8 @@ export const styleValidator = v.union(
   v.literal("natural"),
   v.literal("fresh"),
   v.literal("retro"),
+  v.literal("wafu"),
+  v.literal("pop"),
+  v.literal("chic"),
+  v.literal("terminal"),
 );

@@ -13,13 +13,17 @@ const LOADERS: Partial<Record<StyleId, () => Promise<{ font: { variable: string 
   cute: () => import("@/components/style/font-cute"),
   natural: () => import("@/components/style/font-natural"),
   retro: () => import("@/components/style/font-retro"),
+  wafu: () => import("@/components/style/font-wafu"),
+  pop: () => import("@/components/style/font-pop"),
+  terminal: () => import("@/components/style/font-terminal"),
 };
 
 export function loadLookFont(style: StyleId): void {
   const load = LOADERS[style];
   if (!load) return;
   void load().then(
-    ({ font }) => document.documentElement.classList.add(font.variable),
+    // One class a font (かわいい's are two: its Latin letters, and its kana and kanji).
+    ({ font }) => document.documentElement.classList.add(...font.variable.split(/\s+/).filter(Boolean)),
     () => undefined,
   );
 }
