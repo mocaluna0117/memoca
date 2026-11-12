@@ -398,6 +398,14 @@ export default function HelpPage() {
               </dd>
             </div>
             <div>
+              <dt className="font-medium">
+                <For>Mac のデスクトップ版</For>「Memoca がキーチェーンに含まれるキーへアクセスしようとしています」と出た
+              </dt>
+              <dd className="text-foreground/80">
+                金庫を Touch ID で開くための鍵を、Memoca が読もうとしています。Mac のログインパスワード（金庫のパスワードではありません）を入力して「常に許可」を押してください。アプリを更新したあとに 1 回出ます。この確認に答えなくても、金庫のパスワードを入力すれば開けます。
+              </dd>
+            </div>
+            <div>
               <dt className="font-medium">新しくなったことを知りたい</dt>
               <dd className="text-foreground/80">
                 サイドバーの下の <Ico icon={Megaphone} />（

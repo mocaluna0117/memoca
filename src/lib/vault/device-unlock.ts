@@ -83,11 +83,26 @@ export class DeviceUnlockCancelled extends Error {
   }
 }
 
+/**
+ * The app asked for its secret, still to answer: a second ask meanwhile is
+ * this one (a prompt given up and opened again would otherwise bring out
+ * Touch ID, and the Mac's keychain question, a second time over the first).
+ */
+let asking: { create: boolean; answer: Promise<string> } | null = null;
+
 async function secret(create: boolean): Promise<Uint8Array> {
   const bridge = shell();
   if (!bridge) throw new Error("unsupported");
   try {
-    return fromBase64(await bridge.secret(create));
+    if (!asking || asking.create !== create) {
+      const mine = { create, answer: bridge.secret(create) };
+      asking = mine;
+      const done = () => {
+        if (asking === mine) asking = null;
+      };
+      mine.answer.then(done, done);
+    }
+    return fromBase64(await asking.answer);
   } catch (cause) {
     if (String(cause).includes("cancelled")) throw new DeviceUnlockCancelled();
     throw cause;
@@ -125,11 +140,21 @@ export async function enrollDeviceUnlockWithPassword(
  * Opens the vault with the computer's check. A copy the secret no longer
  * opens (the vault made again, say) is let go of, and the password asked
  * for instead.
+ *
+ * The check may be long in answering, or never answer (a Mac's keychain
+ * asking for its password after the app was updated, its question behind
+ * a window): `wanted` says whether the vault is still to be opened by it
+ * when it does. Given up meanwhile, the answer opens nothing
+ * ({@link DeviceUnlockCancelled}).
  */
-export async function unlockWithDeviceCheck(): Promise<void> {
+export async function unlockWithDeviceCheck(wanted: () => boolean = () => true): Promise<void> {
   const wrap = await getMeta<DeviceWrap | null>(META.deviceUnlock, null);
   if (!wrap) throw new Error("not-enrolled");
   const key = await secret(false);
+  if (!wanted()) {
+    wipe(key);
+    throw new DeviceUnlockCancelled();
+  }
   try {
     await unlockWithDevice(wrap, key);
   } catch (cause) {
@@ -148,6 +173,7 @@ export async function forgetDeviceUnlock(): Promise<void> {
 
 /** For tests: as if the desktop app offered `kind`, and this device kept a copy or not. */
 export function setDeviceUnlockForTests(next: DeviceUnlockState | null): void {
+  asking = null;
   loaded = next ? Promise.resolve() : null;
   set(next ?? { kind: null, enrolled: false });
 }

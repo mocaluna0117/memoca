@@ -171,8 +171,21 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
 
   const [error, setError] = useState<string | null>(null);
   // "passkey": a system sheet is up, which closing may cancel. "work": a key
-  // is being derived or saved, which closing must not interrupt.
-  const [pending, setPending] = useState<"passkey" | "work" | null>(null);
+  // is being derived or saved, which closing must not interrupt. "device":
+  // the desktop app's own check is up (Touch ID, and on a Mac perhaps the
+  // keychain asking for its password after an update), which may be long in
+  // answering or never answer: closing is free meanwhile, and so is the
+  // password. (As "work", it held the prompt shut for as long: no cancel,
+  // no password, the whole app behind it.)
+  const [pending, setPending] = useState<"passkey" | "work" | "device" | null>(null);
+  /** The device's check under way: counted up as it is given up, so its answer, coming late, does nothing. */
+  const deviceRun = useRef(0);
+  useEffect(() => {
+    const runs = deviceRun;
+    return () => {
+      runs.current += 1;
+    };
+  }, []);
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [recoveryInput, setRecoveryInput] = useState("");
@@ -265,6 +278,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
   };
   const cancel = () => {
     abort.current?.abort();
+    deviceRun.current += 1;
     finish(dismissResult(view) === "ok" ? { ok: true } : { ok: false, reason: "cancelled" });
   };
 
@@ -376,7 +390,9 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
   };
 
   const work = async (run: () => Promise<void>) => {
-    if (pending) return;
+    if (pending === "work" || pending === "passkey") return;
+    // The device's check still unanswered: given up for this (the password, say).
+    if (pending === "device") deviceRun.current += 1;
     setPending("work");
     setError(null);
     await nextFrame();
@@ -394,21 +410,28 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     return Date.now() - declinedAt > OFFER_AGAIN_MS;
   };
 
-  /** Opens the vault with the computer's check; the password stays there if it does not. */
-  const runDevice = () =>
-    work(async () => {
-      try {
-        await unlockWithDeviceCheck();
-      } catch (cause) {
-        if (!(cause instanceof DeviceUnlockCancelled)) {
-          setError(
-            `${deviceLabel ?? "この端末の認証"}で開けませんでした。パスワードで開いてください。`,
-          );
-        }
-        return;
+  /**
+   * Opens the vault with the computer's check; the password stays there if
+   * it does not, and while it is waited for.
+   */
+  const runDevice = async () => {
+    if (pending) return;
+    const run = (deviceRun.current += 1);
+    const mine = () => deviceRun.current === run;
+    setPending("device");
+    setError(null);
+    try {
+      await unlockWithDeviceCheck(mine);
+    } catch (cause) {
+      if (mine() && !(cause instanceof DeviceUnlockCancelled)) {
+        setError(`${deviceLabel ?? "この端末の認証"}で開けませんでした。パスワードで開いてください。`);
       }
-      ok();
-    });
+      return;
+    } finally {
+      if (mine()) setPending(null);
+    }
+    if (mine()) ok();
+  };
 
   // Asked for at once where this device opens with it, as a passkey here is.
   useEffect(() => {
@@ -418,28 +441,35 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [device.enrolled, view, unlocked]);
 
-  const acceptDeviceOffer = () =>
-    work(async () => {
-      if (!record) return;
-      let raw: Uint8Array | null = null;
-      try {
-        raw = await openVaultRaw(record, { password });
-        await enrollDeviceUnlock(raw);
-      } catch (cause) {
-        if (!(cause instanceof DeviceUnlockCancelled)) {
-          setError(
-            `${deviceLabel}を使えるようにできませんでした。あとで設定から設定してください。`,
-          );
-        }
-        return;
-      } finally {
-        if (raw) wipe(raw);
+  const acceptDeviceOffer = async () => {
+    if (!record || pending) return;
+    const run = (deviceRun.current += 1);
+    const mine = () => deviceRun.current === run;
+    setPending("work");
+    setError(null);
+    await nextFrame();
+    let raw: Uint8Array | null = null;
+    try {
+      raw = await openVaultRaw(record, { password });
+      // The computer's check from here: あとで is free while it is waited for.
+      if (mine()) setPending("device");
+      await enrollDeviceUnlock(raw);
+    } catch (cause) {
+      if (mine() && !(cause instanceof DeviceUnlockCancelled)) {
+        setError(`${deviceLabel}を使えるようにできませんでした。あとで設定から設定してください。`);
       }
-      toast.success(`次からは ${deviceLabel} で金庫を開けます`);
-      ok();
-    });
+      return;
+    } finally {
+      if (raw) wipe(raw);
+      if (mine()) setPending(null);
+    }
+    if (!mine()) return;
+    toast.success(`次からは ${deviceLabel} で金庫を開けます`);
+    ok();
+  };
 
   const declineDeviceOffer = () => {
+    deviceRun.current += 1;
     void setMeta(META.deviceUnlockOfferAt, Date.now());
     ok();
   };
@@ -597,7 +627,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
             </DialogHeader>
             <ErrorLine error={error} />
             <DialogFooter>
-              <Button variant="ghost" onClick={declineDeviceOffer} disabled={pending !== null}>
+              <Button variant="ghost" onClick={declineDeviceOffer} disabled={pending === "work"}>
                 あとで
               </Button>
               <Button
@@ -606,7 +636,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                 className="gap-2"
                 data-autofocus
               >
-                {pending === "work" ? (
+                {pending !== null ? (
                   <Loader2 className="size-4 animate-spin" aria-hidden />
                 ) : (
                   <Fingerprint className="size-4" aria-hidden />
@@ -939,13 +969,20 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                     onClick={() => void runDevice()}
                     disabled={pending !== null}
                   >
-                    {pending === "work" ? (
+                    {pending === "device" ? (
                       <Loader2 className="size-4 animate-spin" aria-hidden />
                     ) : (
                       <Fingerprint className="size-4" aria-hidden />
                     )}
-                    {`${deviceLabel} で開く`}
+                    {pending === "device" ? `${deviceLabel} の確認を待っています…` : `${deviceLabel} で開く`}
                   </Button>
+                ) : null}
+                {pending === "device" && deviceLabel ? (
+                  <p role="status" className="text-muted-foreground text-xs leading-relaxed">
+                    {device.kind === "touchId"
+                      ? "「Memoca がキーチェーンに含まれるキーへアクセスしようとしています」と出たときは、Mac のログインパスワードを入力して「常に許可」を押してください（アプリを更新したあとに 1 回出ます。ほかの窓の後ろに隠れていることがあります）。下の金庫のパスワードでも開けます。"
+                      : `${deviceLabel} の画面で確認してください。下の金庫のパスワードでも開けます。`}
+                  </p>
                 ) : null}
                 <Field id="vault-unlock-password" label="金庫のパスワード">
                   <PasswordInput
@@ -1027,7 +1064,7 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
                 {t.action.cancel}
               </Button>
               {view !== "passkey" ? (
-                <Button type="submit" disabled={pending !== null || blockedOffline}>
+                <Button type="submit" disabled={pending === "work" || pending === "passkey" || blockedOffline}>
                   <Spinner on={pending === "work"} />
                   {pending === "work" ? "確認しています…" : copy.verb}
                 </Button>

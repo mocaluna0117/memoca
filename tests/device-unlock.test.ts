@@ -66,6 +66,44 @@ describe("the vault opened by the desktop app's own check", () => {
     ]);
   });
 
+  test("an answer long in coming (the Mac's keychain asking): given up meanwhile, it opens nothing; asked for again, the app is not asked twice", async () => {
+    desktopApp();
+    await enrollDeviceUnlock(randomBytes(32));
+    const kept = await window.memocaShell!.deviceUnlock!.secret(false);
+    // The app's answer held until let go.
+    let answer: (secret: string) => void = () => {};
+    let asked = 0;
+    window.memocaShell!.deviceUnlock!.secret = () => {
+      asked += 1;
+      return new Promise<string>((resolve) => {
+        answer = resolve;
+      });
+    };
+
+    let wanted = true;
+    const first = unlockWithDeviceCheck(() => wanted);
+    // Given up (the prompt cancelled), and asked for again while the first is unanswered.
+    wanted = false;
+    const second = unlockWithDeviceCheck();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(asked).toBe(1);
+    expect(vault.isUnlocked).toBe(false);
+
+    answer(kept);
+    await expect(first).rejects.toBeInstanceOf(DeviceUnlockCancelled);
+    await second;
+    expect(vault.isUnlocked).toBe(true);
+
+    // Answered, the next ask is a new one.
+    vault.lock();
+    window.memocaShell!.deviceUnlock!.secret = async () => {
+      asked += 1;
+      return kept;
+    };
+    await unlockWithDeviceCheck();
+    expect(asked).toBe(2);
+  });
+
   test("closed by the person, the vault stays closed and the copy stays", async () => {
     desktopApp();
     await enrollDeviceUnlock(randomBytes(32));
