@@ -1,5 +1,5 @@
 import { type Page, expect, test } from "@playwright/test";
-import { openApp, signIn, signUp, waitForSynced } from "./helpers";
+import { createNote, editor, openApp, signIn, signUp, waitForSynced } from "./helpers";
 
 /** The app's looks (src/lib/style.ts), chosen in the settings for the account. */
 
@@ -80,4 +80,34 @@ test("a look chosen: the page in it at once, kept here from before it is drawn, 
   // Chosen again, the one the account has: nothing left to send.
   await page.getByRole("radiogroup", { name: "デザイン" }).getByRole("radio", { name: /スタイリッシュ/ }).click();
   await expect.poll(() => page.evaluate(() => localStorage.getItem("memoca:style-sent"))).toBeNull();
+});
+
+test("a heading given a colour of its own keeps it, in a look whose headings have their own ink", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "a block's handle, with a mouse");
+  await signUp(page);
+  await openApp(page);
+  await page.goto("/app/settings");
+  await page.getByRole("radiogroup", { name: "デザイン" }).getByRole("radio", { name: /かわいい/ }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("memoca:style-sent"))).toBeNull();
+  await openApp(page);
+  await createNote(page, "色の見出し");
+  await editor(page).click();
+  await page.keyboard.type("# 色を付ける見出し");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("# ふつうの見出し");
+  const line = (text: string) => editor(page).locator(".bn-inline-content", { hasText: text }).first();
+  const ink = (text: string) => line(text).evaluate((element) => getComputedStyle(element).color);
+  const looks = await ink("ふつうの見出し");
+  expect(await ink("色を付ける見出し")).toBe(looks);
+
+  // Red, from its handle's menu (the first 赤: the letters').
+  await line("色を付ける見出し").hover();
+  await page.locator(".bn-side-menu [draggable='true'], .bn-side-menu button").last().click();
+  await page.getByRole("menuitem", { name: "色を変更" }).hover();
+  await page.getByRole("menuitemcheckbox", { name: /赤/ }).first().click();
+  await expect.poll(() => ink("色を付ける見出し")).toBe("rgb(240, 68, 56)");
+  // The other's is the look's still.
+  expect(await ink("ふつうの見出し")).toBe(looks);
 });

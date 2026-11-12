@@ -46,7 +46,6 @@ export const holds = (tab: Pick<QuickTab, "unsaved">) => tab.unsaved;
 export function QuickTabs({
   tabs,
   active,
-  canOpen,
   onShow,
   onOpen,
   onClose,
@@ -54,8 +53,6 @@ export function QuickTabs({
 }: {
   tabs: QuickTab[];
   active: string;
-  /** Fewer than the most there may be. */
-  canOpen: boolean;
   onShow: (id: string) => void;
   onOpen: () => void;
   onClose: (id: string) => void;
@@ -161,7 +158,6 @@ export function QuickTabs({
           size="icon"
           className="mb-0.5 size-7 shrink-0"
           aria-label={t.quick.openTab}
-          disabled={!canOpen}
           onClick={onOpen}
         >
           <Plus className="size-4" aria-hidden />

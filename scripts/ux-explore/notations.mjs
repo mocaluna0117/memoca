@@ -10,8 +10,8 @@
 // Writes scripts/ux-explore/notations-<time>.json and shots/notation-*.png.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { chromium } from "@playwright/test";
-import { BASE, createNote, openApp, signUp } from "./lib.mjs";
+import { chromium, webkit } from "@playwright/test";
+import { BASE, LOOK, createNote, openApp, signUp } from "./lib.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((arg) => {
@@ -20,6 +20,14 @@ const args = Object.fromEntries(
   }),
 );
 const surfaces = (args.only ?? "note,quick,todo").split(",");
+// --engine=webkit: Safari's engine (the Mac app's, an iPhone's). It has no way
+// to compose as an input method does here, so the cases that do are left out.
+const engine = args.engine === "webkit" ? webkit : chromium;
+// --device=phone: a phone's width, with touch.
+const VIEW =
+  args.device === "phone"
+    ? { viewport: { width: 390, height: 844 }, isMobile: engine === chromium, hasTouch: true }
+    : { viewport: { width: 1280, height: 800 } };
 const onlyCases = args.case ? new Set(args.case.split(",")) : null;
 const SHOTS = join(import.meta.dirname, "shots");
 mkdirSync(SHOTS, { recursive: true });
@@ -195,6 +203,18 @@ async function surfaceSetup(page, surface) {
     return {
       root,
       reset: async () => {
+        // The tabs have a most (20): the oldest closed first, so each case still has one of its own.
+        const tabs = page.getByRole("tab");
+        while ((await tabs.count()) >= 18) {
+          await tabs.first().hover();
+          await page.getByRole("button", { name: /のタブを閉じる$/ }).first().click();
+          // Written in and not saved: asked about, and closed as it is.
+          const discard = page.getByRole("alertdialog").getByRole("button", { name: "保存せずに閉じる" });
+          await discard.waitFor({ timeout: 1500 }).catch(() => {});
+          if (await discard.isVisible().catch(() => false)) await discard.click();
+          await page.getByRole("alertdialog").waitFor({ state: "detached", timeout: 5000 }).catch(() => {});
+          await page.waitForTimeout(150);
+        }
         await page.getByRole("button", { name: "新しいタブ" }).click();
         // The new tab's editor in place: empty (not the last tab's, still there).
         for (let i = 0; i < 40; i++) {
@@ -234,19 +254,23 @@ const menuOpen = (page) =>
     return !!menu && (menu.getBoundingClientRect().height ?? 0) > 0;
   });
 
-const browser = await chromium.launch();
+const browser = await engine.launch();
 const findings = [];
+const composes = (c) => c.steps.some((step) => step.startsWith("ime:"));
 for (const surface of surfaces) {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 800 }, locale: "ja-JP" });
+  const context = await browser.newContext({ ...VIEW, locale: "ja-JP" });
   const page = await context.newPage();
-  const cdp = await context.newCDPSession(page);
+  const cdp = engine === chromium ? await context.newCDPSession(page) : null;
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   await signUp(page);
+  // The look chosen first (UX_LOOK), wherever the cases are then typed.
+  if (LOOK) await openApp(page);
   const { root, reset } = await surfaceSetup(page, surface);
   if (surface === "todo") {
     for (const c of TODO_CASES) {
       if (onlyCases && !onlyCases.has(c.id)) continue;
+      if (!cdp && composes(c)) continue;
       errors.length = 0;
       await newTodoItem(page, root);
       await play(page, cdp, c.steps.filter((step) => step !== "new:"));
@@ -266,6 +290,7 @@ for (const surface of surfaces) {
   for (const c of CASES) {
     if (onlyCases && !onlyCases.has(c.id)) continue;
     if (c.surfaces && !c.surfaces.includes(surface)) continue;
+    if (!cdp && composes(c)) continue;
     const clean = await reset(c.id);
     errors.length = 0;
     await play(page, cdp, c.steps);
@@ -293,6 +318,7 @@ for (const surface of surfaces) {
   await context.close();
 }
 await browser.close();
-const out = join(import.meta.dirname, `notations-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
+const out =
+  args.out ?? join(import.meta.dirname, `notations-${new Date().toISOString().replace(/[:.]/g, "-")}.json`);
 writeFileSync(out, JSON.stringify(findings, null, 2));
 console.log(`\n${findings.filter((f) => !f.ok && !f.soft).length} NG of ${findings.length}; ${out}`);

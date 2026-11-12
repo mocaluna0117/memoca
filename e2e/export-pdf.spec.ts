@@ -119,6 +119,44 @@ test("a note is saved as a PDF that looks as it does, light whatever the theme, 
   expect(await editor(page).evaluate((element) => element.closest(".memoca-editor")!.clientWidth)).toBe(width);
 });
 
+test("in a look of its own, dark: the PDF is light all the same, its paper not the look's dark one", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the look and the theme are the same on a phone");
+  test.slow();
+  await signUp(page);
+  await page.addInitScript(() => localStorage.setItem("theme", "dark"));
+  await openApp(page);
+  await page.goto("/app/settings");
+  await page.getByRole("radiogroup", { name: "デザイン" }).getByRole("radio", { name: /かわいい/ }).click();
+  await expect.poll(() => page.evaluate(() => localStorage.getItem("memoca:style-sent"))).toBeNull();
+  await openApp(page);
+  await longNote(page, "かわいいメモ", 6);
+  await waitForSynced(page);
+  await expect(page.locator("html")).toHaveClass(/dark/);
+
+  const saving = page.waitForEvent("download", { timeout: 60_000 });
+  await page.getByRole("button", { name: "メモの操作" }).filter({ visible: true }).click();
+  await page.getByRole("menuitem", { name: "PDF で書き出す" }).click();
+  const path = testInfo.outputPath("look.pdf");
+  await (await saving).saveAs(path);
+  const [first] = pictures(await readFile(path));
+  expect(first?.rgb).toBeTruthy();
+  // The sheet is paper, with ink on it: nearly all of it light (the look's
+  // dark one made the note's whole panel dark).
+  const rgb = first!.rgb!;
+  let dark = 0;
+  let seen = 0;
+  for (let at = 0; at < rgb.length; at += 3 * 97) {
+    seen += 1;
+    if (rgb[at]! + rgb[at + 1]! + rgb[at + 2]! < 3 * 110) dark += 1;
+  }
+  expect(dark / seen).toBeLessThan(0.1);
+  // And the app dark again, in its look.
+  await expect(page.locator("html")).toHaveClass(/dark/);
+  await expect(page.locator("html")).toHaveAttribute("data-style", "cute");
+});
+
 test("a PDF being made can be cancelled from its cover: nothing is saved, the app is as it was, and it can be made again", async ({
   page,
 }) => {

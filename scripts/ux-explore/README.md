@@ -55,3 +55,18 @@ E2E が覆っていない流れを、手元の Convex と手元のビルドに�
   - 結果は `memory-<時刻>.json` に出します。
 - 見張りが増えたときに、どこで付けられたかを探すには、CDP の `Runtime.queryObjects` で EventTarget の種類ごとに集め、`DOMDebugger.getEventListeners` の `scriptId` と行・列から、元のコードを引きます。
 - 試しのスクリプトは `tmp-*.mjs` という名前にすると、git に入りません。
+
+
+## 実際の利用者と同じ状態で測る・デザインを測る（2026-11-13）
+
+- どのスクリプトでも使える切り替え（`lib.mjs`）：
+  - `UX_GUIDE=1`：はじめの案内のカードを出したままにします（ふだんは `memoca:welcome-off` で出しません）。
+  - `UX_LOOK=cute`（デザインの id）：設定の「デザイン」からそのデザインを選んでから始めます。
+- `notations.mjs --engine=webkit`：Safari のエンジンで打ちます（日本語入力の再現はできないので、そのケースは飛ばします）。`--device=phone` はスマホの幅です。`--out=` で結果の置き場所を変えられます。
+- `memory.mjs --only=looks,guide`：デザインの切り替えと、案内の開始・終了を繰り返して数えます。
+- `UX_BASE=http://localhost:3100 node scripts/ux-explore/load-cost.mjs [--looks=stylish,cute,terminal] [--rounds=3]`
+  - 300 行のメモを、キャッシュなしで開き直します（CPU 4 倍遅く）。開いてから 7 秒間の長い処理と、その内訳（スタイルの計算、レイアウト、スクリプト）、読み込んだフォントの数を出します。
+- `UX_BASE=http://localhost:3100 node scripts/ux-explore/look-audit.mjs [--looks=cute,retro] [--shots=<dir>] [--pdf=<dir>]`
+  - 1 つのメモに全部の種類の行を作り、デザインごとにライトとダークで、文字と背景のコントラスト比（WCAG）を測ります。基準（文字 4.5、大きな文字と印 3）に届かない組み合わせを出します。
+  - `--pdf` を付けると、ダークのまま PDF に書き出して残します（白い紙に書き出されているかを目で確かめる用）。
+- 計測は、ほかに何も動いていないときに行います。マシンの負荷（`sysctl -n vm.loadavg`）が高いと、手元の Convex が時間切れ（関数の上限 1 秒）になり、アカウント作成が 422 や 500 を返します。

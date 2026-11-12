@@ -2,7 +2,8 @@
 // fares when memory is short. Chromium only for the heap (CDP); `--engine=
 // webkit` runs the same cycles and reports what WebKit can tell (DOM nodes).
 //
-//   UX_BASE=http://localhost:3100 node scripts/ux-explore/memory.mjs [--cycles=60] [--only=notes,quick,palette,pressure] [--engine=webkit]
+//   UX_BASE=http://localhost:3100 node scripts/ux-explore/memory.mjs [--cycles=60] [--only=notes,quick,palette,looks,guide,pressure] [--engine=webkit]
+//   (UX_LOOK=cute: in that look; UX_GUIDE=1: with the guide's first card left up.)
 //
 // For each cycle set: the page's figures after a forced garbage collection
 // (JS heap, DOM nodes, event listeners, documents) every 10 cycles, and the
@@ -22,7 +23,7 @@ const args = Object.fromEntries(
   }),
 );
 const CYCLES = Number(args.cycles ?? 60);
-const only = new Set((args.only ?? "notes,quick,palette,pressure").split(","));
+const only = new Set((args.only ?? "notes,quick,palette,looks,guide,pressure").split(","));
 const engine = args.engine === "webkit" ? webkit : chromium;
 const isChromium = engine === chromium;
 const results = {};
@@ -123,6 +124,37 @@ if (only.has("palette")) {
     await page.waitForTimeout(150);
     await page.keyboard.press("Escape");
     await page.waitForTimeout(100);
+  });
+}
+
+if (only.has("looks")) {
+  // Each look in turn, chosen in the settings: its colours, and its letters fetched.
+  await page.goto(BASE + "/app/settings");
+  const looks = page.getByRole("radiogroup", { name: "デザイン" }).getByRole("radio");
+  await looks.first().waitFor({ timeout: 30_000 });
+  const count = await looks.count();
+  await cycle("looks", page, cdp, async (i) => {
+    await looks.nth((i + 1) % count).click();
+    await page.waitForTimeout(250);
+  });
+  await looks.first().click();
+  await page.waitForFunction(() => localStorage.getItem("memoca:style-sent") === null, null, { timeout: 20_000 }).catch(() => {});
+}
+
+if (only.has("guide")) {
+  // The hands-on guide started, taken a step on, and ended (the guide let be: lib.mjs turns it off).
+  await openApp(page);
+  await page.evaluate(() => localStorage.removeItem("memoca:welcome-off"));
+  await openApp(page);
+  const card = page.getByRole("region", { name: "はじめの案内" });
+  // Its first card, as a new account's first /app has it: turned down, then asked for each time.
+  await card.getByRole("button", { name: "あとで" }).click();
+  await cycle("guide", page, cdp, async () => {
+    await page.evaluate(() => window.dispatchEvent(new Event("memoca:show-welcome")));
+    await card.getByRole("button", { name: "やってみる" }).click();
+    await card.getByRole("button", { name: "つぎへ" }).click();
+    await card.getByRole("button", { name: "終わる" }).click();
+    await card.waitFor({ state: "detached" });
   });
 }
 

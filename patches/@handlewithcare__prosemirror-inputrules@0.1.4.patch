@@ -1,8 +1,18 @@
 diff --git a/dist/inputrules.js b/dist/inputrules.js
-index 6845d468baf8525800b086694432333c4e9c1277..b5fc389393e18761fb52f710dc6e1bf84fbb3805 100644
+index 6845d468baf8525800b086694432333c4e9c1277..a45c1da3f731673f27bec1504f30aa8733f70dd0 100644
 --- a/dist/inputrules.js
 +++ b/dist/inputrules.js
-@@ -122,9 +122,18 @@ function run(view, from, to, text, rules, plugin) {
+@@ -119,12 +119,28 @@ function run(view, from, to, text, rules, plugin) {
+             continue;
+         view.dispatch(insertTr);
+         view.dispatch(closeHistory(view.state.tr));
++        // Memoca: Yjs's undo (y-prosemirror's, in place of ProseMirror's
++        // history) knows nothing of closeHistory, and takes what comes
++        // within half a second as one step: ⌘Z just after "- " made a list
++        // took the "- " typed with it, leaving an empty line. The typed
++        // text ends its step here, so the rule's change is undone alone.
++        const yUndo = view.state.plugins.find((each) => each.key === "y-undo$");
++        yUndo?.getState(view.state)?.undoManager?.stopCapturing();
          if (rule.undoable)
              tr.setMeta(plugin, {
                  transform: tr,

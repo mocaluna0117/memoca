@@ -17,6 +17,7 @@ import {
   resolveAttachment,
   stageUpload,
   updatePending,
+  uploadTimeoutMs,
   uploadsWaiting,
   uploadAgain,
 } from "@/lib/media/attachments";
@@ -677,6 +678,17 @@ describe("a file WebKit has lost on the device", () => {
     expect(written.blob).toBeInstanceOf(Blob);
     expect(written.blob).not.toBe(blob);
     expect(await written.blob.text()).toBe("画像");
+  });
+});
+
+describe("how long a file's upload may take", () => {
+  test("the largest file there may be has the time a slow network (20 KB a second) needs, within its reservation", () => {
+    const largest = 30 * 1024 * 1024;
+    expect(uploadTimeoutMs(largest)).toBeGreaterThanOrEqual((largest / 20_000) * 1000);
+    // The server keeps a file's reservation an hour (convex RESERVATION_TTL_MS).
+    expect(uploadTimeoutMs(largest)).toBeLessThan(60 * 60_000);
+    // A small one is not waited on for long.
+    expect(uploadTimeoutMs(200_000)).toBeLessThan(60_000);
   });
 });
 

@@ -53,6 +53,31 @@ test.describe("the quick note's tabs, in a window of its own", () => {
     ).toBe(true);
   });
 
+  test("as many tabs as there may be: + says so, rather than doing nothing; the device's own empty one gives its place", async ({
+    page,
+  }) => {
+    test.slow();
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    await expect(field(page)).toBeVisible({ timeout: 25_000 });
+    const tabs = page.getByRole("tab");
+    const plus = page.getByRole("button", { name: "新しいタブ" });
+    // The first tab left empty (the one made for this device), and 19 written in: 19 in sight.
+    for (let i = 1; i <= 19; i += 1) {
+      await newTab(page, `タブ ${i}`);
+      await expect(tabs.filter({ hasText: new RegExp(`^タブ ${i}$`) })).toHaveCount(1);
+    }
+    await expect(tabs).toHaveCount(19);
+    // One more is opened (19 in sight left + doing nothing): 20.
+    await newTab(page, "タブ 20");
+    await expect(tabs).toHaveCount(20);
+    // Then no more, and it is said.
+    await plus.click();
+    await expect(page.getByText("タブは 20 個までです")).toBeVisible();
+    await expect(tabs).toHaveCount(20);
+    await expectQuickText(field(page), "タブ 20");
+  });
+
   test("a tab saved stays as it is; saved again after more is written, the same note is", async ({ page }) => {
     await signUp(page);
     await page.goto("/quick?window=1");

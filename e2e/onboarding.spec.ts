@@ -47,7 +47,7 @@ test("an account just made: done by hand, the quick note to the note's lines, on
     await (await folderPanel(page)).getByRole("button", { name: "即席メモ" }).click();
     quick = await opened;
     // Meanwhile the notes' window says where the guide goes on.
-    await expect(card(page)).toContainText("即席メモで何か書いて");
+    await expect(card(page)).toContainText("続きは即席メモです");
   }
   await expect(card(quick)).toContainText("「保存」を押してみましょう", { timeout: 15_000 });
   await expect(card(quick)).toContainText("できました");
@@ -119,6 +119,51 @@ test("an account just made: done by hand, the quick note to the note's lines, on
   await expect(card(page)).toContainText("Memoca へようこそ");
   await card(page).getByRole("button", { name: "あとで" }).click();
   await expect(card(page)).toHaveCount(0);
+});
+
+test("the guide's card keeps out of the way: gone under a dialog or the drawer, and above the line typed in", async ({
+  page,
+}, testInfo) => {
+  const phone = testInfo.project.name === "mobile";
+  await signUp(page);
+  await welcomeOn(page);
+  await page.goto("/app");
+  await expect(card(page)).toContainText("Memoca へようこそ", { timeout: 25_000 });
+
+  if (phone) {
+    // The drawer over the page: the card not over it (a press on it went to what was under).
+    await page.getByRole("button", { name: /メニューを開く/ }).first().click();
+    await expect(page.locator('[role="dialog"][data-state="open"]')).toBeVisible();
+    await expect(page.locator("[data-guide-card]")).toHaveCount(0);
+    await page.getByRole("button", { name: "閉じる" }).first().click();
+    await expect(page.locator('[role="dialog"]')).toHaveCount(0);
+    await expect(card(page)).toBeVisible();
+    return;
+  }
+  // A dialog (the search): the card gone until it is closed.
+  await page.keyboard.press("ControlOrMeta+k");
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.locator("[data-guide-card]")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(card(page)).toBeVisible();
+
+  // The last line of a long note, typed in: the card at the top, not over the line.
+  await page.getByRole("button", { name: "新しいメモ" }).first().click();
+  await expect(page.getByLabel("メモのタイトル")).toHaveValue("");
+  await editor(page).click();
+  for (let line = 0; line < 45; line += 1) await page.keyboard.press("Enter");
+  await page.keyboard.type("ここが最後の行です");
+  await expect
+    .poll(async () => {
+      const caret = await page.evaluate(() => getSelection()!.getRangeAt(0).getBoundingClientRect().top);
+      const box = (await card(page).boundingBox())!;
+      return caret > box.y + box.height || caret + 20 < box.y;
+    })
+    .toBe(true);
+  expect((await card(page).boundingBox())!.y).toBeLessThan(120);
+  // Back at the top of the note, the card back at the foot.
+  await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowUp" : "Control+Home");
+  await expect.poll(async () => (await card(page).boundingBox())!.y).toBeGreaterThan(300);
 });
 
 test("an account from before the guide: offered it once, with no note made for it", async ({ page }) => {

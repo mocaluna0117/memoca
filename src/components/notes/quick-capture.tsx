@@ -369,7 +369,10 @@ function Tabbed({
   };
   const open = () => {
     moving();
-    void openTab(userKey);
+    // As many as there may be: said, rather than + (and ⌘T) doing nothing.
+    void openTab(userKey).then((made) => {
+      if (made === null) toast(t.quick.tabsFull(MAX_TABS), { id: "quick-tabs-full" });
+    });
   };
   const openTodo = () => {
     if (active === TODO_TAB_ID) return;
@@ -414,7 +417,7 @@ function Tabbed({
     const mod = event.metaKey || event.ctrlKey;
     if (mod && !event.shiftKey && event.key.toLowerCase() === "t") {
       event.preventDefault();
-      if (ids.length < MAX_TABS) open();
+      open();
     } else if (mod && !event.shiftKey && event.key.toLowerCase() === "w") {
       event.preventDefault();
       if (shown) void close(shown);
@@ -460,7 +463,6 @@ function Tabbed({
     <QuickTabs
       tabs={tabs}
       active={active}
-      canOpen={tabs.length < MAX_TABS}
       onShow={show}
       onOpen={open}
       onClose={(id) => void close(id)}

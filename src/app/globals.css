@@ -160,12 +160,12 @@
   --card-foreground: oklch(0.38 0.07 350);
   --popover: oklch(0.995 0.008 350);
   --popover-foreground: oklch(0.38 0.07 350);
-  --primary: oklch(0.63 0.2 358);
+  --primary: oklch(0.58 0.2 358);
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.95 0.035 310);
   --secondary-foreground: oklch(0.42 0.1 310);
   --muted: oklch(0.96 0.025 345);
-  --muted-foreground: oklch(0.58 0.07 350);
+  --muted-foreground: oklch(0.53 0.07 350);
   --accent: oklch(0.935 0.05 352);
   --accent-foreground: oklch(0.4 0.1 355);
   --border: oklch(0.9 0.045 350);
@@ -173,14 +173,14 @@
   --ring: oklch(0.78 0.13 358);
   --sidebar: oklch(0.965 0.03 335);
   --sidebar-foreground: oklch(0.38 0.07 345);
-  --sidebar-primary: oklch(0.63 0.2 358);
+  --sidebar-primary: oklch(0.58 0.2 358);
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.92 0.06 350);
   --sidebar-accent-foreground: oklch(0.4 0.1 355);
   --sidebar-border: oklch(0.9 0.045 340);
   --sidebar-ring: oklch(0.78 0.13 358);
   --deco-heading: oklch(0.58 0.19 358);
-  --deco-marker: oklch(0.7 0.16 358);
+  --deco-marker: oklch(0.66 0.16 358);
   --deco-quote: oklch(0.75 0.12 315);
   --deco-selection: oklch(0.9 0.07 355);
   --deco-dots: oklch(0.86 0.08 355 / 55%);
@@ -290,7 +290,7 @@
   --card-foreground: oklch(0.26 0.035 245);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.26 0.035 245);
-  --primary: oklch(0.56 0.13 232);
+  --primary: oklch(0.54 0.13 232);
   --primary-foreground: oklch(0.99 0.005 220);
   --secondary: oklch(0.95 0.02 205);
   --secondary-foreground: oklch(0.33 0.06 230);
@@ -303,7 +303,7 @@
   --ring: oklch(0.7 0.1 220);
   --sidebar: oklch(0.975 0.012 212);
   --sidebar-foreground: oklch(0.26 0.035 245);
-  --sidebar-primary: oklch(0.56 0.13 232);
+  --sidebar-primary: oklch(0.54 0.13 232);
   --sidebar-primary-foreground: oklch(0.99 0.005 220);
   --sidebar-accent: oklch(0.935 0.03 205);
   --sidebar-accent-foreground: oklch(0.32 0.06 225);
@@ -478,7 +478,7 @@
   --card-foreground: oklch(0.28 0.04 280);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.28 0.04 280);
-  --primary: oklch(0.62 0.2 28);
+  --primary: oklch(0.58 0.2 28);
   --primary-foreground: oklch(1 0 0);
   --secondary: oklch(0.93 0.07 170);
   --secondary-foreground: oklch(0.35 0.08 170);
@@ -491,14 +491,14 @@
   --ring: oklch(0.75 0.15 28);
   --sidebar: oklch(0.96 0.07 95);
   --sidebar-foreground: oklch(0.28 0.04 280);
-  --sidebar-primary: oklch(0.62 0.2 28);
+  --sidebar-primary: oklch(0.58 0.2 28);
   --sidebar-primary-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.9 0.11 95);
   --sidebar-accent-foreground: oklch(0.28 0.04 280);
   --sidebar-border: oklch(0.88 0.08 95);
   --sidebar-ring: oklch(0.75 0.15 28);
-  --deco-heading: oklch(0.6 0.2 28);
-  --deco-marker: oklch(0.7 0.14 170);
+  --deco-heading: oklch(0.58 0.2 28);
+  --deco-marker: oklch(0.63 0.14 170);
   --deco-quote: oklch(0.72 0.14 170);
   --deco-selection: oklch(0.92 0.1 95);
 }
@@ -565,7 +565,7 @@
   --sidebar-accent-foreground: oklch(0.24 0.008 60);
   --sidebar-border: oklch(0.86 0.012 75);
   --sidebar-ring: oklch(0.7 0.08 85);
-  --deco-marker: oklch(0.66 0.1 80);
+  --deco-marker: oklch(0.62 0.1 80);
   --deco-quote: oklch(0.7 0.1 82);
   --deco-selection: oklch(0.88 0.05 85);
 }
@@ -697,8 +697,9 @@
 
 /* Each look's own touches, where it says them (--deco-*): its headings'
    ink, the marks of its lists and checkboxes, its quotes' rule, what is
-   selected, the caret. A look that says none keeps the editor's own. */
-:root[data-style] .bn-editor .bn-block-content[data-content-type="heading"] .bn-inline-content {
+   selected, the caret. A look that says none keeps the editor's own. A
+   heading given a colour of its own (the block's 色) keeps that. */
+:root[data-style] .bn-editor .bn-block-content[data-content-type="heading"]:not([data-text-color]) .bn-inline-content {
   color: var(--deco-heading, inherit);
 }
 :root[data-style] .bn-editor .bn-block-content[data-content-type="bulletListItem"]::before,
@@ -710,6 +711,12 @@
 }
 :root[data-style] [data-content-type="quote"] blockquote {
   border-left-color: var(--deco-quote, currentColor);
+}
+/* A quote's words in the pale ink of the look (and of the first one), which
+   is chosen to be read on its paper: BlockNote's one grey for every paper
+   was under what reading asks (3.8 to 4.3 to 1, of 4.5). */
+.bn-editor [data-content-type="quote"] blockquote {
+  color: var(--muted-foreground);
 }
 :root[data-style] .bn-editor {
   caret-color: var(--deco-marker, var(--primary));

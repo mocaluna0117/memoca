@@ -10,7 +10,7 @@ import { useClientValue, useMediaQuery } from "@/lib/hooks/use-client-value";
 import { SIDEBAR_MODES, type SidebarMode, useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
 import { api } from "@convex/_generated/api";
 import { useStorageUsage, useSync } from "@/components/providers/sync-provider";
-import { SHOW_WELCOME } from "@/lib/guide";
+import { SHOW_WELCOME, setGuide } from "@/lib/guide";
 import { MobileHeader } from "@/components/shell/app-shell";
 import { VaultSettings } from "@/components/vault/vault-settings";
 import { ImageDiagnostics } from "@/components/settings/image-diagnostics";
@@ -91,6 +91,8 @@ export default function SettingsPage() {
     await turnOff(convex).catch(() => undefined);
     // The desktop app's, too: whoever signs in next turns them on for themselves.
     await window.memocaShell?.reminders?.turnOff().catch(() => undefined);
+    // A guide under way is this account's: not gone on with by whoever signs in next.
+    setGuide(null);
     await resetLocalData();
     // With no network the server is not told, but nothing of the account is
     // left here, and it goes on as the desktop shell's sign-out does.

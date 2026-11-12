@@ -65,8 +65,36 @@ describe("the quick note's tabs", () => {
     expect((await loadTabs(ME)).ids).toEqual([first, second]);
     expect((await loadTabs(ME)).active).toBe(second);
     for (let i = 2; i < MAX_TABS; i += 1) await openTab(ME);
-    expect(await openTab(ME)).toBeNull();
     expect((await loadTabs(ME)).ids).toHaveLength(MAX_TABS);
+    // The empty one made for this device (out of sight where the account has
+    // tabs of its own) holds no place against one asked for: it goes.
+    const more = await openTab(ME);
+    expect(more).not.toBeNull();
+    const full = await loadTabs(ME);
+    expect(full.ids).toHaveLength(MAX_TABS);
+    expect(full.ids).not.toContain(first);
+    expect(full.active).toBe(more);
+    // Then no more: none opened, the tabs as they were.
+    expect(await openTab(ME)).toBeNull();
+    expect(await loadTabs(ME)).toEqual(full);
+  });
+
+  test("the device's own tab keeps its place once something is written in it", async () => {
+    const first = (await loadTabs(ME)).active;
+    await db().notes.add({ noteId: first, preview: "書いたこと", deletedAt: null, purged: false } as never);
+    for (let i = 1; i < MAX_TABS; i += 1) await openTab(ME);
+    expect(await openTab(ME)).toBeNull();
+    const tabs = await loadTabs(ME);
+    expect(tabs.ids).toHaveLength(MAX_TABS);
+    expect(tabs.ids).toContain(first);
+  });
+
+  test("the device's own empty tab, the one shown, keeps its place when there are the most there may be", async () => {
+    const first = (await loadTabs(ME)).active;
+    for (let i = 1; i < MAX_TABS; i += 1) await openTab(ME);
+    await showTab(ME, first);
+    expect(await openTab(ME)).toBeNull();
+    expect((await loadTabs(ME)).ids).toContain(first);
   });
 
   test("closed, a tab goes with its draft, the one after it shown (the one before, for the last)", async () => {
@@ -115,6 +143,7 @@ describe("tabs closed on another device", () => {
     const first = (await loadTabs(ME)).ids[0]!;
     const gone: string[] = [];
     for (let i = 1; i < MAX_TABS; i++) gone.push((await openTab(ME))!);
+    await showTab(ME, first);
     expect(await openTab(ME)).toBeNull();
     const tabs = await forgetTabs(ME, gone);
     expect(tabs.ids).toEqual([first]);

@@ -27,4 +27,37 @@ test.describe("undo", () => {
     await page.keyboard.press("ControlOrMeta+Shift+z");
     await expect(editor(page)).toContainText("一つ目二つ目");
   });
+
+  test("⌘Z just after a line was turned into a list takes back the turning alone: what was typed stays", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "記法を取り消す");
+    await editor(page).click();
+    // Typed without a pause, as a person does: the mark, the space, and ⌘Z at once.
+    await page.keyboard.type("- ");
+    const line = editor(page).locator(".bn-block-content").first();
+    await expect(line).toHaveAttribute("data-content-type", "bulletListItem");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(line).toHaveAttribute("data-content-type", "paragraph");
+    await expect(line).toHaveText("- ");
+    // Once more: what was typed, too.
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(line).toHaveText("");
+    // And put back: the mark, then the list.
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await expect(line).toHaveAttribute("data-content-type", "bulletListItem");
+
+    // A heading made by its mark, with its words typed on at once: ⌘Z leaves the mark's line.
+    await page.keyboard.press("Enter");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("# ");
+    const last = editor(page).locator(".bn-block-content").last();
+    await expect(last).toHaveAttribute("data-content-type", "heading");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(last).toHaveAttribute("data-content-type", "paragraph");
+    await expect(last).toHaveText("# ");
+  });
 });

@@ -336,9 +336,15 @@ export async function discardStaged(attachmentId: string): Promise<void> {
  * passing a check and together exceeding the allowance; the server replaces the
  * reservation with the real measured size at commit time.
  */
-/** How long a file's upload may take, by its size: as on a slow network (about 20 KB a second), and a while more. */
+/**
+ * How long a file's upload may take, by its size: as on a slow network
+ * (about 20 KB a second), and a while more. Up to 40 minutes, which the
+ * largest file there may be (30 MB) needs at that speed (at 10, it never
+ * went up on a network slower than 50 KB a second, tried again for ever),
+ * and within the hour the server keeps its reservation.
+ */
 export function uploadTimeoutMs(bytes: number): number {
-  return Math.min(30_000 + (bytes / 20_000) * 1000, 10 * 60_000);
+  return Math.min(30_000 + (bytes / 20_000) * 1000, 40 * 60_000);
 }
 
 /** How long a file waits after a try that could not get it up: twice as long each time, from 10 seconds to 5 minutes. */

@@ -4,6 +4,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
 export const BASE = process.env.UX_BASE ?? "http://localhost:3100";
+/** UX_GUIDE=1: the hands-on guide's first card left up. UX_LOOK=<id>: the look chosen first. */
+export const GUIDE = process.env.UX_GUIDE === "1";
+export const LOOK = process.env.UX_LOOK || null;
 const PASSWORD = "memoca-e2e-password";
 
 export async function signUp(page) {
@@ -11,8 +14,10 @@ export async function signUp(page) {
   await page.setExtraHTTPHeaders({ "x-forwarded-for": `10.${part()}.${part()}.${part()}` });
   const email = `ux-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@memoca.test`;
   await page.goto(BASE + "/");
-  // No welcome, nor note to try things in: they would stand over what is explored.
-  await page.evaluate(() => localStorage.setItem("memoca:welcome-off", "1"));
+  // No welcome, nor note to try things in: they would stand over what is
+  // explored. UX_GUIDE=1 leaves them, as a new account has them: the guide's
+  // first card up, not taken up nor turned down.
+  if (!GUIDE) await page.evaluate(() => localStorage.setItem("memoca:welcome-off", "1"));
   const status = await page.evaluate(
     async ([address, password]) => {
       const res = await fetch("/api/auth/sign-up/email", {
@@ -28,7 +33,34 @@ export async function signUp(page) {
   return email;
 }
 
+const looked = new WeakSet();
+const LOOK_LABEL = {
+  stylish: "スタイリッシュ",
+  cute: "かわいい",
+  natural: "ナチュラル",
+  fresh: "さわやか",
+  retro: "レトロ",
+  wafu: "和風",
+  pop: "ポップ",
+  chic: "シック",
+  terminal: "ターミナル",
+};
+
+/** Chooses a look in the settings, as a person does, and waits for the account to have it. */
+export async function chooseLook(page, look) {
+  await page.goto(BASE + "/app/settings");
+  await page.getByRole("radiogroup", { name: "デザイン" }).getByRole("radio", { name: new RegExp(LOOK_LABEL[look]) }).click();
+  await page.waitForFunction(() => localStorage.getItem("memoca:style-sent") === null, null, { timeout: 20_000 });
+}
+
 export async function openApp(page) {
+  // UX_LOOK=cute (or any look): chosen once for the context, before what is explored.
+  if (LOOK && !looked.has(page.context())) {
+    looked.add(page.context());
+    await page.goto(BASE + "/app");
+    await page.getByRole("heading", { name: "すべてのメモ" }).first().waitFor({ timeout: 30_000 });
+    await chooseLook(page, LOOK);
+  }
   await page.goto(BASE + "/app");
   await page.getByRole("heading", { name: "すべてのメモ" }).first().waitFor({ timeout: 30_000 });
 }

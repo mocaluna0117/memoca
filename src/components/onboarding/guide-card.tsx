@@ -73,6 +73,12 @@ type Place = {
   headerBottom: number;
   /** The "/" menu open: the card for after it waits for it to close, rather than go under it. */
   menu: boolean;
+  /**
+   * A dialog, a drawer or a menu open over the page, which takes no presses
+   * meanwhile (Radix): the card would lie over it, and a press on it go to
+   * what is under. Out of sight until it is closed.
+   */
+  inert: boolean;
 };
 
 /** Where the caret is on the screen, if it is in something typed in. */
@@ -80,20 +86,32 @@ function caretBox(): DOMRect | null {
   const selection = document.getSelection();
   if (!selection?.rangeCount) return null;
   const range = selection.getRangeAt(0);
-  const box = range.getBoundingClientRect();
-  if (box.height > 0) return box;
   const node = range.startContainer;
   const element = node instanceof Element ? node : node.parentElement;
-  return element?.closest("[contenteditable='true']") ? element.getBoundingClientRect() : null;
+  if (!element?.closest("[contenteditable='true']")) return null;
+  const box = range.getBoundingClientRect();
+  return box.height > 0 ? box : element.getBoundingClientRect();
 }
+
+/** The room kept between the card and the line typed in, in pixels. */
+const CARET_ROOM = 28;
 
 /**
  * Where the thing pointed at is, and so where the card goes: looked at
  * again as the page moves. With a phone's keyboard up, away from the caret
- * (the "/" menu opens by it), and above the bar on the keyboard.
+ * (the "/" menu opens by it), and above the bar on the keyboard; on a
+ * computer, at the top once the line typed in comes down to where the card
+ * is (the last line of a long note was typed under it).
  */
 function usePlace(selector: string | null, keyboard: number): Place {
-  const [place, setPlace] = useState<Place>({ ring: null, atTop: false, below: 0, headerBottom: 0, menu: false });
+  const [place, setPlace] = useState<Place>({
+    ring: null,
+    atTop: false,
+    below: 0,
+    headerBottom: 0,
+    menu: false,
+    inert: false,
+  });
   useEffect(() => {
     let last = "";
     const look = () => {
@@ -102,23 +120,29 @@ function usePlace(selector: string | null, keyboard: number): Place {
       const ring = box
         ? { left: box.left - 4, top: box.top - 4, width: box.width + 8, height: box.height + 8 }
         : null;
-      const caret = keyboard > 0 ? caretBox() : null;
+      const caret = caretBox();
       const seen = window.innerHeight - keyboard;
-      const atTop = caret
-        ? caret.top + caret.height / 2 > seen / 2
-        : box
-          ? box.top + box.height / 2 > window.innerHeight * 0.55
-          : false;
       // A phone's bars, top and foot (the bottom bar, the one on the keyboard): the card between them.
       const nav = onScreen("[data-mobile-nav]");
       const bar = keyboard > 0 ? onScreen("[data-keyboard-bar]") : null;
       const header = onScreen("[data-mobile-header]");
+      const below = (nav ? nav.getBoundingClientRect().height : 0) + (bar ? bar.getBoundingClientRect().height : 0);
+      const card = document.querySelector("[data-guide-card]")?.getBoundingClientRect().height ?? 180;
+      const atTop =
+        keyboard > 0 && caret
+          ? caret.top + caret.height / 2 > seen / 2
+          : caret && caret.bottom > seen - below - card - CARET_ROOM
+            ? true
+            : box
+              ? box.top + box.height / 2 > window.innerHeight * 0.55
+              : false;
       const next = {
         ring,
         atTop,
-        below: (nav ? nav.getBoundingClientRect().height : 0) + (bar ? bar.getBoundingClientRect().height : 0),
+        below,
         headerBottom: header ? Math.max(0, header.getBoundingClientRect().bottom) : 0,
         menu: onScreen(".bn-suggestion-menu") !== null,
+        inert: getComputedStyle(document.body).pointerEvents === "none",
       };
       const said = JSON.stringify(next);
       if (said !== last) {
@@ -300,6 +324,8 @@ export function GuideCard({
   if (!content) return null;
   // Just tried, the "/" menu: the last card once it is closed.
   if (step === "finish" && flow === "web" && place.menu) return null;
+  // Under a dialog, a drawer or a menu: back once it is closed.
+  if (place.inert) return null;
   const { title, body, primary, secondary, endLabel = "終わる", icon } = content;
 
   function stepContent(): Content | null {
@@ -461,7 +487,11 @@ export function GuideCard({
     if (step === "intro") return null;
     if (flow === "web") {
       return where === "quick"
-        ? { body: <p>即席メモで何か書いて、「保存」を押してみましょう。枠で囲んだ ⚡「即席メモ」から開けます。</p> }
+        ? {
+            body: <p>続きは即席メモです。何か書いて、「保存」を押してみましょう。枠で囲んだ ⚡「即席メモ」から開けます。</p>,
+            // The quick note's window closed, say: on from here.
+            secondary: { label: "つぎへ", run: () => go("bullet") },
+          }
         : {
             body: <p>続きは、Memoca のメモの画面です。</p>,
             primary: windowed ? undefined : { label: "メモの画面へ", run: () => router.push("/app") },
@@ -498,6 +528,7 @@ export function GuideCard({
       ) : null}
       <section
         aria-label="はじめの案内"
+        data-guide-card
         className={cn(
           "bg-popover text-popover-foreground fixed inset-x-0 z-[60] mx-auto w-[min(26rem,calc(100vw-1.5rem))] space-y-3 rounded-xl border p-4 shadow-lg",
         )}

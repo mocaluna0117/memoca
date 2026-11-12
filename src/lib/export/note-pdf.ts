@@ -140,7 +140,13 @@ function asLight(body: HTMLElement): () => void {
   if (dark) root.classList.remove("dark");
   root.style.colorScheme = "light";
   container.setAttribute("data-color-scheme", "light");
+  // The editor marks itself dark too (BlockNote's class), and a look of its
+  // own (lib/style) gives what is so marked its dark colours: its paper was
+  // drawn dark, on a white sheet. Unmarked until put back.
+  const marked = [...document.querySelectorAll<HTMLElement>(".dark")];
+  for (const element of marked) element.classList.remove("dark");
   return () => {
+    for (const element of marked) element.classList.add("dark");
     if (dark) root.classList.add("dark");
     root.style.colorScheme = colorScheme;
     if (scheme !== null) container.setAttribute("data-color-scheme", scheme);

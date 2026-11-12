@@ -26,7 +26,6 @@ beforeEach(async () => {
         <QuickTabs
           tabs={tabs}
           active="t0"
-          canOpen
           onShow={() => {}}
           onOpen={() => {}}
           onClose={() => {}}

@@ -431,15 +431,43 @@ export function loadTabs(userKey: string): Promise<QuickTabs> {
   });
 }
 
-/** A new, empty tab, after the others, shown; none past {@link MAX_TABS}. */
+/**
+ * A new, empty tab, after the others, shown; none (null) past
+ * {@link MAX_TABS}. The empty one made for this device, out of sight where
+ * the account has tabs of its own (useQuickTabs), holds no place against
+ * one asked for: with the most there may be, it goes for the new one
+ * (counted, it left + doing nothing at 19 tabs in sight). Not while it is
+ * the one shown, nor once anything is written in it.
+ */
 export async function openTab(userKey: string): Promise<string | null> {
+  const spare = await emptyFreshTab(userKey);
   let made: string | null = null;
   await changeTabs(userKey, (tabs) => {
-    if (tabs.ids.filter((id) => id !== TODO_TAB_ID).length >= MAX_TABS) return tabs;
+    let { ids, fresh } = tabs;
+    if (ids.filter((id) => id !== TODO_TAB_ID).length >= MAX_TABS) {
+      if (!fresh || fresh !== spare || fresh === tabs.active || !ids.includes(fresh)) return tabs;
+      ids = ids.filter((id) => id !== fresh);
+      fresh = undefined;
+    }
     made = newTabId();
-    return { ...tabs, ids: [...tabs.ids, made], active: made };
+    return { ...tabs, ids: [...ids, made], active: made, fresh };
   });
   return made;
+}
+
+/** The empty tab made for this device, while nothing is in it (no text, no file): its id. */
+async function emptyFreshTab(userKey: string): Promise<string | null> {
+  const kept = await getMeta<QuickTabs | null>(tabsKey(userKey), null);
+  const id = kept?.userKey === userKey ? kept.fresh : undefined;
+  if (!id) return null;
+  const note = await db().notes.get(id);
+  if (note && (note.preview ?? "").trim() !== "") return null;
+  const files = await db()
+    .attachments.where("noteId")
+    .equals(id)
+    .filter((file) => file.deletedAt === null)
+    .count();
+  return files > 0 ? null : id;
 }
 
 /**

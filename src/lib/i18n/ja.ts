@@ -112,6 +112,7 @@ export const ja = {
     newTab: "新しいメモ",
     tabImages: (count: number) => `画像 ${count} 枚`,
     openTab: "新しいタブ",
+    tabsFull: (most: number) => `タブは ${most} 個までです。使わないタブを閉じてから、もう一度お試しください。`,
     closeTabTip: "タブを閉じる",
     todo: "Todo",
     openTodo: "Todo を開く",
