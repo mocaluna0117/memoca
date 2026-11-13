@@ -10,6 +10,7 @@ import {
   CommandItem,
   CommandList,
 } from "@/components/ui/command";
+import { defaultFilter } from "cmdk";
 import {
   Dialog,
   DialogContent,
@@ -49,6 +50,14 @@ function withPickable(
     .map((node, at) => ({ ...node, pickable: pickable[at]! }))
     .filter((node, at) => node.pickable || holds[at]);
 }
+
+/**
+ * Folders matched by their names alone. Matched by what each item is told
+ * apart by (its id, a UUID), any query of 0-9, a-f and hyphens, a "2024"
+ * or a "cafe", left in folders whose names have nothing of it.
+ */
+export const byName = (_value: string, search: string, keywords?: string[]) =>
+  defaultFilter((keywords ?? []).join(" "), search);
 
 /**
  * Picks a destination folder.
@@ -125,14 +134,15 @@ export function FolderPicker({
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
-        <Command>
+        <Command filter={byName}>
           <CommandInput placeholder="フォルダ名で絞り込む" />
           <CommandList className="max-h-72">
             <CommandEmpty>{t.empty.noResults}</CommandEmpty>
             <CommandGroup>
               {rootLabel ? (
                 <CommandItem
-                  value={`__root__ ${rootLabel}`}
+                  value="__root__"
+                  keywords={[rootLabel]}
                   onSelect={() => {
                     onPick(null);
                     onOpenChange(false);
@@ -145,7 +155,8 @@ export function FolderPicker({
               {rows.map((node) => (
                 <CommandItem
                   key={node.folderId}
-                  value={`${node.folderId} ${node.name ?? ""}`}
+                  value={node.folderId}
+                  keywords={[node.name ?? ""]}
                   disabled={!node.pickable}
                   onSelect={() => {
                     onPick(node.folderId);

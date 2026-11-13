@@ -6,6 +6,8 @@
  */
 const TIME = new Intl.DateTimeFormat("ja-JP", { hour: "2-digit", minute: "2-digit" });
 const DAY = new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric" });
+/** Another year's: with it, or last year's 11/13 reads as this year's. */
+const YEAR_DAY = new Intl.DateTimeFormat("ja-JP", { year: "numeric", month: "numeric", day: "numeric" });
 
 /** When a note was changed (or made), as a row of the note list says it. */
 export function relativeDate(at: number, now = Date.now()): string {
@@ -16,5 +18,6 @@ export function relativeDate(at: number, now = Date.now()): string {
   const date = new Date(at);
   const today = new Date(now);
   if (date.toDateString() === today.toDateString()) return TIME.format(date);
+  if (date.getFullYear() !== today.getFullYear()) return YEAR_DAY.format(date);
   return DAY.format(date);
 }

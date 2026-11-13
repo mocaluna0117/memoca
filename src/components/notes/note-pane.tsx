@@ -36,6 +36,7 @@ import { useMenuDialog } from "@/lib/hooks/use-menu-dialog";
 import { requestVault } from "@/lib/store/vault-gate";
 import { useOpenVaultLabel } from "@/lib/vault/use-vault-labels";
 import { useFolders } from "@/lib/hooks/data";
+import { trashedFolderIds } from "@/lib/tree";
 import { coveringFolderOf, lockCoverage, needsLock } from "@/lib/vault/model";
 import { type LockReport, changeNote } from "@/lib/vault/cascade";
 import { useConvex } from "convex/react";
@@ -49,6 +50,7 @@ import { enterFromTitle } from "@/components/editor/title-enter";
 import {
   renameNote,
   setNotePinned,
+  setFolderTrashed,
   setNoteTrashed,
   settleNoteTitle,
   typingTitle,
@@ -295,6 +297,29 @@ export function NotePane({
   // In a locked folder but not yet encrypted: typing more would only add
   // plaintext, so it is read-only until the lock goes on.
   const pendingLock = needsLock(note, coverage);
+  // In the trash, itself or with a folder it is in: opened all the same (by
+  // the browser's Back, an old link, or still open as its folder went),
+  // it was written in as any note, with nothing to say where it was nor
+  // that it would be gone for good in time. Said so, and read only, until
+  // it is taken out.
+  const trashedFolder =
+    note.deletedAt === null && note.folderId !== null && trashedFolderIds(folders).has(note.folderId)
+      ? (() => {
+          // The one put in the trash: the highest of those above the note that is.
+          let at = folders.find((f) => f.folderId === note.folderId) ?? null;
+          let put = at;
+          while (at && at.parentId !== null) {
+            at = folders.find((f) => f.folderId === at!.parentId) ?? null;
+            if (at && at.deletedAt !== null) put = at;
+          }
+          return put?.deletedAt !== null ? put : null;
+        })()
+      : null;
+  const inTrash = note.deletedAt !== null || trashedFolder !== null;
+  const takeOut = async () => {
+    if (note.deletedAt !== null) await setNoteTrashed(noteId, false);
+    else if (trashedFolder) await setFolderTrashed(trashedFolder.folderId, false);
+  };
 
   return (
     <div className="memoca-note-pane flex h-full min-h-0 flex-col">
@@ -318,7 +343,7 @@ export function NotePane({
           onChange={(event) =>
             setDraft({ noteId, value: event.target.value, dirty: true })
           }
-          disabled={hidden || pendingLock}
+          disabled={hidden || pendingLock || inTrash}
           onFocus={() => typingTitle(noteId)}
           // Left: what was typed saved now, and numbered if another note
           // of its folder has that name (lib/note-titles); the field shows
@@ -519,7 +544,20 @@ export function NotePane({
                 </Button>
               </div>
             ) : null}
-            <NoteEditor noteId={noteId} locked={note.locked} readOnly={pendingLock} />
+            {inTrash ? (
+              <div role="status" className="bg-muted/60 flex flex-wrap items-center gap-3 border-b px-4 py-3 text-sm">
+                <Trash2 className="text-muted-foreground size-4 shrink-0" aria-hidden />
+                <span className="min-w-0 flex-1">
+                  {trashedFolder
+                    ? `このメモは、ゴミ箱に入れたフォルダ「${trashedFolder.name ?? "ロックされたフォルダ"}」の中にあります。編集するには、フォルダを復元してください。`
+                    : "このメモはゴミ箱にあります。編集するには、復元してください。"}
+                </span>
+                <Button size="sm" variant="outline" onClick={() => void takeOut()}>
+                  {t.action.restore}
+                </Button>
+              </div>
+            ) : null}
+            <NoteEditor noteId={noteId} locked={note.locked} readOnly={pendingLock || inTrash} />
             <NoteBacklinks noteId={noteId} />
           </>
         )}

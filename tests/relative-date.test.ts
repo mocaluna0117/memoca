@@ -20,3 +20,13 @@ describe("relativeDate", () => {
     );
   });
 });
+
+describe("a date of another year", () => {
+  test("says its year: 11/13 a year ago read as this year's", () => {
+    const now = new Date(2026, 9, 23, 15, 30).getTime();
+    const lastYear = new Date(2025, 10, 13, 9, 0).getTime();
+    expect(relativeDate(lastYear, now)).toBe("2025/11/13");
+    // This year's, as before.
+    expect(relativeDate(new Date(2026, 0, 2).getTime(), now)).toBe("1/2");
+  });
+});

@@ -145,6 +145,30 @@ test.describe("notes", () => {
     await expect(page.getByText("消すメモ").filter({ visible: true }).first()).toBeVisible({ timeout: 20_000 });
   });
 
+  test("a note in the trash opened again (an old link, the browser's Back) says so, is read only, and is taken out from there", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "戻って開くメモ", "本文");
+    const link = page.url();
+    await page.getByRole("button", { name: "メモの操作" }).click();
+    await page.getByRole("menuitem", { name: "削除" }).click();
+    // Before: opened as any note, written in, with nothing to say it was in the trash.
+    await page.goto(link);
+    const notice = page.getByRole("status").filter({ hasText: "このメモはゴミ箱にあります" });
+    await expect(notice).toBeVisible();
+    await expect(page.getByLabel("メモのタイトル")).toBeDisabled();
+    // The note's editor, editable or not (editor() finds an editable one).
+    const body = page.locator(".bn-editor").filter({ visible: true }).first();
+    await expect(body).toHaveAttribute("contenteditable", "false");
+
+    await notice.getByRole("button", { name: "復元" }).click();
+    await expect(notice).toHaveCount(0);
+    await expect(page.getByLabel("メモのタイトル")).toBeEnabled();
+    await expect(body).toHaveAttribute("contenteditable", "true");
+  });
+
   test("after a note is purged from the trash, changes from elsewhere still arrive", async ({
     page,
     context,
