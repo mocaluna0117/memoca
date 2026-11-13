@@ -105,12 +105,24 @@ export async function turnOn(convex: ConvexReactClient): Promise<PushState> {
   return result.status === "ok" ? "on" : "off";
 }
 
+/** How long turning off waits for the server to be told. */
+const TOLD_WITHIN_MS = 3_000;
+
 /** This device no longer asks for them: taken off the server, and its subscription dropped. */
 export async function turnOff(convex: ConvexReactClient): Promise<void> {
   const reg = await registration();
   const subscription = await reg?.pushManager.getSubscription();
   if (!subscription) return;
-  await convex.mutation(api.pushSubscriptions.unsubscribe, { endpoint: subscription.endpoint }).catch(() => undefined);
+  // The server told, for as long as TOLD_WITHIN_MS: with no connection a
+  // mutation neither answers nor fails (it waits for the network), and what
+  // waited on it waited too: 「ログアウト」 did nothing, offline, on a
+  // device with reminders on. The subscription is dropped here whatever
+  // comes of it, so nothing more is shown on this device; the server drops
+  // an address that no longer takes what is sent to it.
+  await Promise.race([
+    convex.mutation(api.pushSubscriptions.unsubscribe, { endpoint: subscription.endpoint }).catch(() => undefined),
+    new Promise((resolve) => setTimeout(resolve, TOLD_WITHIN_MS)),
+  ]);
   await subscription.unsubscribe().catch(() => false);
 }
 

@@ -272,6 +272,19 @@ describe("the Todo's keys", () => {
     expect(caret()).toEqual({ text: "牛乳と卵", offset: 2 });
   });
 
+  test("Backspace at the start of an item under an empty one: the empty one goes, and the item is the block it was", () => {
+    // Its due and its reminders are kept by its id. Joined into the empty
+    // item above (whose id stayed), 牛乳 lost both: Enter at its start and
+    // Backspace, to take the Enter back, was enough.
+    items("[ ] 卵", "[ ] ", "[x] 牛乳");
+    const id = editor.document[2]!.id;
+    caretIn("牛乳", 0);
+    press("Backspace");
+    expect(list()).toEqual(["[ ] 卵", "[x] 牛乳"]);
+    expect(editor.document[1]!.id).toBe(id);
+    expect(caret()).toEqual({ text: "牛乳", offset: 0 });
+  });
+
   test("Backspace in the first item, and Enter in an empty one, leave the list as it is", () => {
     items("[ ] 牛乳", "[ ] ");
     caretIn("牛乳", 0);

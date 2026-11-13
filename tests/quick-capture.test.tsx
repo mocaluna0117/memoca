@@ -623,8 +623,18 @@ describe("the quick note's window, opening Memoca", () => {
 });
 
 describe("the quick note's window, put away by the desktop shell", () => {
+  /** Whether the window is out of sight, as the page is told. */
+  const seen = (visible: boolean) =>
+    Object.defineProperty(document, "visibilityState", {
+      configurable: true,
+      get: () => (visible ? "visible" : "hidden"),
+    });
+  afterEach(() => {
+    seen(true);
+  });
   /** The shell puts the window away (desktop/src-tauri/src/window.rs), keeping it loaded. */
-  const putAway = async () => {
+  const putAway = async ({ outAgain = false } = {}) => {
+    seen(outAgain);
     await act(async () => {
       window.dispatchEvent(new Event(SHELL_HIDDEN));
     });
@@ -673,6 +683,22 @@ describe("the quick note's window, put away by the desktop shell", () => {
     h.newBuild.mockResolvedValue(true);
     await render();
     await putAway();
+    expect(h.newBuild).toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  test("brought out again but not made the active window (seen, with no focus), is not loaded anew either", async () => {
+    // ⌘⇧M just after it was put away: out by the time the server answers,
+    // and the system has not given it the focus yet (or does not). Loaded
+    // anew then, the page was one that took no click or key until it was
+    // ready again.
+    const reload = vi.fn();
+    vi.stubGlobal("location", { ...window.location, reload });
+    vi.spyOn(document, "hasFocus").mockReturnValue(false);
+    h.newBuild.mockResolvedValue(true);
+    await render();
+    await putAway({ outAgain: true });
     expect(h.newBuild).toHaveBeenCalled();
     expect(reload).not.toHaveBeenCalled();
     vi.restoreAllMocks();

@@ -104,13 +104,25 @@ describe("the Todo's reminders, worked out from its dues", () => {
     ).toEqual(["c:eve"]);
   });
 
-  test("the soonest 500, a long text cut, an empty one called Todo", () => {
-    const many = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`i${i}`, item(i === 0 ? "   " : "あ".repeat(300))]));
+  test("an item with nothing written in it is not told of", () => {
+    // Enter in an item with a due makes an empty one with that day's 23:59
+    // (so it stays under 今日): left unwritten, it was told of three times
+    // by the name Todo, with nothing to say.
+    const reminders = remindersOf({
+      items: items({ a: item("A"), empty: item(""), spaces: item(" 　 ") }),
+      dues: map({ a: "2026-11-12T23:59", empty: "2026-11-12T23:59", spaces: "2026-11-12T23:59" }),
+      notify: map(),
+      now: NOW,
+    });
+    expect(new Set(reminders.map((each) => each.key.split(":")[0]))).toEqual(new Set(["a"]));
+  });
+
+  test("the soonest 500, a long text cut", () => {
+    const many = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`i${i}`, item("あ".repeat(300))]));
     const dues = Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`i${i}`, "2026-11-12T18:00"]));
     const reminders = remindersOf({ items: items(many), dues: map(dues), notify: map(), now: NOW });
     expect(reminders).toHaveLength(500);
     expect(reminders.every((each) => each.title.length <= 200)).toBe(true);
-    expect(reminders.find((each) => each.key === "i0:eve")?.title).toBe("Todo");
     // The soonest kept: every evening's and morning's (600) do not all fit, the hours' none.
     expect(reminders.some((each) => each.key.endsWith(":atTime"))).toBe(false);
   });

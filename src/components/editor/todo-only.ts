@@ -383,6 +383,14 @@ export function joinUp(state: EditorState): Transaction | null | "nothing" {
   if (!isContainer(above) || !itemOf(above)?.isTextblock) return "nothing";
   const abovePos = line.containerPos - above.nodeSize;
   const aboveDetails = detailsOf(above);
+  // An empty item above, with nothing under it: it is the one that goes,
+  // and this one stays the block it was. An item's due and its reminders
+  // are kept by its id: joined into the empty one (whose id was the one
+  // left), the item lost them, or took the empty one's.
+  if (!aboveDetails && itemOf(above)!.content.size === 0) {
+    tr.delete(abovePos, abovePos + above.nodeSize);
+    return tr.setSelection(TextSelection.create(tr.doc, abovePos + 2)).scrollIntoView();
+  }
   const target = aboveDetails
     ? textEnd(abovePos + above.nodeSize - 2 - aboveDetails.lastChild!.nodeSize, aboveDetails.lastChild!)
     : textEnd(abovePos, above);

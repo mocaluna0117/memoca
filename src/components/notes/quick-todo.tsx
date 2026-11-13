@@ -35,7 +35,7 @@ import { TodoDuePicker } from "@/components/notes/todo-due-picker";
 import { TodoNotify, useSendReminders } from "@/components/notes/todo-notify";
 import { Tip } from "@/components/notes/quick-tip";
 import { Button } from "@/components/ui/button";
-import { newBuildOut } from "@/lib/build";
+import { reloadOutOfSight } from "@/lib/quick/reload-out-of-sight";
 import { useClientValue } from "@/lib/hooks/use-client-value";
 import { layoutHeight, useVisibleArea } from "@/lib/hooks/use-visible-area";
 import { t } from "@/lib/i18n/ja";
@@ -200,7 +200,7 @@ export function TodoCapture({
     // loaded out of sight (as the other tabs do).
     const hidden = async () => {
       if (noteId) await flushDoc(noteId).catch(() => undefined);
-      if ((await newBuildOut()) && !document.hasFocus()) window.location.reload();
+      await reloadOutOfSight();
     };
     window.addEventListener(SHELL_HIDDEN, hidden);
     return () => window.removeEventListener(SHELL_HIDDEN, hidden);

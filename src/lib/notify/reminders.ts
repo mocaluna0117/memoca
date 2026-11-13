@@ -127,7 +127,10 @@ export function remindersOf({
     const timings = timingsOf(notify, id);
     if (timings.length === 0) continue;
     const end = dueAt(due);
-    const title = item.text.trim().slice(0, MAX_TITLE) || "Todo";
+    // Nothing written in it: nothing to tell of. An item made by Enter in
+    // one with a due has that day's 23:59 from the start, written in or not.
+    const title = item.text.trim().slice(0, MAX_TITLE);
+    if (title === "") continue;
     const shown = formatDue(due, new Date(now));
     const seen = new Set<number>();
     // Two at one moment: the nearer the due's, which says more (an hour

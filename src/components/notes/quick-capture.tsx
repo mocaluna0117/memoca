@@ -39,7 +39,7 @@ import {
   useSyncStatusStore,
 } from "@/components/providers/sync-provider";
 import { Button } from "@/components/ui/button";
-import { newBuildOut } from "@/lib/build";
+import { reloadOutOfSight } from "@/lib/quick/reload-out-of-sight";
 import { startImeTrace } from "@/lib/debug/ime-trace";
 import { useFolders } from "@/lib/hooks/data";
 import { toast } from "sonner";
@@ -924,7 +924,7 @@ function Capture({
       say(stillSaid(statusRef.current));
       // Out again by the time the server says (and maybe being typed in):
       // left for the next time it is put away.
-      if ((await newBuildOut()) && !document.hasFocus()) window.location.reload();
+      await reloadOutOfSight();
     };
     window.addEventListener(SHELL_HIDDEN, hidden);
     return () => window.removeEventListener(SHELL_HIDDEN, hidden);
