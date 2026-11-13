@@ -255,7 +255,7 @@ export default function HelpPage() {
           </p>
           <ul className="list-disc space-y-1 pl-5">
             <li>
-              項目の右の <Ico icon={Calendar} /> で期日を付けると、期日の近い順に並びます。
+              項目の右の <Ico icon={Calendar} /> で期日を付けると、期日の近い順に並びます。期日のある項目で Enter を押して作った項目には、同じ日の 23:59 が付きます（「今日」の中で作れば今日の 23:59）。
             </li>
             <li>
               右上の <Ico icon={Bell} />（期日の通知）から、期日が近づいたときの通知を受け取れます。

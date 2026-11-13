@@ -131,7 +131,80 @@ describe("the Todo's dues", () => {
     enter();
     caretAt("本選考", 0);
     enter();
-    expect(shown().map((line) => line.replace(/【.*】/, ""))).toEqual(["", "本選考 11/30(月)", "", "カプコン"]);
+    // The new ones (empty, above and below it) given its day, at its end.
+    await vi.waitFor(() =>
+      expect(shown().map((line) => line.replace(/【.*】/, ""))).toEqual([
+        " 11/30(月) 23:59",
+        "本選考 11/30(月)",
+        " 11/30(月) 23:59",
+        "カプコン",
+      ]),
+    );
+    expect(dues.get(idOf("本選考"))).toBe("2026-11-30");
+  });
+
+  test("an item made by Enter under 今日, 明日 or any heading is given that day, at 23:59, and stays there once put in order", async () => {
+    items(["[ ] 本選考", "[ ] 面接", "[ ] ES", "[ ] カプコン"], {
+      本選考: "2026-11-09T12:00",
+      面接: "2026-11-10",
+      ES: "2026-11-30T09:00",
+    });
+    await settle();
+    const enterAtEnd = (text: string) => {
+      let at = -1;
+      view().state.doc.descendants((node, pos) => {
+        if (at < 0 && node.isTextblock && node.textContent === text) at = pos + 1 + node.content.size;
+        return at < 0;
+      });
+      view().dispatch(view().state.tr.setSelection(TextSelection.create(view().state.doc, at)));
+      view().dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    };
+    enterAtEnd("本選考");
+    view().dispatch(view().state.tr.insertText("SPI"));
+    enterAtEnd("面接");
+    view().dispatch(view().state.tr.insertText("お礼のメール"));
+    enterAtEnd("ES");
+    view().dispatch(view().state.tr.insertText("自己分析"));
+    // At the end of the last item with a due, too: before 期日なし, not one of it.
+    await vi.waitFor(() => expect(dues.get(idOf("SPI"))).toBe("2026-11-09T23:59"));
+    expect(dues.get(idOf("お礼のメール"))).toBe("2026-11-10T23:59");
+    expect(dues.get(idOf("自己分析"))).toBe("2026-11-30T23:59");
+    // On screen with them, beside the item each was made from.
+    await vi.waitFor(() => expect(shown()).toContain("自己分析 11/30(月) 23:59"));
+    // Put in order (as the list is as it is opened again): each under the heading it was made under.
+    // (A due of a day alone is its end, after 23:59: お礼のメール goes before 面接.)
+    sort();
+    expect(shown()).toEqual([
+      "【今日】本選考 11/9(月) 12:00",
+      "SPI 11/9(月) 23:59",
+      "【明日】お礼のメール 11/10(火) 23:59",
+      "面接 11/10(火)",
+      "【それ以降】ES 11/30(月) 09:00",
+      "自己分析 11/30(月) 23:59",
+      "【期日なし】カプコン",
+    ]);
+  });
+
+  test("an item made by Enter in one with no due, or one done, is given none; nor is one made otherwise", async () => {
+    items(["[ ] 本選考", "[ ] カプコン", "[x] 済んだ"], { 本選考: "2026-11-09", 済んだ: "2026-11-09" });
+    await settle();
+    const enterAtEnd = (text: string) => {
+      let at = -1;
+      view().state.doc.descendants((node, pos) => {
+        if (at < 0 && node.isTextblock && node.textContent === text) at = pos + 1 + node.content.size;
+        return at < 0;
+      });
+      view().dispatch(view().state.tr.setSelection(TextSelection.create(view().state.doc, at)));
+      view().dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+    };
+    enterAtEnd("カプコン");
+    view().dispatch(view().state.tr.insertText("リクルーター面談"));
+    // An item put in by other means (pasted, say) beside one with a due: none.
+    editor.insertBlocks([{ type: "checkListItem", content: "貼った項目" }], idOf("本選考"), "after");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(dues.has(idOf("リクルーター面談"))).toBe(false);
+    expect(dues.has(idOf("貼った項目"))).toBe(false);
+    expect(dues.size).toBe(2);
   });
 
   test("the done after those to do, their dues faded, with no calendar for those with none", async () => {

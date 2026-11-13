@@ -235,6 +235,63 @@ test.describe("the quick note's Todo", () => {
     await expect.poll(() => dueLines(page)).toEqual([`【今日】SPI ${dayLabel(0)} 23:59`, "【期日なし】本選考", "カプコン"]);
   });
 
+  test("an item made by Enter under 今日 (or 明日) is given that day at 23:59, and is under it still as the Todo opens again", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", "a pointer over the items");
+    await signUp(page);
+    await page.goto("/quick?window=1");
+    await openTodo(page);
+    await write(page, "本選考", "面接", "カプコン");
+    const picker = page.getByRole("dialog", { name: "期日" });
+    for (const [text, day] of [
+      ["本選考", "今日"],
+      ["面接", "明日"],
+    ] as const) {
+      await todo(page).locator(".bn-inline-content", { hasText: new RegExp(`^${text}$`) }).hover();
+      await dueButton(page, text).click();
+      await picker.getByRole("button", { name: day }).click();
+      await picker.getByRole("button", { name: "完了" }).click();
+      await expect(picker).toBeHidden();
+    }
+    await expect.poll(() => dueLines(page)).toEqual([
+      `【今日】本選考 ${dayLabel(0)}`,
+      `【明日】面接 ${dayLabel(1)}`,
+      "【期日なし】カプコン",
+    ]);
+
+    // Enter at the end of each, and a new item written.
+    for (const [text, made] of [
+      ["本選考", "SPI"],
+      ["面接", "お礼のメール"],
+    ] as const) {
+      await todo(page).locator(".bn-inline-content", { hasText: new RegExp(`^${text}$`) }).click();
+      // To the line's end (a Mac's End does not move the caret).
+      await page.keyboard.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
+      await page.keyboard.press("Enter");
+      await page.keyboard.type(made);
+    }
+    await expect.poll(() => dueLines(page)).toEqual([
+      `【今日】本選考 ${dayLabel(0)}`,
+      `SPI ${dayLabel(0)} 23:59`,
+      `【明日】面接 ${dayLabel(1)}`,
+      `お礼のメール ${dayLabel(1)} 23:59`,
+      "【期日なし】カプコン",
+    ]);
+
+    // Opened again (put in order): each under the heading it was made under, not 期日なし.
+    await waitForSynced(page).catch(() => undefined);
+    await page.waitForTimeout(800);
+    await page.reload();
+    await expect.poll(() => dueLines(page)).toEqual([
+      `【今日】SPI ${dayLabel(0)} 23:59`,
+      `本選考 ${dayLabel(0)}`,
+      `【明日】お礼のメール ${dayLabel(1)} 23:59`,
+      `面接 ${dayLabel(1)}`,
+      "【期日なし】カプコン",
+    ]);
+  });
+
   test("a time written in stays as it is written, a day and a time set in the one opening", async ({
     page,
   }, testInfo) => {

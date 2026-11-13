@@ -3,7 +3,16 @@ import type { Node } from "prosemirror-model";
 import { type EditorState, Plugin, PluginKey } from "prosemirror-state";
 import { Decoration, DecorationSet, type EditorView } from "prosemirror-view";
 import type * as Y from "yjs";
-import { BUCKETS, BUCKET_LABEL, type Bucket, bucketOf, formatDue, readDue } from "@/lib/quick/todo-due";
+import {
+  BUCKETS,
+  BUCKET_LABEL,
+  type Bucket,
+  TODO_DUE,
+  bucketOf,
+  dueOf,
+  formatDue,
+  readDue,
+} from "@/lib/quick/todo-due";
 
 /** Asked for an item's due to be picked: its block id, and where its button is on screen. */
 export type OnPick = (id: string, at: DOMRect) => void;
@@ -32,6 +41,49 @@ export function sortTodo(view: EditorView, map: Y.Map<string>): void {
 /** Each item's due by its block id, as the Todo's editor has them now: none without the plugin. */
 export const duesIn = (state: EditorState): ReadonlyMap<string, string> | undefined =>
   todoDueKey.getState(state)?.dues;
+
+/**
+ * Enter pressed in an item (todo-only), as the list was then: the new item
+ * it makes beside it is given its day (see madeBeside). Kept a moment, for
+ * the change Enter makes, however it makes it (BlockNote's split, or the
+ * Todo's own Enter in an item with details or at an item's start).
+ */
+const entered = new WeakMap<EditorView, { id: string; doc: Node; at: number }>();
+const ENTERED_FOR_MS = 1000;
+
+/** Enter pressed in the item of this block id. */
+export function enteredIn(view: EditorView, id: string): void {
+  entered.set(view, { id, doc: view.state.doc, at: Date.now() });
+}
+
+/** The time a new item is given, on the day of the item it was made from: the end of that day. */
+export const MADE_AT_TIME = "23:59";
+
+/** The list's items, as its blocks are, in order. */
+function itemsOf(doc: Node): { id: string; node: Node }[] {
+  const found: { id: string; node: Node }[] = [];
+  doc.firstChild?.forEach((node) => {
+    const id = node.attrs.id as string | undefined;
+    if (id) found.push({ id, node });
+  });
+  return found;
+}
+
+/**
+ * The item Enter made beside the item it was pressed in (after it, or, at
+ * its start, above it), not there before: its id, or null where there is
+ * no one such (the item gone, or Enter made none).
+ */
+export function madeBeside(before: Node, now: Node, from: string): string | null {
+  const was = new Set(itemsOf(before).map((item) => item.id));
+  const list = itemsOf(now);
+  const at = list.findIndex((item) => item.id === from);
+  if (at < 0) return null;
+  const made = [list[at - 1], list[at + 1]].filter(
+    (item): item is { id: string; node: Node } => item !== undefined && !was.has(item.id) && !isChecked(item.node),
+  );
+  return made.length === 1 ? made[0]!.id : null;
+}
 
 /** How often the headings are read again, while the Todo is on screen: 今日 becomes 期限切れ. */
 const EVERY_MS = 60_000;
@@ -183,6 +235,28 @@ export const todoDue = createExtension(({ editor, options }: ExtensionOptions<{ 
           },
         },
         props: { decorations: (state) => decorate(state) },
+        // An item made by Enter in one with a due: that day's, at its end
+        // (23:59), so it stays under the heading it was made under (今日,
+        // 明日…) once the list is put in order, not going to 期日なし.
+        view: () => ({
+          update: (current) => {
+            const last = entered.get(current);
+            if (!last || current.state.doc === last.doc) return;
+            if (Date.now() - last.at > ENTERED_FOR_MS) {
+              entered.delete(current);
+              return;
+            }
+            const made = madeBeside(last.doc, current.state.doc, last.id);
+            if (!made) return;
+            entered.delete(current);
+            const source = itemsOf(current.state.doc).find((item) => item.id === last.id);
+            const due = readDue(map.get(last.id));
+            if (!source || isChecked(source.node) || !due || map.has(made)) return;
+            const give = () => map.set(made, dueOf(due.day, MADE_AT_TIME));
+            if (map.doc) map.doc.transact(give, TODO_DUE);
+            else give();
+          },
+        }),
       }),
     ],
   };

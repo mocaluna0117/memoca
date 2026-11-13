@@ -3,7 +3,7 @@ import { Fragment, type Node, type ResolvedPos } from "prosemirror-model";
 import { AllSelection, type EditorState, Plugin, TextSelection, type Transaction } from "prosemirror-state";
 import { uuidv4 } from "uuidv7";
 import { ySyncPluginKey } from "y-prosemirror";
-import { TODO_SORT, duesIn } from "@/components/editor/todo-due";
+import { TODO_SORT, duesIn, enteredIn } from "@/components/editor/todo-due";
 import { dueAt } from "@/lib/quick/todo-due";
 
 /** The one kind of block the Todo's items are. */
@@ -428,9 +428,13 @@ export const todoOnly = createExtension(({ editor }) => {
     runsBefore: ["check-list-item-shortcuts", "memocaListKeys"],
     keyboardShortcuts: {
       Enter: () => {
-        const state = view()?.state;
+        const current = view();
+        const state = current?.state;
         const line = state && lineAt(state);
-        if (!state || !line) return false;
+        if (!current || !state || !line) return false;
+        // The item it was pressed in: the new one it makes is given its day (todo-due).
+        const from = (line.kind === "detail" ? line.item : line.container).attrs.id as string | undefined;
+        if (from) enteredIn(current, from);
         if (line.kind === "detail") return run((now) => enterInDetail(now, line));
         if (line.text.content.size === 0) return true;
         if (detailsOf(line.container)) return run((now) => enterInItemWithDetails(now, line));
