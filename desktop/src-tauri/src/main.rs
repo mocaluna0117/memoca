@@ -145,6 +145,7 @@ fn main() {
             shortcut::hotkeys_get,
             shortcut::hotkeys_set,
             shortcut::hotkeys_recording,
+            commands::sign_out_app,
         ])
         .setup(|app| {
             // A menu bar app: no Dock icon, and not in ⌘Tab.

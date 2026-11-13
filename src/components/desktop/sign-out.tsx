@@ -11,7 +11,14 @@ import { type Unsent, anyUnsent, unsentOnDevice } from "@/lib/sync/unsent";
 let signingOut: Promise<void> | null = null;
 
 function leave() {
-  signingOut ??= resetLocalData()
+  // The app's part first: Memoca's own window (its vault open, maybe) and
+  // the computer's reminders, the account's both. Done here, once it is
+  // sure: the app did it from its menu before the page asked, and left
+  // them gone when the answer was not to sign out. (An app before 0.4.13
+  // has done it already, and has no signOut.)
+  signingOut ??= Promise.resolve(window.memocaShell?.signOut?.())
+    .catch(() => undefined)
+    .then(() => resetLocalData())
     .then(() => signOut())
     .then(
       () => undefined,
@@ -52,7 +59,9 @@ export function SignOut() {
         <UnsentText unsent={unsent} />
       </p>
       <div className="flex flex-wrap gap-2">
-        <Button autoFocus onClick={() => window.location.replace("/app")}>
+        {/* Back to the quick note, the page this window shows: /app is not
+            one of its own, and the browser opened it instead. */}
+        <Button autoFocus onClick={() => window.location.replace("/quick?window=1")}>
           ログアウトしない
         </Button>
         <Button variant="destructive" onClick={leave}>

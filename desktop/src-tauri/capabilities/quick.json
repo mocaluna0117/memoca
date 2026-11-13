@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "quick",
-  "description": "The quick note's window and Memoca's own, showing Memoca's site: moved by its header, and the app's own eighteen commands. Nothing else, and no other site.",
+  "description": "The quick note's window and Memoca's own, showing Memoca's site: moved by its header, and the app's own nineteen commands. Nothing else, and no other site.",
   "windows": ["quick", "app"],
   "remote": {
     "urls": ["https://memoca-app.vercel.app/*"]
@@ -25,6 +25,7 @@
     "allow-set-reminders",
     "allow-hotkeys-get",
     "allow-hotkeys-set",
-    "allow-hotkeys-recording"
+    "allow-hotkeys-recording",
+    "allow-sign-out-app"
   ]
 }

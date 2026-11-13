@@ -3,7 +3,7 @@
 
 use crate::settings::{Corner, Store};
 use crate::updater::{self, VersionItem};
-use crate::{app_window, reminders, window};
+use crate::{app_window, window};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tauri::image::Image;
@@ -246,11 +246,9 @@ fn chosen(app: &AppHandle, id: &str) {
         }
         "update" => updater::look_now(app),
         "sign-out" => {
-            // One sign-in for both windows: Memoca's own goes with it, and
-            // is made again on signing in (sign_in.rs).
-            app_window::discard(app);
-            // The account's reminders no longer shown here: turned on again by whoever signs in.
-            reminders::turn_off(app);
+            // The page asks first, if the device has what it alone has; once
+            // sure, it has the app let go of Memoca's own window and the
+            // account's reminders (commands::sign_out_app).
             window::go(app, window::origin().join("/desktop/sign-out").unwrap());
             window::show(app, window::Place::Cursor);
         }

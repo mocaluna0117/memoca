@@ -149,6 +149,15 @@ describe("the desktop app's hotkeys, in the settings page", () => {
     expect([...document.querySelectorAll("button")].some((each) => each.textContent === "元に戻す")).toBe(false);
   });
 
+  test("one the app could not take as it started (another app has its keys): said so, not shown as working", async () => {
+    // Before, only its log knew: the keys did nothing, and the page showed them as set.
+    kept = { ...kept, quickWorks: false, appWorks: true };
+    await act(async () => root.render(<DesktopHotkeys />));
+    const alerts = [...document.querySelectorAll('[role="alert"]')].map((each) => each.textContent);
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0]).toContain("ほかのアプリが使っているため、今は効いていません");
+  });
+
   test("an app from before 0.4.11: where to change them meanwhile", async () => {
     window.memocaShell = { platform: "macos" } as unknown as MemocaShell;
     await act(async () => root.render(<DesktopHotkeys />));

@@ -21,6 +21,7 @@ fn main() {
             "hotkeys_get",
             "hotkeys_set",
             "hotkeys_recording",
+            "sign_out_app",
         ]),
     ))
     .expect("failed to run tauri-build");

@@ -77,11 +77,25 @@ export type MemocaShell = {
     /** Keys being recorded: the hotkeys let go of meanwhile (for a minute at most), so the page sees them. */
     recording(on: boolean): Promise<void>;
   };
+  /**
+   * Signing out of the app, from its menu, once the page is sure of it:
+   * the app lets go of Memoca's own window (and its open vault) and of the
+   * account's reminders. Not before 0.4.13, where the menu did so at once.
+   */
+  signOut?(): Promise<void>;
   platform: "macos" | "windows";
 };
 
 /** The app's hotkeys, as settings.json writes them ("CmdOrCtrl+Shift+M"), and what each is unless changed. */
-export type ShellHotkeys = { quick: string; app: string; quickDefault: string; appDefault: string };
+export type ShellHotkeys = {
+  quick: string;
+  app: string;
+  quickDefault: string;
+  appDefault: string;
+  /** Whether each took as the app last registered it (another app's keys do not). Not before 0.4.13. */
+  quickWorks?: boolean;
+  appWorks?: boolean;
+};
 
 /**
  * Why the app turned keys away: not a hotkey; one that would take what is

@@ -182,6 +182,11 @@ export function DesktopHotkeys() {
                 即席メモと同じキーなので、今は即席メモが使います。別のキーにすると、こちらで使えます。
               </p>
             ) : null}
+            {!listening && refused?.which !== which && (which === "quick" ? now.quickWorks : now.appWorks) === false ? (
+              <p role="alert" className="text-destructive text-xs">
+                ほかのアプリが使っているため、今は効いていません。別のキーにするか、そのアプリの設定を変えてください。メニューバーのアイコンからは開けます。
+              </p>
+            ) : null}
             {refused?.which === which ? (
               <p role="alert" className="text-destructive text-xs">
                 {refused.text}

@@ -17,6 +17,20 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Modifiers, Shortcut, Short
 /// Both registered, as the settings have them: whether each took (one the
 /// same as the quick note's is left to it, and counts as taken).
 pub fn register(app: &AppHandle) -> (bool, bool) {
+    let took = take(app);
+    if let Some(kept) = app.try_state::<Took>() {
+        *kept.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()) = took;
+    } else {
+        app.manage(Took(Mutex::new(took)));
+    }
+    took
+}
+
+/// Whether each hotkey took as last registered: for the settings page to
+/// say so of one that did not (another app's keys), which only the log knew.
+struct Took(Mutex<(bool, bool)>);
+
+fn take(app: &AppHandle) -> (bool, bool) {
     let settings = app.state::<Store>().get();
     let quick = parse(&settings.shortcut, DEFAULT_SHORTCUT);
     let memoca = parse(&settings.app_shortcut, DEFAULT_APP_SHORTCUT);
@@ -108,15 +122,23 @@ pub struct Hotkeys {
     app: String,
     quick_default: &'static str,
     app_default: &'static str,
+    quick_works: bool,
+    app_works: bool,
 }
 
 fn current(app: &AppHandle) -> Hotkeys {
     let settings = app.state::<Store>().get();
+    let (quick_works, app_works) = app
+        .try_state::<Took>()
+        .map(|took| *took.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner()))
+        .unwrap_or((true, true));
     Hotkeys {
         quick: settings.shortcut,
         app: settings.app_shortcut,
         quick_default: DEFAULT_SHORTCUT,
         app_default: DEFAULT_APP_SHORTCUT,
+        quick_works,
+        app_works,
     }
 }
 

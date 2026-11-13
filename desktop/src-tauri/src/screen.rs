@@ -86,6 +86,13 @@ pub fn at_pointer(app: &AppHandle) -> Option<(Screen, (f64, f64))> {
     Some((found, point))
 }
 
+/// Every screen connected, all of each, in its own points.
+pub fn all(app: &AppHandle) -> Vec<Area> {
+    app.available_monitors()
+        .map(|monitors| monitors.into_iter().map(|monitor| screen(monitor).whole).collect())
+        .unwrap_or_default()
+}
+
 /// Whether a screen's pixels (its place and size) hold a point in pixels.
 #[cfg_attr(target_os = "macos", allow(dead_code))]
 fn contains(position: PhysicalPosition<i32>, size: PhysicalSize<u32>, point: (f64, f64)) -> bool {

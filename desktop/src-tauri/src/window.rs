@@ -53,11 +53,6 @@ fn quick_url() -> Url {
     origin().join("/quick?window=1").unwrap()
 }
 
-/// The quick note, opened on its Todo (src/components/notes/quick-capture.tsx).
-fn todo_url() -> Url {
-    origin().join("/quick?window=1&todo=1").unwrap()
-}
-
 /// The system, as the site is told it (src/lib/quick/shell.ts): "macos" or "windows".
 pub const PLATFORM: &str = if cfg!(target_os = "windows") {
     "windows"
@@ -138,6 +133,7 @@ pub fn bridge() -> String {
         set: (which, keys) => invoke("hotkeys_set", {{ which: String(which), keys: String(keys) }}),
         recording: (on) => invoke("hotkeys_recording", {{ on: Boolean(on) }}),
       }}),
+      signOut: () => invoke("sign_out_app"),
       platform: {platform:?},
     }}),
   }});
@@ -167,8 +163,10 @@ fn may_go(app: &AppHandle, url: &Url) -> bool {
 }
 
 /// When the window's page was last loaded: one older than this is loaded
-/// again as it comes out, rather than shown as it was (a version of the
-/// site long gone, a sign-in long out of date).
+/// again as it is put away, out of sight, rather than kept as it was (a
+/// version of the site long gone, a sign-in long out of date). Not as it
+/// comes out: loaded again then, it took no click and no key for some
+/// seconds (on a machine short of memory, longer), just as it was wanted.
 pub struct Loaded(Mutex<Instant>);
 
 /// Whether Memoca's own window (app_window.rs) was in use when this one
@@ -225,7 +223,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         WindowEvent::Focused(false) if !handle.state::<Store>().get().pinned => {
             #[cfg(target_os = "windows")]
             after_focus_lost(&handle);
-            #[cfg(not(target_os = "windows"))]
+            #[cfg(target_os = "macos")]
+            if !in_modal() {
+                hide(&handle);
+            }
+            #[cfg(not(any(target_os = "windows", target_os = "macos")))]
             hide(&handle);
         }
         // ⌘W, say: put away, never closed, so it stays loaded.
@@ -236,6 +238,22 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         _ => {}
     });
     Ok(())
+}
+
+/// Whether a panel the window opened is up, the app waiting on it: the
+/// files to choose an image from (the page's 「画像を追加」, which WebKit
+/// shows as a panel of its own, NSOpenPanel's runModal). It takes the
+/// keyboard from the window; put away then, with the app hidden, the window
+/// went with the panel still waiting, out of sight, and came out the next
+/// time under it, taking no click until it was answered.
+#[cfg(target_os = "macos")]
+fn in_modal() -> bool {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    NSApplication::sharedApplication(mtm).modalWindow().is_some()
 }
 
 /// What to do, the window having lost the keyboard, from what the system
@@ -255,7 +273,12 @@ pub enum FocusLost {
 
 /// See [`FocusLost`].
 #[cfg_attr(not(target_os = "windows"), allow(dead_code))]
-pub fn focus_lost(in_front: bool, held: bool, at_edge: bool) -> FocusLost {
+pub fn focus_lost(in_front: bool, owned: bool, held: bool, at_edge: bool) -> FocusLost {
+    // A window of its own in front (the files to choose an image from):
+    // looked at again once it is answered, the window then in front again.
+    if owned {
+        return FocusLost::Wait;
+    }
     match (in_front, held, at_edge) {
         (_, true, true) | (true, true, false) => FocusLost::Wait,
         (true, false, _) => FocusLost::Refocus,
@@ -279,7 +302,9 @@ fn after_focus_lost(app: &AppHandle) {
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, VK_LBUTTON, VK_RBUTTON,
     };
-    use windows_sys::Win32::UI::WindowsAndMessaging::{GetCursorPos, GetForegroundWindow};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetForegroundWindow, GetWindow, GW_OWNER,
+    };
 
     // One look at a time: told again during the drag, the look under way goes on.
     static LOOKING: AtomicBool = AtomicBool::new(false);
@@ -307,7 +332,12 @@ fn after_focus_lost(app: &AppHandle) {
                 }
                 let ours = window.hwnd().ok().map(|hwnd| hwnd.0 as isize);
                 // SAFETY: plain reads of the system's state, no pointers kept.
-                let in_front = unsafe { GetForegroundWindow() } as isize;
+                let front = unsafe { GetForegroundWindow() };
+                let in_front = front as isize;
+                // The window in front one of this one's own: the files to
+                // choose an image from, which took the keyboard. Put away
+                // then, the window went behind its own panel.
+                let owner = if front.is_null() { 0 } else { (unsafe { GetWindow(front, GW_OWNER) }) as isize };
                 let held = unsafe {
                     // The physical buttons, as GetAsyncKeyState reads them: either, for buttons swapped.
                     (GetAsyncKeyState(VK_LBUTTON as i32) as u16 & 0x8000) != 0
@@ -325,7 +355,7 @@ fn after_focus_lost(app: &AppHandle) {
                         }
                         _ => false,
                     };
-                match focus_lost(ours == Some(in_front), held, at_edge) {
+                match focus_lost(ours == Some(in_front), owner != 0 && ours == Some(owner), held, at_edge) {
                     FocusLost::Wait => std::thread::sleep(Duration::from_millis(50)),
                     FocusLost::Refocus => {
                         let _ = app.run_on_main_thread(move || {
@@ -413,6 +443,32 @@ fn spot(place: &Place, size: (f64, f64), usable: Area, icon: Option<Area>) -> (f
     )
 }
 
+/// Whether a window of `size` with its top left at `at` (points) has enough
+/// of its top on one of `screens` to be seen and moved by it: its header,
+/// which it is dragged by.
+fn seen_on(at: (f64, f64), size: (f64, f64), screens: &[Area]) -> bool {
+    const ENOUGH: f64 = 40.0;
+    let (left, top) = at;
+    let (right, header) = (left + size.0, top + ENOUGH.min(size.1));
+    screens.iter().any(|screen| {
+        let wide = right.min(screen.x + screen.width) - left.max(screen.x);
+        let tall = header.min(screen.y + screen.height) - top.max(screen.y);
+        wide >= ENOUGH && tall >= ENOUGH.min(size.1) / 2.0
+    })
+}
+
+/// Whether the window, put at `at` (as settings.json keeps it, in points),
+/// would be on one of the screens connected now.
+fn on_a_screen(app: &AppHandle, window: &WebviewWindow, at: (f64, f64)) -> bool {
+    let (Ok(size), Ok(scale)) = (window.outer_size(), window.scale_factor()) else {
+        return true;
+    };
+    let size = size.to_logical::<f64>(scale);
+    let screens = screen::all(app);
+    // None to be told of: as it was.
+    screens.is_empty() || seen_on(at, (size.width, size.height), &screens)
+}
+
 fn window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(LABEL)
 }
@@ -456,18 +512,13 @@ pub fn show(app: &AppHandle, where_: Place) {
             .store(app_window::is_in_use(app), Ordering::Relaxed);
         let settings = app.state::<Store>().get();
         match settings.position {
-            // Pinned, it comes out where it was left.
-            Some((x, y)) if settings.pinned => {
+            // Pinned, it comes out where it was left, if that is on a screen
+            // still (one taken away since, it would come out where nobody
+            // sees it, and take what is typed).
+            Some((x, y)) if settings.pinned && on_a_screen(app, &window, (x, y)) => {
                 let _ = window.set_position(LogicalPosition::new(x, y));
             }
             _ => place(app, &window, &where_),
-        }
-        // Loaded long ago: loaded again on the way out.
-        let loaded = app.state::<Loaded>();
-        let mut at = loaded.0.lock().unwrap();
-        if at.elapsed() >= STALE {
-            *at = Instant::now();
-            let _ = window.navigate(quick_url());
         }
     }
     // After the move, which macOS makes when it next can: not first seen
@@ -486,16 +537,7 @@ pub fn show(app: &AppHandle, where_: Place) {
 /// again on the way out is loaded on it.
 pub fn show_todo(app: &AppHandle) {
     let Some(window) = window(app) else { return };
-    {
-        let loaded = app.state::<Loaded>();
-        let mut at = loaded.0.lock().unwrap();
-        if !window.is_visible().unwrap_or(false) && at.elapsed() >= STALE {
-            *at = Instant::now();
-            let _ = window.navigate(todo_url());
-        } else {
-            let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-open-todo'))");
-        }
-    }
+    let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-open-todo'))");
     show(app, Place::Cursor);
 }
 
@@ -534,7 +576,16 @@ pub fn put_away(app: &AppHandle) -> bool {
     }
     remember(app, &window);
     let _ = window.hide();
-    let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-hidden'))");
+    // Loaded long ago: loaded again now, out of sight (see Loaded). The page
+    // keeps what is written as a draft, stored as it is typed.
+    let loaded = app.state::<Loaded>();
+    let mut at = loaded.0.lock().unwrap();
+    if at.elapsed() >= STALE {
+        *at = Instant::now();
+        let _ = window.navigate(quick_url());
+    } else {
+        let _ = window.eval("window.dispatchEvent(new Event('memoca-shell-hidden'))");
+    }
     true
 }
 
@@ -559,6 +610,14 @@ fn remember(app: &AppHandle, window: &WebviewWindow) {
             settings.position = position;
         });
     }
+}
+
+/// Whether the window is out pinned, and not the one in use: left out
+/// aside while something else is done (a new version of the app is put in
+/// then, rather than waited for as long as it stays out, which was never).
+pub fn is_pinned_aside(app: &AppHandle) -> bool {
+    app.state::<Store>().get().pinned
+        && window(app).is_some_and(|window| !window.is_focused().unwrap_or(true))
 }
 
 /// Whether the window is out.
@@ -597,21 +656,28 @@ mod focus_tests {
 
     #[test]
     fn another_app_clicked_puts_the_window_away() {
-        assert_eq!(focus_lost(false, false, false), FocusLost::Hide);
+        assert_eq!(focus_lost(false, false, false, false), FocusLost::Hide);
         // Clicked elsewhere, the button not let go yet, away from the window.
-        assert_eq!(focus_lost(false, true, false), FocusLost::Hide);
+        assert_eq!(focus_lost(false, false, true, false), FocusLost::Hide);
         // Let go at the edge, another app in front: away too.
-        assert_eq!(focus_lost(false, false, true), FocusLost::Hide);
+        assert_eq!(focus_lost(false, false, false, true), FocusLost::Hide);
+    }
+
+    #[test]
+    fn a_panel_of_its_own_in_front_keeps_it_out_until_answered() {
+        // The files to choose an image from: not another app's window.
+        assert_eq!(focus_lost(false, true, false, false), FocusLost::Wait);
+        assert_eq!(focus_lost(false, true, true, false), FocusLost::Wait);
     }
 
     #[test]
     fn its_edge_dragged_to_resize_it_keeps_it_out() {
         // The frame has the keyboard, the window still in front: until let go, then the page has it back.
-        assert_eq!(focus_lost(true, true, true), FocusLost::Wait);
-        assert_eq!(focus_lost(true, true, false), FocusLost::Wait);
-        assert_eq!(focus_lost(true, false, true), FocusLost::Refocus);
+        assert_eq!(focus_lost(true, false, true, true), FocusLost::Wait);
+        assert_eq!(focus_lost(true, false, true, false), FocusLost::Wait);
+        assert_eq!(focus_lost(true, false, false, true), FocusLost::Refocus);
         // Not in front, but the button held at its edge (the drag under way): looked at again when let go.
-        assert_eq!(focus_lost(false, true, true), FocusLost::Wait);
+        assert_eq!(focus_lost(false, false, true, true), FocusLost::Wait);
     }
 }
 
@@ -626,6 +692,20 @@ mod tests {
         height: 850.0,
     };
     const WINDOW: (f64, f64) = (420.0, 360.0);
+
+    #[test]
+    fn a_pinned_place_is_kept_only_while_a_screen_shows_it() {
+        let laptop = Area { x: 0.0, y: 0.0, width: 1440.0, height: 900.0 };
+        let beside = Area { x: 1440.0, y: 0.0, width: 1920.0, height: 1080.0 };
+        // Left on the screen beside, and that screen still there.
+        assert!(seen_on((2000.0, 300.0), WINDOW, &[laptop, beside]));
+        // That screen taken away: nowhere to be seen.
+        assert!(!seen_on((2000.0, 300.0), WINDOW, &[laptop]));
+        // Half over the edge, its header in sight: kept where it is.
+        assert!(seen_on((1300.0, 100.0), WINDOW, &[laptop]));
+        // Its header above the screen's top: out of reach.
+        assert!(!seen_on((100.0, -300.0), WINDOW, &[laptop]));
+    }
 
     #[test]
     fn the_window_comes_out_high_in_the_middle_or_in_its_corner() {

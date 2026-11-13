@@ -1,7 +1,7 @@
 //! What the page may ask of the app (capabilities/quick.json), besides
 //! signing in (sign_in.rs), in the quick note's window and Memoca's own.
 
-use crate::{app_window, window};
+use crate::{app_window, reminders, window};
 use tauri::AppHandle;
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
@@ -52,4 +52,16 @@ pub fn show_app(app: AppHandle) {
 #[tauri::command]
 pub fn show_quick(app: AppHandle) {
     window::show(&app, window::Place::Cursor);
+}
+
+/// Signing out from the app's menu, once the page has made sure (the
+/// unsent asked about first, src/components/desktop/sign-out.tsx): Memoca's
+/// own window goes, with its vault, and is made again on signing in
+/// (sign_in.rs); the account's reminders are no longer shown here, turned
+/// on again by whoever signs in. Done by the menu itself before the page
+/// asked, they stayed gone when the answer was not to sign out.
+#[tauri::command]
+pub fn sign_out_app(app: AppHandle) {
+    app_window::discard(&app);
+    reminders::turn_off(&app);
 }
