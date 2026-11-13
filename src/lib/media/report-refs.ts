@@ -35,27 +35,43 @@ export async function reportAttachmentRefs(
 ): Promise<number> {
   if (typeof navigator !== "undefined" && !navigator.onLine) return 0;
   const database = db();
-  const due = (await database.notes.filter(behind).toArray()).filter(
-    (note) => now - (lastTried.get(note.noteId) ?? 0) >= RETRY_MS,
-  );
+  // All of them read at once and looked through here: asked for one at a
+  // time (a filter on the table), each note was a request of its own, every
+  // 20 seconds, in whichever window sends (one put away, as often as not).
+  // Those never tried first, then those tried longest ago: the ones a pass
+  // could do nothing for do not keep the others from their turn.
+  const due = (await database.notes.toArray())
+    .filter((note) => behind(note) && now - (lastTried.get(note.noteId) ?? 0) >= RETRY_MS)
+    .sort((a, b) => (lastTried.get(a.noteId) ?? 0) - (lastTried.get(b.noteId) ?? 0));
+  if (due.length === 0) return 0;
+  // What this device has not sent yet, found once for the pass: by note, it
+  // was two more reads a note (one of them the whole outbox, gone through).
+  const [unpushed, queued] = await Promise.all([
+    database.updates.where("pushed").equals(0).toArray(),
+    database.outbox.toArray(),
+  ]);
+  const unsent = new Set<string>();
+  for (const update of unpushed) unsent.add(update.noteId);
+  for (const op of queued) unsent.add(op.entityId);
 
   let reported = 0;
   const missing: string[] = [];
   for (const note of due) {
-    if (reported >= limit) break;
+    // A few each pass, of those to report and of those to fetch: with many
+    // behind (a device catching up, or bodies that never come), every one
+    // of them was read on every pass. Those fetched are left a while, like
+    // those tried, so the next pass goes on to others.
+    if (reported >= limit || missing.length >= limit) break;
     if (note.locked && (!note.wrappedKey || !vault.isUnlocked)) continue;
-    const [body, unpushed, queued] = await Promise.all([
-      database.bodies.get(note.noteId),
-      database.updates.where("noteId").equals(note.noteId).filter((u) => u.pushed === 0).count(),
-      database.outbox.filter((op) => op.entityId === note.noteId).count(),
-    ]);
     // Changes of its own not yet sent: the server's copy is not this one.
-    if (unpushed > 0 || queued > 0) continue;
+    if (unsent.has(note.noteId)) continue;
 
     // A note with no content yet uses nothing, and needs no body to say so.
     const empty = note.lastUpdateSeq === 0 && note.snapshotSeq === 0;
+    const body = empty ? undefined : await database.bodies.get(note.noteId);
     if (!empty && (!body || body.keyEpoch !== note.keyEpoch || body.throughSeq < note.lastUpdateSeq)) {
-      if (missing.length < limit) missing.push(note.noteId);
+      missing.push(note.noteId);
+      lastTried.set(note.noteId, now);
       continue;
     }
     const throughSeq = empty ? 0 : body!.throughSeq;

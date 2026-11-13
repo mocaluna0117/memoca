@@ -92,6 +92,11 @@ async function lockOnce(
     const { key, wrapped } = await vault.createNoteKey(noteId, epoch);
     const ts = stamp(await deviceId());
 
+    // The edits the sealed version holds, to clear once the server has it:
+    // those stored by now. The note can be written in while this goes on
+    // (its files are sealed and sent first), and what is stored after this
+    // point is not in that version: see the clearing below.
+    const stored = await database.updates.where("noteId").equals(noteId).primaryKeys();
     const { state: merged, used } = await withDetachedDoc(noteId, (doc) => withSwaps(doc, copies.swaps));
     const snapshot = await seal(key, merged, ctx.yjsSnapshot(noteId, epoch));
     // A note with no title (a quick note, say) is named by its first line,
@@ -136,7 +141,13 @@ async function lockOnce(
       keyEpoch: epoch,
       throughSeq: note.lastUpdateSeq,
     });
-    await database.updates.where("noteId").equals(noteId).delete();
+    // Only the edits the sealed version holds. Every row of the note was
+    // cleared, those stored while the lock was under way with them: the
+    // only stored copy of what was typed meanwhile, whose op the server
+    // then refused (for the key the note has left) with nothing left to
+    // send again. Kept, they are read with the note (they are not sealed)
+    // and sent again under its new key (the engine's rebaseNote).
+    await database.updates.bulkDelete(stored);
     // The local row changes the same way the server's did, at once: the list
     // must not keep showing the plaintext title until the next pull.
     await database.notes.update(noteId, {
@@ -214,6 +225,8 @@ async function unlockOnce(client: ConvexReactClient, noteId: string): Promise<Lo
   const key = await vault.noteKey(noteId, note.keyEpoch, note.wrappedKey);
   const epoch = note.keyEpoch + 1;
   const unlockTs = stamp(await deviceId());
+  // The edits the unlocked version holds: those stored by now (see lockOnce).
+  const stored = await database.updates.where("noteId").equals(noteId).primaryKeys();
   const merged = await withDetachedDoc(noteId, (doc) => Y.encodeStateAsUpdate(doc));
 
   let title = "";
@@ -287,7 +300,27 @@ async function unlockOnce(client: ConvexReactClient, noteId: string): Promise<Lo
     keyEpoch: epoch,
     throughSeq: note.lastUpdateSeq,
   });
-  await database.updates.where("noteId").equals(noteId).delete();
+  // Only the edits that version holds, as in lockOnce. Those stored while
+  // the unlocking was under way are sealed under the key the note has now
+  // left, which nothing could read once this is done: opened with it here,
+  // while it is in hand, and kept as they were typed, to be sent again
+  // under the note's new epoch. One that cannot be opened goes, as before.
+  await database.updates.bulkDelete(stored);
+  const kept = new Set(stored);
+  for (const update of await database.updates.where("noteId").equals(noteId).toArray()) {
+    if (update.localId === undefined || kept.has(update.localId) || !update.iv) continue;
+    try {
+      const plain = await open(
+        key,
+        new Uint8Array(update.data),
+        new Uint8Array(update.iv),
+        ctx.yjsUpdate(noteId, update.keyEpoch),
+      );
+      await database.updates.put({ ...update, data: plain, iv: undefined });
+    } catch {
+      await database.updates.delete(update.localId);
+    }
+  }
   await database.notes.update(noteId, {
     locked: false,
     keyEpoch: epoch,
@@ -357,7 +390,14 @@ export async function sealAttachments(
     const url = urls[attachment.attachmentId];
     if (!url) continue;
     // Not kept by the browser: the plaintext is about to be deleted.
-    const plain = new Uint8Array(await (await fetch(url, { cache: "no-store" })).arrayBuffer());
+    const response = await fetch(url, { cache: "no-store" });
+    // Its storage gone: left out, as one with no address is.
+    if (response.status === 404) continue;
+    // Any other answer that is not the file: the lock stops here. Read on,
+    // the answer's body (an error's page) was taken for the file, sealed
+    // and put in its place, and the server then deleted the file itself.
+    if (!response.ok) throw new Error(`attachment download failed: ${response.status}`);
+    const plain = new Uint8Array(await response.arrayBuffer());
 
     const attKey = await vault.createAttachmentKey(attachment.attachmentId);
     const encrypted = await seal(attKey.key, plain, ctx.attachmentBody(attachment.attachmentId));

@@ -79,3 +79,52 @@ test("a list out of sight reads nothing as notes are written, and catches up onc
   expect(read).toHaveBeenCalled();
   expect(shown.map((n) => n.noteId).sort()).toEqual(["n1", "n2"]);
 });
+
+/** The page put away, or brought back, as a window hidden and shown is. */
+function setPageHidden(hidden: boolean) {
+  Object.defineProperty(document, "visibilityState", {
+    configurable: true,
+    get: () => (hidden ? "hidden" : "visible"),
+  });
+  act(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+}
+
+test("in a window put away, too: nothing read as notes are written (by another window), and caught up as it comes back", async () => {
+  try {
+    await db().notes.put(note("n1"));
+    await act(() => root.render(<List enabled />));
+    await settle();
+    expect(shown.map((n) => n.noteId)).toEqual(["n1"]);
+
+    setPageHidden(true);
+    await settle();
+    const read = vi.spyOn(db().notes, "toArray");
+    // As the quick note's window writes its tab, every half second typed in.
+    await db().notes.put(note("n2"));
+    await db().notes.update("n1", { title: "changed" });
+    await settle();
+    expect(read).not.toHaveBeenCalled();
+    expect(shown.map((n) => n.noteId)).toEqual(["n1"]);
+
+    setPageHidden(false);
+    await settle();
+    expect(shown.map((n) => n.noteId).sort()).toEqual(["n1", "n2"]);
+    expect(shown.find((n) => n.noteId === "n1")?.title).toBe("changed");
+  } finally {
+    setPageHidden(false);
+  }
+});
+
+test("a window made while put away (the desktop app's, before it is first shown) still reads once", async () => {
+  try {
+    await db().notes.put(note("n1"));
+    setPageHidden(true);
+    await act(() => root.render(<List enabled />));
+    await settle();
+    expect(shown.map((n) => n.noteId)).toEqual(["n1"]);
+  } finally {
+    setPageHidden(false);
+  }
+});

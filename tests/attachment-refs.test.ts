@@ -1,5 +1,5 @@
 import "fake-indexeddb/auto";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as Y from "yjs";
 import { prepareVault, vault } from "@/lib/crypto/vault";
 import { db, resetLocalData } from "@/lib/db";
@@ -164,6 +164,51 @@ describe("reporting them to the server", () => {
     expect(await run()).toBe(0);
     expect(fetched).toEqual([["remote"]]);
     expect(server.callsTo("attachments:reportRefs")).toHaveLength(0);
+  });
+
+  test("with many notes behind whose bodies are not here: a few looked at each pass, and each pass goes on to others", async () => {
+    // As on a device catching up, or with notes whose bodies never come:
+    // every one of them was read from three tables on every pass (each 20
+    // seconds, for as long as a window was open, put away or not).
+    for (let index = 0; index < 40; index += 1) {
+      await db().notes.put(note(`remote-${String(index).padStart(2, "0")}`));
+    }
+    await syncedNote("zz-here", { refsThroughSeq: 2 });
+    const bodies = db().bodies;
+    const read = vi.spyOn(bodies, "get");
+    const scanned = vi.spyOn(db().outbox, "filter");
+    let now = 1_000_000;
+    const pass = () =>
+      reportAttachmentRefs(
+        server.client,
+        async (ids) => {
+          fetched.push(ids);
+        },
+        { now },
+      );
+
+    expect(await pass()).toBe(0);
+    expect(fetched).toEqual([["remote-00", "remote-01", "remote-02", "remote-03", "remote-04"]]);
+    expect(read.mock.calls.length).toBeLessThanOrEqual(5);
+    // The unsent are found once for the pass, not once a note.
+    expect(scanned).not.toHaveBeenCalled();
+
+    // The next pass: on to the next ones, not the same five again.
+    now += 20_000;
+    await pass();
+    expect(fetched[1]).toEqual(["remote-05", "remote-06", "remote-07", "remote-08", "remote-09"]);
+    expect(read.mock.calls.length).toBeLessThanOrEqual(10);
+
+    // And the one that can be reported is reached, behind them all, in time.
+    for (let round = 0; round < 12 && server.callsTo("attachments:reportRefs").length === 0; round += 1) {
+      now += 20_000;
+      await pass();
+    }
+    expect(server.callsTo("attachments:reportRefs").map((call) => (call.args as { noteId: string }).noteId)).toEqual([
+      "zz-here",
+    ]);
+    read.mockRestore();
+    scanned.mockRestore();
   });
 
   test("a locked note waits for the vault", async () => {

@@ -1,9 +1,10 @@
 "use client";
 
 import { useLiveQuery } from "dexie-react-hooks";
-import { useMemo, useRef } from "react";
+import { useMemo, useRef, useState } from "react";
 import { db } from "@/lib/db";
 import { shareRow, shareRows } from "@/lib/hooks/share-rows";
+import { usePageShown } from "@/lib/hooks/use-page-shown";
 import {
   buildTree,
   sortNotes,
@@ -40,14 +41,23 @@ function useSharedRows<T>(
   enabled = true,
 ): T[] {
   const last = useRef<T[] | undefined>(undefined);
+  // The same in a window put away: the desktop app keeps /app loaded and
+  // hidden while the quick note is typed in, and every write of the quick
+  // note's tab (a note's row, every half second) had the hidden window read
+  // all its notes and draw its lists again. It reads once as it is made
+  // (hidden, before it is first shown), and catches up as it comes back.
+  const shown = usePageShown();
+  const [readOnce, setReadOnce] = useState(false);
+  const reads = enabled && (shown || !readOnce);
   return useLiveQuery(
     async () => {
-      if (!enabled) return last.current ?? (EMPTY as T[]);
+      if (!reads) return last.current ?? (EMPTY as T[]);
       const rows = shareRows(last.current, await querier(), keyOf);
       last.current = rows;
+      setReadOnce(true);
       return rows;
     },
-    [...deps, enabled],
+    [...deps, reads],
     EMPTY as T[],
   );
 }
@@ -310,5 +320,11 @@ export function useTrash(): TrashEntry[] {
 
 /** The edits waiting to be sent: not those set aside as ones the server will not take. */
 export function useOutboxCount(): number {
-  return useLiveQuery(() => db().outbox.filter((entry) => entry.stuck === undefined).count(), [], 0);
+  // Read whole and counted here: a filter on the table goes through it a
+  // row a request, with every edit queued or sent, in each window open.
+  return useLiveQuery(
+    async () => (await db().outbox.toArray()).filter((entry) => entry.stuck === undefined).length,
+    [],
+    0,
+  );
 }

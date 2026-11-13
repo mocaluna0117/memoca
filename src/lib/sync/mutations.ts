@@ -33,7 +33,14 @@ async function siblingKeyAfterLast(
   kind: "folders" | "notes",
   parent: string | null,
 ): Promise<string> {
-  const keys = parent === null ? await topLevelKeys() : await siblingKeys(kind, parent);
+  // Those in the trash among them: one put back has the key it had, and a
+  // new one given a key after the last not in the trash was given that very
+  // key. Two with one key cannot be placed between (a drop there, or
+  // Alt+↑, did nothing).
+  const keys =
+    parent === null
+      ? [...(await siblingKeys("folders", null, true)), ...(await siblingKeys("notes", null, true))].sort()
+      : await siblingKeys(kind, parent, true);
   return between(keys.at(-1) ?? null, null);
 }
 
@@ -56,7 +63,8 @@ export async function topLevelKeys(): Promise<string[]> {
  * they are ordered by time.
  */
 async function siblingKeyBeforeFirst(parent: string | null): Promise<string> {
-  const first = (await siblingKeys("notes", parent))[0];
+  // Before those in the trash too, as above.
+  const first = (await siblingKeys("notes", parent, true))[0];
   return between(null, first ?? null);
 }
 
@@ -68,7 +76,12 @@ async function siblingKeyBeforeFirst(parent: string | null): Promise<string> {
  * handful of rows, and it avoids inventing a magic "root" parent id that every
  * other query would then have to know about.
  */
-async function siblingKeys(kind: "folders" | "notes", parent: string | null): Promise<string[]> {
+async function siblingKeys(
+  kind: "folders" | "notes",
+  parent: string | null,
+  /** Those in the trash too (not those gone for good): for a key no row has. */
+  withTrashed = false,
+): Promise<string[]> {
   const database = db();
   const rows =
     kind === "folders"
@@ -79,7 +92,7 @@ async function siblingKeys(kind: "folders" | "notes", parent: string | null): Pr
         ? await database.notes.filter((n) => n.folderId === null).toArray()
         : await database.notes.where("folderId").equals(parent).toArray();
   return rows
-    .filter((r) => r.deletedAt === null && !r.purged)
+    .filter((r) => (withTrashed || r.deletedAt === null) && !r.purged)
     .map((r) => r.sortKey)
     .sort();
 }

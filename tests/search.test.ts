@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { buildIndex, search } from "@/lib/search/engine";
-import { normalize, terms } from "@/lib/search/normalize";
+import { normalize, normalizeMapped, terms } from "@/lib/search/normalize";
 import { isKanaQuery } from "@/lib/search/yomi";
 
 const rows = [
@@ -184,5 +184,40 @@ describe("kana query detection", () => {
     expect(isKanaQuery("abc")).toBe(false);
     // Too short to be meaningful.
     expect(isKanaQuery("あ")).toBe(false);
+  });
+});
+
+describe("what a result marks, and shows", () => {
+  const found = (body: string, query: string) => {
+    const [hit] = search(
+      buildIndex([{ noteId: "n", folderId: null, title: "議事録", body, folderName: "", locked: false, updatedAt: 0 }]),
+      query,
+    );
+    return { text: hit!.snippet.text, marked: hit!.snippet.highlights.map(([from, to]) => hit!.snippet.text.slice(from, to)) };
+  };
+
+  test("the word searched for, after characters the search passes over (ー, ・) or folds (ｶﾞ)", () => {
+    // Marked where it was in the folded text: 「ーの」 for 設定, a mark a step off for each ー before it.
+    expect(found("サーバーの設定を見直す", "設定").marked).toEqual(["設定"]);
+    expect(found("ｶﾞｲﾄﾞ・ﾗｲﾝの設定と、ユーザーの設定", "設定").marked).toEqual(["設定", "設定"]);
+    expect(found("Ｗｅｂサーバーのメモリー不足", "めもり").marked).toEqual(["メモリ"]);
+    expect(found("コーヒーを買う", "こひ").marked).toEqual(["コーヒ"]);
+  });
+
+  test("the lines around the word, far into a text full of such characters", () => {
+    // The window was cut where the word was in the folded text, well before it in the text itself.
+    const { text, marked } = found(`${"コーヒー".repeat(60)}のあとで会議をする`, "会議");
+    expect(text).toContain("会議");
+    expect(marked).toEqual(["会議"]);
+  });
+
+  test("every word of several", () => {
+    expect(found("サーバーの設定とデータベースの移行", "設定 移行").marked.sort()).toEqual(["移行", "設定"]);
+  });
+
+  test("the folding with its places gives the same text as the folding alone", () => {
+    for (const text of ["サーバーの設定", "ｶﾞｲﾄﾞ・ﾗｲﾝ", "Ｗｅｂ　ＡＢＣ", "㍻と㌔", "か\u3099き", "emoji 👨‍👩‍👧 と 🇯🇵", ""]) {
+      expect(normalizeMapped(text).text, text).toBe(normalize(text));
+    }
   });
 });

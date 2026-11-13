@@ -1,4 +1,4 @@
-import { normalize, terms } from "./normalize";
+import { normalize, normalizeMapped, terms } from "./normalize";
 import { noteName } from "@/lib/note-name";
 
 export type Indexed = {
@@ -76,27 +76,32 @@ function standInOf(row: IndexInput): { standIn: string; normalizedStandIn: strin
 
 const SNIPPET_RADIUS = 48;
 
-function snippetFor(
-  source: string,
-  normalized: string,
-  needles: string[],
-): { text: string; highlights: [number, number][] } {
-  const first = normalized.indexOf(needles[0]!);
+function snippetFor(source: string, needles: string[]): { text: string; highlights: [number, number][] } {
+  // A match is found in the folded text, which is not as long as the text
+  // (ー and ・ dropped, ｶﾞ one が): where it is in the text itself is read
+  // from the folding. Taken as the same place, the window was cut short of
+  // the word in a text with many of them, and the marks were a step off for
+  // each one before the word (「ーの」 marked for 設定 in サーバーの設定).
+  const folded = normalizeMapped(source);
+  const first = folded.text.indexOf(needles[0]!);
   if (first < 0) return { text: source.slice(0, SNIPPET_RADIUS * 2), highlights: [] };
 
-  // Normalisation is a per-character mapping that can drop characters, so
-  // offsets are approximate; clamping keeps the snippet sane either way.
-  const start = Math.max(0, first - SNIPPET_RADIUS);
-  const end = Math.min(source.length, first + SNIPPET_RADIUS);
-  const text = (start > 0 ? "…" : "") + source.slice(start, end) + (end < source.length ? "…" : "");
+  const at = folded.from[first]!;
+  const start = Math.max(0, at - SNIPPET_RADIUS);
+  const end = Math.min(source.length, at + SNIPPET_RADIUS);
+  const lead = start > 0 ? "…" : "";
+  const text = lead + source.slice(start, end) + (end < source.length ? "…" : "");
 
   const highlights: [number, number][] = [];
-  const lowered = normalize(text);
+  const shown = normalizeMapped(source.slice(start, end));
   for (const needle of needles) {
-    let at = lowered.indexOf(needle);
-    while (at >= 0 && highlights.length < 12) {
-      highlights.push([at, at + needle.length]);
-      at = lowered.indexOf(needle, at + needle.length);
+    let found = shown.text.indexOf(needle);
+    while (found >= 0 && highlights.length < 12) {
+      highlights.push([
+        lead.length + shown.from[found]!,
+        lead.length + shown.to[found + needle.length - 1]!,
+      ]);
+      found = shown.text.indexOf(needle, found + needle.length);
     }
   }
   return { text, highlights };
@@ -154,7 +159,7 @@ export function search(index: Indexed[], query: string, limit = 50): SearchHit[]
 
     const snippet =
       matchedIn === "body"
-        ? snippetFor(row.body ?? "", row.normalizedBody, needles)
+        ? snippetFor(row.body ?? "", needles)
         : matchedIn === "reading"
           ? { text: (row.body ?? "").slice(0, SNIPPET_RADIUS * 2), highlights: [] }
           : { text: row.title, highlights: [] as [number, number][] };

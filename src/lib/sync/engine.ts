@@ -863,6 +863,7 @@ export class SyncEngine {
       // Ops the server threw on this round: left for the next round, so the
       // ones after them go now rather than wait on them.
       const failedNow = new Set<string>();
+      let sentAny = false;
       for (;;) {
         const now = Date.now();
         const entries = await database.outbox
@@ -927,10 +928,17 @@ export class SyncEngine {
           }
         }
 
+        sentAny = true;
         this.interval = response.activePeers > 0 ? FAST_INTERVAL_MS : IDLE_INTERVAL_MS;
         for (const noteId of response.shouldCompact) void this.compact(noteId);
         if (sent.length === entries.length && entries.length < PUSH_OP_LIMIT) break;
       }
+      // A round that sent nothing goes back to the slow pace. The quick one
+      // was set by the last thing sent while another device was at work,
+      // and stayed until the next thing sent: a window left open (put away,
+      // even) ran a round a second for hours. A round sends, and does not
+      // receive: what another device writes comes by the subscription.
+      if (!sentAny) this.interval = IDLE_INTERVAL_MS;
       // A file for a note that has only now reached the server waited above.
       if ((await database.pendingUploads.count()) > 0) this.sendFilesApart();
       this.set({
