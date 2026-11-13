@@ -26,3 +26,20 @@ test("[[ typed with the input method on, as 「「, opens the menu of notes too"
   await expect(editor(page).locator('a[data-inline-content-type="link"]')).toHaveText("行き先");
   await expect(editor(page)).not.toContainText("「");
 });
+
+test("[[ with no note of that name: Enter is a new line, and what was typed stays", async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "typed on a computer's keyboard");
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "行き先");
+  await createNote(page, "出発");
+  await editor(page).click();
+  await page.keyboard.type("前置き [[あとで書く");
+  // Before: an item saying there was none took the Enter, and 「[[あとで書く」 with it.
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("次の行");
+  const lines = editor(page).locator(".bn-inline-content");
+  await expect(lines.nth(0)).toHaveText("前置き [[あとで書く");
+  await expect(lines.nth(1)).toHaveText("次の行");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+});

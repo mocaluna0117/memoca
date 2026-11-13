@@ -209,6 +209,56 @@ describe("Enter in a list item", () => {
   });
 });
 
+describe("Enter in an empty item put in a step", () => {
+  test("under a list item: out a step, an item still; then, at the top, a line of text", () => {
+    const editor = editorOf([
+      {
+        type: "bulletListItem",
+        content: "一",
+        children: [
+          { type: "bulletListItem", content: "二" },
+          { type: "bulletListItem", content: "" },
+        ],
+      },
+    ]);
+    caret(editor, "");
+    expect(press(editor, "Enter")).toBe(true);
+    expect(outline(editor)).toEqual(["bulletListItem:一", "  bulletListItem:二", "bulletListItem:"]);
+    press(editor, "Enter");
+    expect(outline(editor)).toEqual(["bulletListItem:一", "  bulletListItem:二", "paragraph:"]);
+  });
+
+  test("two steps in: a step at a time", () => {
+    const editor = editorOf([
+      {
+        type: "numberedListItem",
+        content: "一",
+        children: [
+          { type: "checkListItem", content: "二", children: [{ type: "checkListItem", content: "" }] },
+        ],
+      },
+    ]);
+    caret(editor, "");
+    press(editor, "Enter");
+    expect(outline(editor)).toEqual(["numberedListItem:一", "  checkListItem:二", "  checkListItem:"]);
+    press(editor, "Enter");
+    expect(outline(editor)).toEqual(["numberedListItem:一", "  checkListItem:二", "checkListItem:"]);
+  });
+
+  test("under a toggle or a line of text: a line of text there, as it was", () => {
+    for (const over of ["toggleListItem", "paragraph"] as const) {
+      const editor = editorOf([
+        { type: over, content: "上", children: [{ type: "bulletListItem", content: "" }] },
+      ]);
+      caret(editor, "");
+      press(editor, "Enter");
+      expect(outline(editor)).toEqual([`${over}:上`, "  paragraph:"]);
+      unmount?.();
+      unmount = null;
+    }
+  });
+});
+
 describe("Tab and Shift+Tab", () => {
   test("where the line cannot go in or out a step, are kept from the browser", () => {
     const editor = editorOf([

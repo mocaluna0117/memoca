@@ -279,7 +279,8 @@ function KeyboardBlockBar({ inset, inline = false }: { inset: number; inline?: b
       label: "ブロックを削除",
       icon: Trash2,
       run: () => {
-        editor.removeBlocks([block]);
+        // All of those selected, as 複製 and コピー take them: the first alone went.
+        editor.removeBlocks(selected);
         editor.focus();
       },
     },

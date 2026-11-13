@@ -85,16 +85,12 @@ export function NoteLinkMenu({ editor, noteId }: { editor: BlockNoteEditor; note
       shouldOpen={(state) => !state.selection.$from.parent.type.spec.code}
       getItems={async (query) => {
         const found = await notesFor(noteId, query);
-        if (found.length === 0) {
-          return [
-            {
-              title: "リンクできるメモがありません",
-              subtext: query ? `「${query}」を名前に含むメモはありません` : undefined,
-              icon: <Link2 size={18} />,
-              onItemClick: () => {},
-            },
-          ];
-        }
+        // None: no item, not one that says so. An item, any item, takes
+        // the Enter (and a click), and with it what was typed from the [[
+        // on: 「前置き [[あとで書く」 and Enter left 「前置き 」, with no new
+        // line. With none, the menu says nothing is found, Enter is the
+        // editor's, and the menu closes as the typing goes on.
+        if (found.length === 0) return [];
         return found.map(({ note, name }) => ({
           title: name,
           icon: <FileText size={18} />,

@@ -1,0 +1,114 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 811ad6006be79db6f50f4f2accde2861b554bdb6..7f5fd6b8a9d06b608521029729c0933e7fc92586 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -4816,6 +4816,52 @@ function run$1(config) {
+ 			chain,
+ 			can
+ 		}) === null || !tr.steps.length) return;
++		// Memoca: Yjs's undo (y-prosemirror's, in place of ProseMirror's
++		// history) takes what comes within half a second as one step, and
++		// the rule's change came as one transaction with the sign that
++		// set it off: ⌘Z just after **太字** was made bold took the whole
++		// line typed with it. The typed sign goes in on its own first and
++		// ends its step; the rule is then run again on what is there (as
++		// it is after a composed word), and ends its own step. ⌘Z gives
++		// the text back as typed, signs and all, and typing goes on.
++		const yUndoPlugin = view.state.plugins.find((each) => each.key === "y-undo$");
++		const yUndo = yUndoPlugin ? yUndoPlugin.getState(view.state)?.undoManager : null;
++		if (yUndo && text && text !== "\n") {
++			view.dispatch(view.state.tr.insertText(text, from, to));
++			yUndo.stopCapturing();
++			const again = view.state.tr;
++			const stateAgain = createChainableState({
++				state: view.state,
++				transaction: again
++			});
++			const managerAgain = new CommandManager({
++				editor,
++				state: stateAgain
++			});
++			matched = true;
++			if (rule.handler({
++				state: stateAgain,
++				range: {
++					from: range.from,
++					to: from + text.length
++				},
++				match,
++				commands: managerAgain.commands,
++				chain: managerAgain.chain,
++				can: managerAgain.can
++			}) === null || !again.steps.length) return;
++			// The typed sign is in the document already: undoing the rule
++			// (Backspace just after) has none to put back.
++			if (rule.undoable) again.setMeta(plugin, {
++				transform: again,
++				from: range.from,
++				to: range.from,
++				text: ""
++			});
++			view.dispatch(again);
++			yUndo.stopCapturing();
++			return;
++		}
+ 		if (rule.undoable) tr.setMeta(plugin, {
+ 			transform: tr,
+ 			from,
+diff --git a/dist/index.js b/dist/index.js
+index 883243a77051c7666ffb368abceaaf757567608c..fd260a40e82945b84ff4e46be1674a8b92b5c058 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -4804,6 +4804,52 @@ function run$1(config) {
+ 			chain,
+ 			can
+ 		}) === null || !tr.steps.length) return;
++		// Memoca: Yjs's undo (y-prosemirror's, in place of ProseMirror's
++		// history) takes what comes within half a second as one step, and
++		// the rule's change came as one transaction with the sign that
++		// set it off: ⌘Z just after **太字** was made bold took the whole
++		// line typed with it. The typed sign goes in on its own first and
++		// ends its step; the rule is then run again on what is there (as
++		// it is after a composed word), and ends its own step. ⌘Z gives
++		// the text back as typed, signs and all, and typing goes on.
++		const yUndoPlugin = view.state.plugins.find((each) => each.key === "y-undo$");
++		const yUndo = yUndoPlugin ? yUndoPlugin.getState(view.state)?.undoManager : null;
++		if (yUndo && text && text !== "\n") {
++			view.dispatch(view.state.tr.insertText(text, from, to));
++			yUndo.stopCapturing();
++			const again = view.state.tr;
++			const stateAgain = createChainableState({
++				state: view.state,
++				transaction: again
++			});
++			const managerAgain = new CommandManager({
++				editor,
++				state: stateAgain
++			});
++			matched = true;
++			if (rule.handler({
++				state: stateAgain,
++				range: {
++					from: range.from,
++					to: from + text.length
++				},
++				match,
++				commands: managerAgain.commands,
++				chain: managerAgain.chain,
++				can: managerAgain.can
++			}) === null || !again.steps.length) return;
++			// The typed sign is in the document already: undoing the rule
++			// (Backspace just after) has none to put back.
++			if (rule.undoable) again.setMeta(plugin, {
++				transform: again,
++				from: range.from,
++				to: range.from,
++				text: ""
++			});
++			view.dispatch(again);
++			yUndo.stopCapturing();
++			return;
++		}
+ 		if (rule.undoable) tr.setMeta(plugin, {
+ 			transform: tr,
+ 			from,

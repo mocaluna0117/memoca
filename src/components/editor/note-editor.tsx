@@ -59,6 +59,7 @@ import { pasteMarkingUnreadableImages } from "@/components/editor/unreadable-ima
 import { paintFrame, settleRefusedBlock, showUploadPreview } from "@/components/editor/upload-preview";
 import { dragHandle } from "@/components/editor/drag-handle";
 import { fromTitle, linesAbove } from "@/components/editor/line-above";
+import { linesBelow } from "@/components/editor/line-below";
 import { selectMedia } from "@/components/editor/select-media";
 import { imeCommit } from "@/components/editor/ime-commit";
 import { onTitleEnter } from "@/components/editor/title-enter";
@@ -72,7 +73,8 @@ import { NoteLinkMenu, noteLinkInput, noteLinkSlashItem } from "@/components/edi
 import { listKeys } from "@/components/editor/list-keys";
 import { blockSelect } from "@/components/editor/block-select";
 import { MemocaSideMenu } from "@/components/editor/block-menu";
-import { turningLines } from "@/components/editor/slash-turn-line";
+import { itemsForSlash, turningLines } from "@/components/editor/slash-turn-line";
+import { withReadings } from "@/components/editor/slash-readings";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { LayoutTemplate } from "lucide-react";
 import { db } from "@/lib/db";
@@ -312,6 +314,7 @@ function EditorSurface({
           selectMedia(),
           blockSelect(),
           linesAbove(),
+          linesBelow(),
           imeCommit(),
           noteLinkInput(),
           findInNote(),
@@ -420,14 +423,18 @@ function EditorSurface({
           shouldOpen={slashMenuOpens}
           getItems={async (query) =>
             filterSuggestionItems(
-              [
-                ...combineByGroup(
-                  turningLines(plain, getDefaultReactSlashMenuItems(editor)),
-                  getMultiColumnSlashMenuItems(editor),
+              // After a word, those that make the line something else alone (see itemsForSlash).
+              itemsForSlash(plain, query, [
+                // Found by their readings too (/みだし), as typed with the input method on.
+                ...withReadings(
+                  combineByGroup(
+                    turningLines(plain, getDefaultReactSlashMenuItems(editor)),
+                    getMultiColumnSlashMenuItems(editor),
+                  ),
                 ),
                 noteLinkSlashItem(plain),
                 ...(await templateItems()),
-              ],
+              ]),
               query,
             )
           }

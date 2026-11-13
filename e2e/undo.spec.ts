@@ -83,4 +83,62 @@ test.describe("undo", () => {
       expect(await line.locator(".bn-inline-content").evaluate((element) => element.textContent)).toBe(mark);
     }
   });
+
+  test("⌘Z just after **太字** was made bold takes back the making alone: the text as typed, its signs with it", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "太字を取り消す");
+    await editor(page).click();
+    // Typed without a pause: before, the whole line went with the one ⌘Z.
+    await page.keyboard.type("これは **太字**");
+    const line = editor(page).locator(".bn-inline-content").first();
+    await expect(line.locator("strong")).toHaveText("太字");
+    await expect(line).toHaveText("これは 太字");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(line).toHaveText("これは **太字**");
+    await expect(line.locator("strong")).toHaveCount(0);
+    // Typing goes on in the text as it is, not made bold again.
+    await page.keyboard.type(" です");
+    await expect(line).toHaveText("これは **太字** です");
+    await expect(line.locator("strong")).toHaveCount(0);
+
+    // `code` the same, and put back by ⌘⇧Z.
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("`code`");
+    const second = editor(page).locator(".bn-inline-content").nth(1);
+    await expect(second.locator("code")).toHaveText("code");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(second).toHaveText("`code`");
+    await expect(second.locator("code")).toHaveCount(0);
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await expect(second.locator("code")).toHaveText("code");
+    // What is typed after it is taken back on its own, the code staying.
+    await page.keyboard.type(" あと");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(second.locator("code")).toHaveText("code");
+    await expect(second).toHaveText("code");
+  });
+
+  test("⌘Z after words typed on into a heading its mark made takes back the words, not the heading", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "見出しの文字を取り消す");
+    await editor(page).click();
+    // The mark and the words at once, with no pause between them.
+    await page.keyboard.type("# 見出し");
+    const line = editor(page).locator(".bn-block-content").first();
+    await expect(line).toHaveAttribute("data-content-type", "heading");
+    await expect(line).toHaveText("見出し");
+    await page.keyboard.press("ControlOrMeta+z");
+    // Before: a line of text reading "# ", the heading gone with its words.
+    await expect(line).toHaveAttribute("data-content-type", "heading");
+    await expect(line).toHaveText("");
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(line).toHaveAttribute("data-content-type", "paragraph");
+    await expect(line).toHaveText("# ");
+  });
 });

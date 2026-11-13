@@ -101,3 +101,35 @@ test.describe("a URL typed in a note, or in the quick note", () => {
       .toEqual(["https://example.com/b", "次の行", "締切 11/30", "その次 /ないもの", ""]);
   });
 });
+
+test("a / written between two words is not the menu's to take: 図/表 and Enter stay as written", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "typed on a computer's keyboard");
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "スラッシュ");
+  await editor(page).click();
+  // Before: a table put in, and 「/表」 gone; an image for 写真/画像.
+  for (const words of ["図/表", "写真/画像", "行/列"]) {
+    await page.keyboard.type(words);
+    await page.keyboard.press("Enter");
+  }
+  await page.keyboard.type("おわり");
+  const kinds = await editor(page).evaluate((root) =>
+    [...root.querySelectorAll(".bn-block-content")].map(
+      (content) => `${(content as HTMLElement).dataset.contentType}:${content.textContent}`,
+    ),
+  );
+  expect(kinds).toEqual(["paragraph:図/表", "paragraph:写真/画像", "paragraph:行/列", "paragraph:おわり"]);
+
+  // After a line's words, the menu still makes that line a heading, found by its reading too.
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("きょうの予定/みだし");
+  // The menu's items are found a moment after what is typed: Enter once they are there.
+  await expect(page.getByRole("option", { name: /^見出し１/ })).toBeVisible();
+  await page.keyboard.press("Enter");
+  const last = editor(page).locator(".bn-block-content").last();
+  await expect(last).toHaveAttribute("data-content-type", "heading");
+  await expect(last).toHaveText("きょうの予定");
+});

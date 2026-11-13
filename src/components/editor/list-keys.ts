@@ -63,6 +63,32 @@ export function enterInItem(state: EditorState): Transaction | null {
   return tr.scrollIntoView();
 }
 
+/**
+ * Whether the caret is alone in an empty list item that is under a list
+ * item (put in a step, with Tab): where Enter brings it out a step, an
+ * item still, as a word processor does, and as Shift+Tab would. BlockNote's
+ * own Enter made it a line of text where it was, still in the step: what
+ * was typed next was a line under the item above, with no mark, and the
+ * list went on only after a Shift+Tab. Not under a toggle, a heading or a
+ * line of text, whose own what is under them is: there it is BlockNote's
+ * line of text still, and at the top (an empty item there ends the list).
+ */
+export function inEmptyNestedItem(state: EditorState): boolean {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return false;
+  const { $from } = selection;
+  if (!isItem($from.parent) || $from.parent.content.size > 0) return false;
+  // The item's block, the group it is in, and the block that group is under.
+  if ($from.depth < 4) return false;
+  const container = $from.node($from.depth - 1);
+  const group = $from.node($from.depth - 2);
+  const over = $from.node($from.depth - 3);
+  if (container.type.name !== "blockContainer" || group.type.name !== "blockGroup") return false;
+  // With lines of its own under it, it stays: out a step, they would come with it.
+  if (container.childCount > 1) return false;
+  return over.type.name === "blockContainer" && !!over.firstChild && isItem(over.firstChild);
+}
+
 /** Where Tab is left to what has the block: a table's cells, a code block's indent. */
 const KEEPS_TAB = new Set(["table", "codeBlock"]);
 
@@ -114,7 +140,7 @@ export function indentCode(state: EditorState, out: boolean): Transaction | "not
 
 /**
  * Enter and Tab in lists, where BlockNote's own fall short: see
- * {@link enterInItem}. And Tab or Shift+Tab with the caret in a line that
+ * {@link enterInItem} and {@link inEmptyNestedItem}. And Tab or Shift+Tab with the caret in a line that
  * cannot go in or out a step (the first item of a list, a line at the top):
  * nothing, as in a word processor. BlockNote leaves it to the browser
  * then, which takes the caret out of the note to the next button.
@@ -146,6 +172,10 @@ export const listKeys = createExtension(({ editor }) => {
     keyboardShortcuts: {
       Enter: () => {
         const view = editor.prosemirrorView;
+        if (view && inEmptyNestedItem(view.state) && editor.canUnnestBlock()) {
+          editor.unnestBlock();
+          return true;
+        }
         const tr = view && enterInItem(view.state);
         if (!tr) return false;
         view.dispatch(tr);

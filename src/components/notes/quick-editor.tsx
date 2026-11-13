@@ -34,12 +34,14 @@ import { imeCommit } from "@/components/editor/ime-commit";
 import { japaneseLists } from "@/components/editor/japanese-lists";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { type LinesAnchor, type LinesTaken, linesForTodo, putBackLines, removeLines } from "@/lib/quick/move-lines";
+import { linesBelow } from "@/components/editor/line-below";
 import { listKeys } from "@/components/editor/list-keys";
 import { InlineBlockBar } from "@/components/editor/mobile-block-toolbar";
 import { pasteLink } from "@/components/editor/paste-link";
 import { DISABLED_EXTENSIONS, quoteShortcuts } from "@/components/editor/quotes";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
-import { turningLines } from "@/components/editor/slash-turn-line";
+import { itemsForSlash, turningLines } from "@/components/editor/slash-turn-line";
+import { withReadings } from "@/components/editor/slash-readings";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { toggles } from "@/components/editor/toggles";
 import { openLinkApart } from "@/lib/open-link";
@@ -156,6 +158,8 @@ export const QuickEditor = memo(function QuickEditor({
           listKeys(),
           toggles(),
           stuckToggles,
+          // ↓ out of a code block or a table the tab ends in.
+          linesBelow(),
           imeCommit(),
         ],
         domAttributes: {
@@ -319,8 +323,14 @@ export const QuickEditor = memo(function QuickEditor({
           shouldOpen={slashMenuOpens}
           getItems={async (query) =>
             filterSuggestionItems(
-              turningLines(plain, getDefaultReactSlashMenuItems(editor)).filter(
-                (item) => !FILE_ITEMS.has((item as { key?: string }).key ?? ""),
+              itemsForSlash(
+                plain,
+                query,
+                withReadings(
+                  turningLines(plain, getDefaultReactSlashMenuItems(editor)).filter(
+                    (item) => !FILE_ITEMS.has((item as { key?: string }).key ?? ""),
+                  ),
+                ),
               ),
               query,
             )

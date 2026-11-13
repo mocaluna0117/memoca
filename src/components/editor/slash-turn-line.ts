@@ -52,3 +52,35 @@ export function turningLines<T extends { key?: string; onItemClick: () => void }
     return into ? { ...item, onItemClick: () => turnLine(editor, into) } : item;
   });
 }
+
+/**
+ * Whether the / of the menu now open (its query typed after it) was typed
+ * straight after a word, not at a line's start nor after a space: where the
+ * menu is there to make that line something else, and for nothing more.
+ */
+export function slashAfterWord(editor: BlockNoteEditor, query: string): boolean {
+  const { $from } = editor.prosemirrorState.selection;
+  const before = $from.parent.textBetween(0, $from.parentOffset, undefined, "\ufffc");
+  if (!before.endsWith(`/${query}`)) return false;
+  const head = before.slice(0, before.length - query.length - 1);
+  return head !== "" && !/\s$/.test(head);
+}
+
+/**
+ * The / menu's items for where its / was typed. After a word, only those
+ * that make the line something else (a heading, a list, a quote): the menu
+ * opens there for that alone (きょうの予定/見出し), and with every item in
+ * it, a / written between two words took the Enter after it whenever the
+ * second was among the menu's names: 図/表 and Enter put a table in and
+ * took 「/表」 away, 写真/画像 an image, 紙/メモ opened the links to notes,
+ * and a template's name put the template in. At a line's start or after a
+ * space, all of them, as before.
+ */
+export function itemsForSlash<T>(editor: BlockNoteEditor, query: string, items: T[]): T[] {
+  if (!slashAfterWord(editor, query)) return items;
+  return items.filter((item) => {
+    // BlockNote's own items have a key; Memoca's (a link to a note, a template) have none.
+    const { key } = item as { key?: string };
+    return key !== undefined && key in LINE_TYPES;
+  });
+}

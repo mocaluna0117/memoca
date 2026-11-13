@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
   inset: 0,
   selectedBlocks: vi.fn(() => [] as unknown[]),
   updateBlock: vi.fn(),
+  removeBlocks: vi.fn(),
 }));
 vi.mock("@blocknote/react", () => ({
   useBlockNoteEditor: () => ({
@@ -13,6 +14,7 @@ vi.mock("@blocknote/react", () => ({
     schema: { blockSchema: { paragraph: { content: "inline" }, codeBlock: { content: "plain" } } },
     transact: (change: () => void) => change(),
     updateBlock: h.updateBlock,
+    removeBlocks: h.removeBlocks,
     focus: () => {},
     canNestBlock: () => false,
     canUnnestBlock: () => false,
@@ -64,4 +66,16 @@ test("a code block made a line again, its text kept, by its button pressed once 
   const code = host.querySelector<HTMLButtonElement>('button[aria-label="コード"]')!;
   await act(async () => code.click());
   expect(h.updateBlock).toHaveBeenCalledWith(expect.objectContaining({ id: "c" }), { type: "paragraph", content: text });
+});
+
+test("ブロックを削除 with several blocks selected takes them all, as 複製 and コピー do", async () => {
+  h.inset = 300;
+  const line = (id: string) => ({ id, type: "paragraph", props: {}, content: [], children: [] });
+  h.selectedBlocks.mockReturnValue([line("a"), line("b"), line("c")]);
+  await act(() => root.render(<MobileBlockToolbar />));
+  const remove = host.querySelector<HTMLButtonElement>('button[aria-label="ブロックを削除"]')!;
+  await act(async () => remove.click());
+  // Before: the first alone, the others left selected.
+  expect(h.removeBlocks).toHaveBeenCalledTimes(1);
+  expect((h.removeBlocks.mock.calls[0]![0] as { id: string }[]).map((block) => block.id)).toEqual(["a", "b", "c"]);
 });

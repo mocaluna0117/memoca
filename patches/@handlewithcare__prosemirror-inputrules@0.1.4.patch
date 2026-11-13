@@ -1,8 +1,8 @@
 diff --git a/dist/inputrules.js b/dist/inputrules.js
-index 6845d468baf8525800b086694432333c4e9c1277..0fbf4385c7ba1a4430665f8099d5fa2b9ac3894e 100644
+index 6845d468baf8525800b086694432333c4e9c1277..cd81d303dba1d6e9754c5a94a27a3c7a1f6f9d0a 100644
 --- a/dist/inputrules.js
 +++ b/dist/inputrules.js
-@@ -117,14 +117,38 @@ function run(view, from, to, text, rules, plugin) {
+@@ -117,16 +117,45 @@ function run(view, from, to, text, rules, plugin) {
          let tr = rule.handler(state, match, mappedFrom - match[0].length, mappedTo);
          if (!tr)
              continue;
@@ -42,4 +42,11 @@ index 6845d468baf8525800b086694432333c4e9c1277..0fbf4385c7ba1a4430665f8099d5fa2b
 +                text: "",
              });
          view.dispatch(tr);
++        // Memoca: and the rule's change ends its step too. What is typed
++        // on into the heading (or the item) it made is then undone on its
++        // own, leaving the heading: taken as one step with it, ⌘Z after
++        // "# 見出し" took the heading along with the text, and left "# ".
++        yUndo?.stopCapturing();
          return true;
+     }
+     return false;
