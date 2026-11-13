@@ -113,6 +113,34 @@ describe("a note's versions", () => {
     expect(await files(t)).toBe(0);
   });
 
+  test("past 30 days go, in the daily pass, however many there are", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup();
+      await signedIn(t);
+      // More than one page of them: the pass took 200 a day and stopped, and
+      // with more than that crossing 30 days each day, they were never all gone.
+      await t.run(async (ctx) => {
+        const userId = (await ctx.db.query("users").first())!._id;
+        for (let index = 0; index < 450; index += 1) {
+          await ctx.db.insert("noteVersions", {
+            userId,
+            noteId: `n${index}`,
+            keyEpoch: 0,
+            storageId: await ctx.storage.store(new Blob(["v"])),
+            size: 10,
+            createdAt: Date.now() - VERSION_KEEP_MS - DAY,
+          });
+        }
+      });
+      await t.mutation(internal.versions.expire, {});
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+      expect(await t.run(async (ctx) => (await ctx.db.query("noteVersions").collect()).length)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("past 30 days go, in the daily pass", async () => {
     vi.useFakeTimers();
     try {

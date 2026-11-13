@@ -101,19 +101,29 @@ async function purgeNote(
   return freed;
 }
 
+/** Rows of a folder read at once while its subtree is collected. */
+const SUBTREE_PAGE = 500;
+/** Rows collected for one transaction's purge: what is past them is left to the next. */
+const SUBTREE_MOST = 2000;
+
 /**
  * Collects a folder and everything under it, deepest last, so notes are purged
- * before the folders that contain them.
+ * before the folders that contain them. Only those not purged yet, by an
+ * index that leaves the purged out: read past them, a folder whose first
+ * 500 rows were tombstones had the notes after them never reached, and was
+ * marked purged with them still in it. `complete` says whether everything
+ * was collected; the folders are purged only once it has been.
  */
 async function collectSubtree(
   ctx: MutationCtx,
   userId: Id<"users">,
   rootFolderId: string,
-): Promise<{ folders: Doc<"folders">[]; notes: Doc<"notes">[] }> {
+): Promise<{ folders: Doc<"folders">[]; notes: Doc<"notes">[]; complete: boolean }> {
   const folders: Doc<"folders">[] = [];
   const notes: Doc<"notes">[] = [];
   const queue = [rootFolderId];
   const seen = new Set<string>([rootFolderId]);
+  let complete = true;
 
   const root = await ctx.db
     .query("folders")
@@ -121,26 +131,36 @@ async function collectSubtree(
     .unique();
   if (root && !root.purged) folders.push(root);
 
-  while (queue.length > 0 && folders.length + notes.length < 2000) {
+  while (queue.length > 0) {
+    if (folders.length + notes.length >= SUBTREE_MOST) {
+      complete = false;
+      break;
+    }
     const current = queue.shift()!;
     const children = await ctx.db
       .query("folders")
-      .withIndex("by_user_parent", (q) => q.eq("userId", userId).eq("parentId", current))
-      .take(500);
+      .withIndex("by_user_parent_purged", (q) =>
+        q.eq("userId", userId).eq("parentId", current).eq("purged", false),
+      )
+      .take(SUBTREE_PAGE);
+    if (children.length === SUBTREE_PAGE) complete = false;
     for (const child of children) {
-      if (child.purged || seen.has(child.folderId)) continue;
+      if (seen.has(child.folderId)) continue;
       seen.add(child.folderId);
       folders.push(child);
       queue.push(child.folderId);
     }
     const contained = await ctx.db
       .query("notes")
-      .withIndex("by_user_folder", (q) => q.eq("userId", userId).eq("folderId", current))
-      .take(500);
-    for (const note of contained) if (!note.purged) notes.push(note);
+      .withIndex("by_user_folder_purged", (q) =>
+        q.eq("userId", userId).eq("folderId", current).eq("purged", false),
+      )
+      .take(SUBTREE_PAGE);
+    if (contained.length === SUBTREE_PAGE) complete = false;
+    notes.push(...contained);
   }
 
-  return { folders, notes };
+  return { folders, notes, complete };
 }
 
 /**
@@ -188,7 +208,7 @@ async function purgeTargets(
     subtrees.push(subtree);
   }
 
-  for (const { folders, notes } of subtrees) {
+  for (const { folders, notes, complete } of subtrees) {
     for (const note of notes) {
       if (budget <= 0) {
         more = true;
@@ -197,6 +217,9 @@ async function purgeTargets(
       freed += await purgeNote(ctx, note, seq, othersReported);
       budget -= 1;
     }
+    // Not all of it collected: the rest is found by the next round, those
+    // purged now left out of it.
+    if (!complete) more = true;
     // Folders only disappear once nothing is left inside them, so a rescheduled
     // continuation can still find the remaining notes by walking the tree.
     if (!more) pendingFolders.push(...folders);

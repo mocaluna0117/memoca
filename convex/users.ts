@@ -1,5 +1,5 @@
 import { ConvexError, v } from "convex/values";
-import { internal } from "./_generated/api";
+import { components, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, internalMutation, mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
@@ -215,16 +215,28 @@ export const signupStatus = query({
 });
 
 /**
- * Removes every trace of the signed-in person's notes.
+ * Removes every trace of the signed-in person: their sign-in (the Better
+ * Auth user, its accounts, and every device's session) at once, and their
+ * notes, files and settings in scheduled batches, a full account holding
+ * far more rows than one transaction may touch.
  *
- * Runs in scheduled batches because a full account can hold far more rows than
- * one transaction may touch. The Better Auth account itself is deleted from the
- * client afterwards, through the normal auth route.
+ * The sign-in went first nowhere before: the client was to delete it after,
+ * and never did. Its name, address, picture and Google's tokens stayed, and
+ * so did every other device's session; signed in again with the same
+ * Google account, it was the same sign-in, and other devices waited on an
+ * account that was gone.
+ *
+ * Once asked, the account is no longer one to be signed in as: its row is
+ * taken from its sign-in at once, so a second request (another device, a
+ * double press) is refused rather than counted out again, and no device
+ * writes into what is being purged.
  */
 export const deleteAccount = mutation({
   args: {},
   handler: async (ctx) => {
     const user = await requireUser(ctx);
+    const authId = user.authId;
+    await ctx.db.patch(user._id, { authId: `deleted:${authId}` });
     const config = await ctx.db
       .query("appConfig")
       .withIndex("by_key", (q) => q.eq("key", "global"))
@@ -232,6 +244,15 @@ export const deleteAccount = mutation({
     if (config) {
       await ctx.db.patch(config._id, { userCount: Math.max(0, config.userCount - 1) });
     }
+    for (const model of ["session", "account"] as const) {
+      await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
+        input: { model, where: [{ field: "userId", value: authId }] },
+        paginationOpts: { numItems: 100, cursor: null },
+      });
+    }
+    await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
+      input: { model: "user", where: [{ field: "_id", value: authId }] },
+    });
     await ctx.scheduler.runAfter(0, internal.users.purgeAccount, { userId: user._id });
     return { status: "scheduled" as const };
   },

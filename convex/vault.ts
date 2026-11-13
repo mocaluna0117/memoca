@@ -717,14 +717,16 @@ export const pendingLockCascade = query({
     const user = await requireUser(ctx);
     const pending: string[] = [];
     for (const folderId of folderIds.slice(0, 64)) {
+      // Those not purged only: read past the purged (tombstones), a folder
+      // with many of them had the notes after them never found.
       const notes = await ctx.db
         .query("notes")
-        .withIndex("by_user_folder", (q) =>
-          q.eq("userId", user._id).eq("folderId", folderId),
+        .withIndex("by_user_folder_purged", (q) =>
+          q.eq("userId", user._id).eq("folderId", folderId).eq("purged", false),
         )
         .take(500);
       for (const note of notes) {
-        if (!note.locked && !note.purged && note.deletedAt === null) pending.push(note.noteId);
+        if (!note.locked && note.deletedAt === null) pending.push(note.noteId);
       }
     }
     return pending;

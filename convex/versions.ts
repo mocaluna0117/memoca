@@ -1,4 +1,5 @@
 import { v } from "convex/values";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, internalMutation, mutation, query } from "./_generated/server";
 import { uploadedSize } from "./lib/files";
@@ -112,15 +113,24 @@ export const get = query({
   },
 });
 
-/** Lets go of versions past 30 days, a page at a time: for notes no longer edited, whose saves would. */
+/** Versions let go of per transaction by {@link expire}. */
+const EXPIRE_PAGE = 200;
+
+/**
+ * Lets go of versions past 30 days, a page at a time, to the last of them:
+ * for notes no longer edited, whose saves would. One page a day, for the
+ * whole service, was all it did: with more than that crossing 30 days each
+ * day, they were never all gone, and stayed listed and stored.
+ */
 export const expire = internalMutation({
   args: {},
   handler: async (ctx) => {
     const old = await ctx.db
       .query("noteVersions")
       .withIndex("by_created", (q) => q.lt("createdAt", Date.now() - VERSION_KEEP_MS))
-      .take(200);
+      .take(EXPIRE_PAGE);
     for (const version of old) await drop(ctx, version);
+    if (old.length === EXPIRE_PAGE) await ctx.scheduler.runAfter(0, internal.versions.expire, {});
     return { dropped: old.length };
   },
 });

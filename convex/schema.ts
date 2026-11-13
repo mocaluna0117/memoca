@@ -136,6 +136,8 @@ export default defineSchema({
     .index("by_user_seq", ["userId", "seq"])
     .index("by_user_folder", ["userId", "folderId"])
     .index("by_user_parent", ["userId", "parentId"])
+    // The live ones under a folder, past those purged (kept as tombstones).
+    .index("by_user_parent_purged", ["userId", "parentId", "purged"])
     .index("by_user_system", ["userId", "system"])
     .index("by_purge", ["purged", "deletedAt"])
     .index("by_purged_at", ["purged", "purgedAt"]),
@@ -196,6 +198,10 @@ export default defineSchema({
     .index("by_user_seq", ["userId", "seq"])
     .index("by_user_note", ["userId", "noteId"])
     .index("by_user_folder", ["userId", "folderId"])
+    // The live ones in a folder, past those purged (kept as tombstones for
+    // 90 days): read by the first rows alone, a folder with many of them
+    // had its live notes past the first 500 never reached.
+    .index("by_user_folder_purged", ["userId", "folderId", "purged"])
     .index("by_user_updated", ["userId", "updatedAt"])
     .index("by_purge", ["purged", "deletedAt"])
     .index("by_purged_at", ["purged", "purgedAt"]),

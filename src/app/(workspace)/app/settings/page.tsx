@@ -344,7 +344,9 @@ export default function SettingsPage() {
                 await window.memocaShell?.reminders?.turnOff().catch(() => undefined);
                 await deleteAccount();
                 await resetLocalData();
-                await signOut();
+                // The sign-in is gone with the account (its session among it):
+                // signing out has nothing left to end, and may say so.
+                await signOut().catch(() => undefined);
                 router.push("/");
               }}
             >

@@ -274,3 +274,53 @@ describe("trash past its time", () => {
     }
   });
 });
+
+describe("emptying a folder with many notes", () => {
+  test("reaches the notes past the first 500 rows, gone ones among them, before the folder goes", async () => {
+    vi.useFakeTimers();
+    try {
+      const t = setup();
+      const as = await signedIn(t);
+      await as.mutation(api.sync.push, {
+        deviceId: "device-1",
+        ops: [
+          folderOp("a", "f1"),
+          { ...noteOp("b", "live"), create: { noteKind: "note", folderId: "f1", sortKey: "m" } },
+        ],
+      });
+      // Notes long gone from the folder (purged, kept as tombstones), filed
+      // before the live one in the folder's index: every row of them was
+      // read, and the live one, past the first 500, never was.
+      await t.run(async (ctx) => {
+        const live = (await ctx.db.query("notes").first())!;
+        const { _id, _creationTime: made, ...row } = live;
+        void made;
+        await ctx.db.delete(_id);
+        for (let index = 0; index < 520; index += 1) {
+          await ctx.db.insert("notes", { ...row, noteId: `gone-${index}`, purged: true, purgedAt: Date.now() });
+        }
+        await ctx.db.insert("notes", row);
+      });
+      await as.mutation(api.sync.push, {
+        deviceId: "device-1",
+        ops: [{ kind: "folder", opId: "tr", folderId: "f1", trash: { deletedAt: 3000, ts: stamp(3000) } }],
+      });
+
+      await as.mutation(api.trash.purge, { folderIds: ["f1"], noteIds: [], trashedAt: { f1: stamp(3000) } });
+      await t.finishAllScheduledFunctions(vi.runAllTimers);
+
+      const live = await t.run(async (ctx) =>
+        ctx.db
+          .query("notes")
+          .filter((q) => q.eq(q.field("noteId"), "live"))
+          .unique(),
+      );
+      const folder = await t.run(async (ctx) => ctx.db.query("folders").first());
+      expect(folder!.purged).toBe(true);
+      // Before: still a note, in a folder gone for good, back in every list.
+      expect(live!.purged).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
