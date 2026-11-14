@@ -37,6 +37,17 @@ type Progress = (done: number, total: number) => void;
 /** A folder unlock not yet finished, resumed on this device only. */
 type UnlockJob = { folderId: string; noteIds: string[] };
 
+/**
+ * The folder unlocks this device left part way, one for each folder. Kept
+ * as one once (an older version's): a second folder's unlock then took its
+ * place, and the first folder's notes left locked were never finished.
+ */
+async function readJobs(): Promise<UnlockJob[]> {
+  const kept = await getMeta<UnlockJob | UnlockJob[] | null>(META.unlockJob, null);
+  if (!kept) return [];
+  return Array.isArray(kept) ? kept : [kept];
+}
+
 class CascadeAbort extends Error {
   constructor(readonly reason: "vaultClosed" | "offline") {
     super(reason);
@@ -233,7 +244,7 @@ export async function unlockFolder(
       const flag = await client.mutation(api.vault.setFolderLock, { folderId, locked: false, ts });
       if (flag.status !== "ok") return { total: 0, done: 0, pending: [], failed: flag.reason };
       await database.folders.update(folderId, { locked: false, ts: { ...folder.ts, lock: ts } });
-      await setMeta(META.unlockJob, { folderId, noteIds: plan.unlock } satisfies UnlockJob);
+      await saveJob(folderId, plan.unlock);
 
       onProgress?.(0, plan.unlock.length);
       const run = await runNotes(client, engine, plan.unlock, "unlock", onProgress);
@@ -246,36 +257,48 @@ export async function unlockFolder(
   return result ?? { total: 0, done: 0, pending: [], failed: "busy" };
 }
 
+/** What is left of a folder's unlock, beside the other folders'; none, the folder's taken out. */
 async function saveJob(folderId: string, remaining: string[]) {
-  if (remaining.length === 0) await db().meta.delete(META.unlockJob);
-  else await setMeta(META.unlockJob, { folderId, noteIds: remaining } satisfies UnlockJob);
+  const others = (await readJobs()).filter((job) => job.folderId !== folderId);
+  const jobs = remaining.length > 0 ? [...others, { folderId, noteIds: remaining }] : others;
+  if (jobs.length === 0) await db().meta.delete(META.unlockJob);
+  else await setMeta(META.unlockJob, jobs satisfies UnlockJob[]);
 }
 
-/** Finishes a folder unlock this device left part way. */
+/** Finishes the folder unlocks this device left part way: all of them, as one result. */
 export async function resumeUnlockJob(
   client: ConvexReactClient,
   engine: SyncEngine | null,
 ): Promise<CascadeResult | null> {
-  const job = await getMeta<UnlockJob | null>(META.unlockJob, null);
-  if (!job || !vault.isUnlocked) return null;
+  const jobs = await readJobs();
+  if (jobs.length === 0 || !vault.isUnlocked) return null;
   return exclusive(async () => {
     const release = vault.hold();
     try {
       const database = db();
       const folders = await database.folders.toArray();
       const coverage = lockCoverage(folders);
-      // Locked again meanwhile, here or elsewhere: nothing left to undo.
-      if (coverage.has(job.folderId)) {
-        await database.meta.delete(META.unlockJob);
-        return null;
+      const total: CascadeResult = { total: 0, done: 0, pending: [] };
+      let tried = false;
+      for (const job of jobs) {
+        // Locked again meanwhile, here or elsewhere: nothing left to undo.
+        if (coverage.has(job.folderId)) {
+          await saveJob(job.folderId, []);
+          continue;
+        }
+        const notes = await Promise.all(job.noteIds.map((id) => database.notes.get(id)));
+        const still = notes
+          .filter((note) => note && note.locked && !note.purged && !needsCover(note.folderId, coverage))
+          .map((note) => note!.noteId);
+        tried = true;
+        const run = await runNotes(client, engine, still, "unlock");
+        await saveJob(job.folderId, run.pending.map((p) => p.noteId));
+        total.total += still.length;
+        total.done += run.done;
+        total.pending.push(...run.pending);
+        if (run.aborted) total.aborted = run.aborted;
       }
-      const notes = await Promise.all(job.noteIds.map((id) => database.notes.get(id)));
-      const still = notes
-        .filter((note) => note && note.locked && !note.purged && !needsCover(note.folderId, coverage))
-        .map((note) => note!.noteId);
-      const run = await runNotes(client, engine, still, "unlock");
-      await saveJob(job.folderId, run.pending.map((p) => p.noteId));
-      return { total: still.length, ...run };
+      return tried ? total : null;
     } finally {
       release();
     }

@@ -1,5 +1,6 @@
 "use client";
 
+import { ASK_MS, FILE_MS, timeoutSignal, within } from "@/lib/time-limit";
 import type { ConvexReactClient } from "convex/react";
 import * as Y from "yjs";
 import { api } from "@convex/_generated/api";
@@ -97,7 +98,9 @@ async function lockOnce(
     // (its files are sealed and sent first), and what is stored after this
     // point is not in that version: see the clearing below.
     const stored = await database.updates.where("noteId").equals(noteId).primaryKeys();
-    const { state: merged, used } = await withDetachedDoc(noteId, (doc) => withSwaps(doc, copies.swaps));
+    const { state: merged, used } = await withDetachedDoc(noteId, (doc) =>
+      withSwaps(doc, copies.swaps),
+    );
     const snapshot = await seal(key, merged, ctx.yjsSnapshot(noteId, epoch));
     // A note with no title (a quick note, say) is named by its first line,
     // which cannot be read once it is locked: that line becomes its title,
@@ -182,10 +185,7 @@ async function lockOnce(
 }
 
 /** The exact inverse of {@link lockNote}. */
-export async function unlockNote(
-  client: ConvexReactClient,
-  noteId: string,
-): Promise<LockOutcome> {
+export async function unlockNote(client: ConvexReactClient, noteId: string): Promise<LockOutcome> {
   // Not while the editor or the repair pass is pointing the note at copies
   // only the vault can show.
   return withRelockLock(
@@ -247,14 +247,18 @@ async function unlockOnce(client: ConvexReactClient, noteId: string): Promise<Lo
   for (const attachment of attachments) {
     if (attachment.status !== "committed" || !attachment.locked) continue;
     if (!attachment.wrappedKey || !attachment.contentIv) continue;
-    const urls = await client.query(api.attachments.urls, {
-      attachmentIds: [attachment.attachmentId],
-    });
+    const urls = await within(
+      client.query(api.attachments.urls, { attachmentIds: [attachment.attachmentId] }),
+      ASK_MS,
+      "attachment address",
+    );
     const url = urls[attachment.attachmentId];
     if (!url) continue;
 
     const attKey = await vault.attachmentKey(attachment.attachmentId, attachment.wrappedKey);
-    const cipher = new Uint8Array(await (await fetch(url)).arrayBuffer());
+    const cipher = new Uint8Array(
+      await (await fetch(url, { signal: timeoutSignal(FILE_MS) })).arrayBuffer(),
+    );
     const plain = await open(
       attKey,
       cipher,
@@ -384,13 +388,15 @@ export async function sealAttachments(
 ): Promise<Record<string, unknown>[]> {
   const swaps: Record<string, unknown>[] = [];
   for (const attachment of attachments) {
-    const urls = await client.query(api.attachments.urls, {
-      attachmentIds: [attachment.attachmentId],
-    });
+    const urls = await within(
+      client.query(api.attachments.urls, { attachmentIds: [attachment.attachmentId] }),
+      ASK_MS,
+      "attachment address",
+    );
     const url = urls[attachment.attachmentId];
     if (!url) continue;
     // Not kept by the browser: the plaintext is about to be deleted.
-    const response = await fetch(url, { cache: "no-store" });
+    const response = await fetch(url, { cache: "no-store", signal: timeoutSignal(FILE_MS) });
     // Its storage gone: left out, as one with no address is.
     if (response.status === 404) continue;
     // Any other answer that is not the file: the lock stops here. Read on,

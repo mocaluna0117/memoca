@@ -63,6 +63,8 @@ export function ChangePasswordDialog({
   }
 
   const save = async () => {
+    // One at a time: Enter again while the key is worked out is not another.
+    if (saving) return;
     if (current.length === 0) {
       setError("いまのパスワードを入力してください。");
       return;
@@ -242,7 +244,7 @@ export function ResetPasswordDialog({
   useEffect(() => drop, []);
 
   const save = async () => {
-    if (!raw.current) return;
+    if (saving || !raw.current) return;
     if (password.length < MIN_PASSWORD) {
       setError(`新しいパスワードは ${MIN_PASSWORD} 文字以上にしてください。`);
       return;

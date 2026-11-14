@@ -221,7 +221,8 @@ async function exportHeld(options: ExportOptions): Promise<ExportResult> {
         try {
           const blob = await loadAttachmentBlob(options.client, id);
           const path = `${FILES}/${unique(takenFiles, safeName(`${id.slice(-8)}-${props.name || "file"}`, id))}`;
-          entries.push({ path, data: new Uint8Array(await blob.arrayBuffer()) });
+          // As it is: not read into memory here (see ZipEntry).
+          entries.push({ path, data: blob });
           filePaths.set(id, path);
         } catch {
           filePaths.set(id, null);
@@ -246,7 +247,7 @@ async function exportHeld(options: ExportOptions): Promise<ExportResult> {
   const day = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const root = `Memoca-${day}`;
   return {
-    archive: zip(entries.map((entry) => ({ ...entry, path: `${root}/${entry.path}` }))),
+    archive: await zip(entries.map((entry) => ({ ...entry, path: `${root}/${entry.path}` }))),
     name: `${root}.zip`,
     notes: wanted.length,
     files: [...filePaths.values()].filter(Boolean).length,

@@ -1,5 +1,6 @@
 "use client";
 
+import { ASK_MS, FILE_MS, timeoutSignal, within } from "@/lib/time-limit";
 import type { ConvexReactClient } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -29,11 +30,18 @@ export async function uploadBytes(
   bytes: Uint8Array,
   contentType: string,
 ): Promise<Id<"_storage">> {
-  const uploadUrl = await client.mutation(api.notes.snapshotUploadUrl, {});
+  // Given a time each (see time-limit): a lock waiting on one that never
+  // answered held the vault open for good.
+  const uploadUrl = await within(
+    client.mutation(api.notes.snapshotUploadUrl, {}),
+    ASK_MS,
+    "upload address",
+  );
   const response = await fetch(uploadUrl, {
     method: "POST",
     headers: { "Content-Type": contentType },
     body: new Blob([toArrayBuffer(bytes)]),
+    signal: timeoutSignal(FILE_MS),
   });
   if (!response.ok) throw new Error(`upload refused: ${response.status}`);
   const { storageId } = (await response.json()) as { storageId?: unknown };

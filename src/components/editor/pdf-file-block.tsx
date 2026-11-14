@@ -160,6 +160,9 @@ function PdfCard({ attachmentId, file }: { attachmentId: string; file: FileProps
           if (!wasCancelled(error)) setLoaded({ kind: "none" });
         },
       );
+      // Drawn (or not), what pdf.js kept to draw it (its fonts, its images)
+      // let go: the canvas holds the picture.
+      void task.promise.catch(() => {}).finally(() => page.cleanup());
     });
     return () => {
       cancelled = true;
@@ -363,7 +366,9 @@ function PdfPage({
       if (cancelled) return;
       setAspect(aspectOf(page));
       task = drawPage(page, target, width);
-      task.promise.catch(() => {});
+      // Drawn, or called off as it went out of sight: what pdf.js kept to
+      // draw it let go. A long PDF read to its end kept every page's.
+      void task.promise.catch(() => {}).finally(() => page.cleanup());
     });
     return () => {
       cancelled = true;

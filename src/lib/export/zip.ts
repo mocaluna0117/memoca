@@ -6,7 +6,43 @@
  * current unzipper reads.
  */
 
-export type ZipEntry = { path: string; data: Uint8Array; modified?: Date };
+/**
+ * A file to put in. A Blob (an image, a video) is put in as it is, read only
+ * to be checked (its CRC), a piece at a time: read whole, an export of every
+ * note held each file twice in memory, as bytes and again in the archive.
+ */
+export type ZipEntry = { path: string; data: Uint8Array | Blob; modified?: Date };
+
+/** How much of a file is read at a time for its CRC, with a pause between for the page. */
+const PIECE = 4 * 1024 * 1024;
+
+/** A CRC carried on over more bytes: start with 0xffffffff, finish with ^ 0xffffffff >>> 0. */
+function crcOn(crc: number, data: Uint8Array): number {
+  for (let i = 0; i < data.length; i += 1) crc = CRC_TABLE[(crc ^ data[i]!) & 0xff]! ^ (crc >>> 8);
+  return crc;
+}
+
+/** A file's CRC, a piece at a time, the page given a turn between pieces. */
+async function crcOf(data: Uint8Array | Blob): Promise<number> {
+  let crc = 0xffffffff;
+  if (isBytes(data)) {
+    for (let at = 0; at < data.length; at += PIECE) {
+      crc = crcOn(crc, data.subarray(at, at + PIECE));
+      if (at + PIECE < data.length) await turn();
+    }
+  } else {
+    for (let at = 0; at < data.size; at += PIECE) {
+      crc = crcOn(crc, new Uint8Array(await data.slice(at, at + PIECE).arrayBuffer()));
+      await turn();
+    }
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+const turn = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+/** Bytes, not a Blob: told apart without instanceof, which another realm's bytes fail (a test's). */
+const isBytes = (data: Uint8Array | Blob): data is Uint8Array => ArrayBuffer.isView(data);
+const sizeOf = (data: Uint8Array | Blob) => (isBytes(data) ? data.length : data.size);
 
 const CRC_TABLE = (() => {
   const table = new Uint32Array(256);
@@ -19,9 +55,7 @@ const CRC_TABLE = (() => {
 })();
 
 export function crc32(data: Uint8Array): number {
-  let crc = 0xffffffff;
-  for (let i = 0; i < data.length; i += 1) crc = CRC_TABLE[(crc ^ data[i]!) & 0xff]! ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
+  return (crcOn(0xffffffff, data) ^ 0xffffffff) >>> 0;
 }
 
 /** A date and time as MS-DOS keeps them, which a ZIP's entries carry. */
@@ -52,7 +86,7 @@ function unicodePath(name: Uint8Array): Uint8Array {
 }
 
 /** The archive of these files, in this order. */
-export function zip(entries: ZipEntry[]): Blob {
+export async function zip(entries: ZipEntry[]): Promise<Blob> {
   const encoder = new TextEncoder();
   const parts: BlobPart[] = [];
   const central: Uint8Array[] = [];
@@ -61,9 +95,9 @@ export function zip(entries: ZipEntry[]): Blob {
   for (const entry of entries) {
     const name = encoder.encode(entry.path);
     const extra = unicodePath(name);
-    const crc = crc32(entry.data);
+    const crc = await crcOf(entry.data);
     const { time, date } = dosTime(entry.modified ?? new Date());
-    const size = entry.data.length;
+    const size = sizeOf(entry.data);
 
     const local = new DataView(new ArrayBuffer(30));
     local.setUint32(0, 0x04034b50, true);
@@ -81,7 +115,7 @@ export function zip(entries: ZipEntry[]): Blob {
       local.buffer,
       name,
       extra as Uint8Array<ArrayBuffer>,
-      entry.data as Uint8Array<ArrayBuffer>,
+      entry.data as Uint8Array<ArrayBuffer> | Blob,
     );
 
     const header = new DataView(new ArrayBuffer(46));

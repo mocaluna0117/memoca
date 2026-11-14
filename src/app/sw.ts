@@ -16,6 +16,7 @@ import {
 import { PAGES_CACHE, SHELL_CACHE } from "@/lib/db/caches";
 import { MEDIA_CACHE } from "@/lib/media/media-cache";
 import webpAsset from "@/lib/media/webp-asset.json";
+import argonAsset from "@/lib/crypto/argon-asset.json";
 import { version as pdfjsVersion } from "pdfjs-dist/package.json";
 import { SHARED } from "@/lib/quick/text";
 
@@ -168,6 +169,23 @@ const serwist: Serwist = new Serwist({
       handler: {
         handle: async ({ request, event }) => {
           const cache = await caches.open("memoca-pdfjs");
+          const cached = await cache.match(request);
+          if (cached) return cached;
+          const response = await fetch(request);
+          if (response.ok) event.waitUntil(cache.put(request, response.clone()));
+          return response;
+        },
+      },
+    },
+    {
+      // The vault's Argon2id worker: cached on first use (the vault opened
+      // once with the network), under a path that changes with each version.
+      // Not had, the page works the password out on its own thread.
+      matcher: ({ url }) =>
+        url.origin === self.location.origin && url.pathname.startsWith("/argon/"),
+      handler: {
+        handle: async ({ request, event }) => {
+          const cache = await caches.open("memoca-argon");
           const cached = await cache.match(request);
           if (cached) return cached;
           const response = await fetch(request);
@@ -356,6 +374,19 @@ self.addEventListener("activate", (event) => {
     (async () => {
       const cache = await caches.open("memoca-webp");
       const current = `/webp/${webpAsset.version}/`;
+      for (const request of await cache.keys()) {
+        if (!new URL(request.url).pathname.startsWith(current)) await cache.delete(request);
+      }
+    })(),
+  );
+});
+
+// The same for an Argon2id worker of an earlier version.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    (async () => {
+      const cache = await caches.open("memoca-argon");
+      const current = `/argon/${argonAsset.version}/`;
       for (const request of await cache.keys()) {
         if (!new URL(request.url).pathname.startsWith(current)) await cache.delete(request);
       }

@@ -32,6 +32,8 @@ import { extractText, firstLine } from "./ydoc";
 import { linkTargets } from "@/lib/note-links";
 
 /** Bytes of operations to send in one push. The server accepts up to 4 MiB. */
+/** How long a note's changes from elsewhere pause before its text (search, preview, links) is taken again. */
+const TEXT_AFTER_MS = 2_000;
 const PUSH_BYTE_BUDGET = 1_000_000;
 const PUSH_OP_LIMIT = 50;
 /** Poll cadence while another device is actively editing. */
@@ -297,6 +299,8 @@ export class SyncEngine {
     this.unwatchAlerts?.();
     this.unwatchAlerts = null;
     this.rebaseWaits.clear();
+    for (const due of this.textDue.values()) clearTimeout(due);
+    this.textDue.clear();
     this.claim += 1;
     this.releaseLock?.();
     this.releaseLock = null;
@@ -603,10 +607,12 @@ export class SyncEngine {
     // A note changed on another device, its whole body here: its text and
     // links taken from it again, for search and for the notes it links to.
     // Until now they stayed as they were until the note was edited here.
+    // A moment after the last of them: another device typing sends a batch
+    // every second or so, and each had the whole note built again here, in
+    // every window, for text nobody reads until the typing stops.
     for (const noteId of new Set(incoming.map((update) => update.noteId))) {
       if (fetching.has(noteId)) continue;
-      const body = await db().bodies.get(noteId);
-      if (body) await this.refreshText(noteId, body.throughSeq, body.keyEpoch).catch(() => {});
+      this.textSoon(noteId);
     }
     if (needBodies.length > 0) {
       // A failure here is recoverable: the notes stay marked as behind and the
@@ -802,6 +808,25 @@ export class SyncEngine {
     // been: only now, with how far the local copy reaches recorded, as until
     // then it counts as behind.
     await migrateOpenDoc(body.noteId);
+  }
+
+  /** Notes whose text is to be taken again, and when (see textSoon). */
+  private textDue = new Map<string, ReturnType<typeof setTimeout>>();
+
+  /** The note's text taken again once its changes from elsewhere pause. */
+  private textSoon(noteId: string): void {
+    clearTimeout(this.textDue.get(noteId));
+    this.textDue.set(
+      noteId,
+      setTimeout(() => {
+        this.textDue.delete(noteId);
+        if (this.stopped) return;
+        void (async () => {
+          const body = await db().bodies.get(noteId);
+          if (body) await this.refreshText(noteId, body.throughSeq, body.keyEpoch);
+        })().catch(() => {});
+      }, TEXT_AFTER_MS),
+    );
   }
 
   /** Recomputes the searchable text and preview after the body changed. */

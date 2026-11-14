@@ -1,7 +1,7 @@
 import "fake-indexeddb/auto";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { prepareVault, vault } from "@/lib/crypto/vault";
-import { db, getMeta, resetLocalData } from "@/lib/db";
+import { db, getMeta, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
 import { createFolder, createNote } from "@/lib/sync/mutations";
 import { lockFolder, lockUncovered, resumeUnlockJob, unlockFolder } from "@/lib/vault/cascade";
@@ -196,14 +196,52 @@ describe("taking a folder's lock off", () => {
     server.handlers["vault:unlockNote"] = () => ({ status: "rejected", reason: "serverBusy" });
     const partial = await unlockFolder(server.client, null, work);
     expect(partial.pending).toHaveLength(1);
-    expect(await getMeta<{ noteIds: string[] }>(META.unlockJob, { noteIds: [] })).toMatchObject({
-      noteIds: [note],
-    });
+    expect(await getMeta(META.unlockJob, [])).toEqual([{ folderId: work, noteIds: [note] }]);
 
     server.handlers["vault:unlockNote"] = () => ({ status: "ok" });
     const resumed = await resumeUnlockJob(server.client, null);
     expect(resumed).toMatchObject({ done: 1, pending: [] });
     expect((await db().notes.get(note))?.locked).toBe(false);
+    expect(await getMeta(META.unlockJob, null)).toBeNull();
+  });
+});
+
+describe("two folders' unlocks left part way", () => {
+  test("both are remembered and both resumed: the second does not take the first's place", async () => {
+    const server = acceptingServer();
+    const work = await createFolder({ parentId: null, name: "仕事" });
+    const home = await createFolder({ parentId: null, name: "家" });
+    const a = await createNote({ folderId: work, title: "A" });
+    const b = await createNote({ folderId: home, title: "B" });
+    await lockFolder(server.client, null, work);
+    await lockFolder(server.client, null, home);
+
+    server.handlers["vault:unlockNote"] = () => ({ status: "rejected", reason: "serverBusy" });
+    await unlockFolder(server.client, null, work);
+    await unlockFolder(server.client, null, home);
+    expect(await getMeta(META.unlockJob, [])).toEqual([
+      { folderId: work, noteIds: [a] },
+      { folderId: home, noteIds: [b] },
+    ]);
+
+    server.handlers["vault:unlockNote"] = () => ({ status: "ok" });
+    const resumed = await resumeUnlockJob(server.client, null);
+    expect(resumed).toMatchObject({ total: 2, done: 2, pending: [] });
+    expect((await db().notes.get(a))?.locked).toBe(false);
+    expect((await db().notes.get(b))?.locked).toBe(false);
+    expect(await getMeta(META.unlockJob, null)).toBeNull();
+  });
+
+  test("one kept as an older version kept it (a single one) is still resumed", async () => {
+    const server = acceptingServer();
+    const work = await createFolder({ parentId: null, name: "仕事" });
+    const a = await createNote({ folderId: work, title: "A" });
+    await lockFolder(server.client, null, work);
+    server.handlers["vault:unlockNote"] = () => ({ status: "rejected", reason: "serverBusy" });
+    await unlockFolder(server.client, null, work);
+    await setMeta(META.unlockJob, { folderId: work, noteIds: [a] });
+    server.handlers["vault:unlockNote"] = () => ({ status: "ok" });
+    expect(await resumeUnlockJob(server.client, null)).toMatchObject({ done: 1, pending: [] });
     expect(await getMeta(META.unlockJob, null)).toBeNull();
   });
 });

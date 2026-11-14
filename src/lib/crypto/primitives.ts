@@ -1,4 +1,5 @@
 import { argon2id } from "hash-wasm";
+import argonAsset from "@/lib/crypto/argon-asset.json";
 import { toArrayBuffer } from "@/lib/bytes";
 
 export const IV_BYTES = 12;
@@ -97,20 +98,62 @@ export type ArgonParams = { m: number; t: number; p: number };
  */
 export const DEFAULT_ARGON: ArgonParams = { m: 65536, t: 3, p: 1 };
 
+const ARGON_WORKER = `/argon/${argonAsset.version}/argon-worker.js`;
+
+/**
+ * Argon2id in a worker of its own, let go once it answers (its 64 MB with
+ * it). Null where it cannot be had: no workers (tests), its script not
+ * fetched (offline before it was ever kept), or it failing to start.
+ */
+async function argonInWorker(password: string, salt: Uint8Array, params: ArgonParams): Promise<Uint8Array | null> {
+  if (typeof Worker === "undefined") return null;
+  let worker: Worker;
+  try {
+    worker = new Worker(ARGON_WORKER);
+  } catch {
+    return null;
+  }
+  try {
+    return await new Promise<Uint8Array | null>((resolve) => {
+      worker.onmessage = (event: MessageEvent<{ raw?: Uint8Array; error?: string }>) =>
+        resolve(event.data.raw ?? null);
+      worker.onerror = (event) => {
+        event.preventDefault();
+        resolve(null);
+      };
+      worker.postMessage({
+        id: 1,
+        password,
+        salt,
+        m: params.m,
+        t: params.t,
+        p: params.p,
+        length: KEY_BYTES,
+      });
+    });
+  } finally {
+    worker.terminate();
+  }
+}
+
 export async function argonKey(
   password: string,
   salt: Uint8Array,
   params: ArgonParams,
 ): Promise<CryptoKey> {
-  const raw = await argon2id({
-    password,
-    salt,
-    parallelism: params.p,
-    iterations: params.t,
-    memorySize: params.m,
-    hashLength: KEY_BYTES,
-    outputType: "binary",
-  });
+  // Off the page's thread where it can be: on it, the page froze for the
+  // second or two it takes, the spinner said to be working with it.
+  const raw =
+    (await argonInWorker(password, salt, params)) ??
+    (await argon2id({
+      password,
+      salt,
+      parallelism: params.p,
+      iterations: params.t,
+      memorySize: params.m,
+      hashLength: KEY_BYTES,
+      outputType: "binary",
+    }));
   const key = await importAesKey(raw);
   wipe(raw);
   return key;
