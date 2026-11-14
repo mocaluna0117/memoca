@@ -6,6 +6,7 @@ import { useTheme } from "next-themes";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { useClientValue, useMediaQuery } from "@/lib/hooks/use-client-value";
 import { SIDEBAR_MODES, type SidebarMode, useSidebarMode } from "@/lib/hooks/use-sidebar-mode";
 import { api } from "@convex/_generated/api";
@@ -338,11 +339,23 @@ export default function SettingsPage() {
             <AlertDialogAction
               disabled={deleting}
               onClick={async () => {
+                // Not sent with no network: taken by the server only once it
+                // was back, with the page waiting until then.
+                if (!navigator.onLine) {
+                  toast.error("オフラインのため、いまはアカウントを削除できません。インターネットに接続してからお試しください。");
+                  return;
+                }
                 setDeleting(true);
                 // This browser's push subscription dropped too: not handed to whoever signs in next.
                 await turnOff(convex).catch(() => undefined);
                 await window.memocaShell?.reminders?.turnOff().catch(() => undefined);
-                await deleteAccount();
+                try {
+                  await deleteAccount();
+                } catch {
+                  setDeleting(false);
+                  toast.error("アカウントを削除できませんでした。少し待ってから、もう一度お試しください。");
+                  return;
+                }
                 await resetLocalData();
                 // The sign-in is gone with the account (its session among it):
                 // signing out has nothing left to end, and may say so.

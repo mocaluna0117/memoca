@@ -563,7 +563,9 @@ const TodoEditor = memo(function TodoEditor({
           const view = plain.prosemirrorView as unknown as { domObserver?: { flush?: () => void } } | undefined;
           view?.domObserver?.flush?.();
         }
-        if (event.key === "Escape" && onEscape) {
+        // Not one a layer over it (the due picker) took: Radix closes that in
+        // the page's capture phase, before this, and marks the key used.
+        if (event.key === "Escape" && onEscape && !native.defaultPrevented) {
           event.preventDefault();
           event.stopPropagation();
           onEscape();

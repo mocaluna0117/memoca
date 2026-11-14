@@ -39,6 +39,7 @@ import { listKeys } from "@/components/editor/list-keys";
 import { InlineBlockBar } from "@/components/editor/mobile-block-toolbar";
 import { pasteLink } from "@/components/editor/paste-link";
 import { DISABLED_EXTENSIONS, quoteShortcuts } from "@/components/editor/quotes";
+import { mediaKeys } from "@/components/editor/select-media";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
 import { itemsForSlash, turningLines } from "@/components/editor/slash-turn-line";
 import { withReadings } from "@/components/editor/slash-readings";
@@ -160,6 +161,8 @@ export const QuickEditor = memo(function QuickEditor({
           stuckToggles,
           // ↓ out of a code block or a table the tab ends in.
           linesBelow(),
+          // Backspace under an image selects it before it goes.
+          mediaKeys(),
           imeCommit(),
         ],
         domAttributes: {
@@ -285,6 +288,8 @@ export const QuickEditor = memo(function QuickEditor({
         } else if (
           event.key === "Escape" &&
           onEscape &&
+          // Not one a layer over it took (closed by Radix before this).
+          !native.defaultPrevented &&
           !editor.getExtension(SuggestionMenu)?.shown()
         ) {
           event.preventDefault();

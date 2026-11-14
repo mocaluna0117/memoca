@@ -24,6 +24,19 @@ import { t } from "@/lib/i18n/ja";
 import { STAND_IN_CLASS } from "@/lib/note-name";
 import { cn } from "@/lib/utils";
 
+const PURGE_FAILED = "削除できませんでした。少し待ってから、もう一度お試しください。";
+
+/**
+ * With no network, deleting for good is not sent: the server would take it
+ * only once the network was back, the button busy until then and the toast
+ * saying it was done long after, if the page was still open. Said so instead.
+ */
+function refusedOffline(): boolean {
+  if (navigator.onLine) return false;
+  toast.error("オフラインのため、いまは完全に削除できません。インターネットに接続してからお試しください。");
+  return true;
+}
+
 function TrashRow({ entry }: { entry: TrashEntry }) {
   const client = useConvex();
   const [busy, setBusy] = useState(false);
@@ -38,14 +51,20 @@ function TrashRow({ entry }: { entry: TrashEntry }) {
   };
 
   const purge = async () => {
+    if (refusedOffline()) return;
     setBusy(true);
-    await client.mutation(api.trash.purge, {
-      folderIds: entry.kind === "folder" ? [entry.id] : [],
-      noteIds: entry.kind === "note" ? [entry.id] : [],
-      trashedAt: { [entry.id]: entry.trashedAt },
-    });
-    setBusy(false);
-    toast.success("完全に削除しました");
+    try {
+      await client.mutation(api.trash.purge, {
+        folderIds: entry.kind === "folder" ? [entry.id] : [],
+        noteIds: entry.kind === "note" ? [entry.id] : [],
+        trashedAt: { [entry.id]: entry.trashedAt },
+      });
+      toast.success("完全に削除しました");
+    } catch {
+      toast.error(PURGE_FAILED);
+    } finally {
+      setBusy(false);
+    }
   };
 
   return (
@@ -90,15 +109,21 @@ export default function TrashPage() {
   const [emptying, setEmptying] = useState(false);
 
   const emptyAll = async () => {
+    if (refusedOffline()) return;
     setEmptying(true);
-    await client.mutation(api.trash.purge, {
-      folderIds: entries.filter((e) => e.kind === "folder").map((e) => e.id),
-      noteIds: entries.filter((e) => e.kind === "note").map((e) => e.id),
-      trashedAt: Object.fromEntries(entries.map((e) => [e.id, e.trashedAt])),
-    });
-    setEmptying(false);
-    setConfirming(false);
-    toast.success("ゴミ箱を空にしました");
+    try {
+      await client.mutation(api.trash.purge, {
+        folderIds: entries.filter((e) => e.kind === "folder").map((e) => e.id),
+        noteIds: entries.filter((e) => e.kind === "note").map((e) => e.id),
+        trashedAt: Object.fromEntries(entries.map((e) => [e.id, e.trashedAt])),
+      });
+      setConfirming(false);
+      toast.success("ゴミ箱を空にしました");
+    } catch {
+      toast.error(PURGE_FAILED);
+    } finally {
+      setEmptying(false);
+    }
   };
 
   return (

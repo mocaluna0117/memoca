@@ -115,6 +115,9 @@ function usePlace(selector: string | null, keyboard: number): Place {
   useEffect(() => {
     let last = "";
     const look = () => {
+      // Nothing to place out of sight: the window put away (the desktop
+      // app keeps it loaded) is not looked at four times a second.
+      if (document.visibilityState === "hidden") return;
       const target = selector ? onScreen(selector) : null;
       const box = target?.getBoundingClientRect();
       const ring = box

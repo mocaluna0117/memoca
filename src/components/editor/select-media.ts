@@ -399,6 +399,61 @@ function mediaAtPointer(view: EditorView, x: number, y: number): Found | null {
   }
 }
 
+/**
+ * Backspace at the start of a line of text under an image or a file (the
+ * last of what is shown above it): the image selected, as a click on it
+ * selects it, and the next Backspace takes it away. BlockNote takes the image
+ * away at once, with nothing on the screen to say the key would, where the
+ * line was only meant to be joined up. Null anywhere else, left to it: a
+ * line it turns into text first (a heading, a list item), one it takes out
+ * of a block it is in, an empty line (which goes, the image then selected).
+ */
+export function backspaceOntoMedia(state: EditorState, shown: Shown): Transaction | null {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const { $from } = selection;
+  if ($from.parent.type.name !== "paragraph" || $from.parentOffset !== 0) return null;
+  if ($from.parent.content.size === 0 || $from.depth !== 3) return null;
+  const line = blockAt($from);
+  if (!line || $from.index(1) === 0) return null;
+  const above = blockBefore(state.doc, line, () => true);
+  // What BlockNote would take away, the image, is the one on the screen.
+  if (!above || !isMedia(above.node) || blockBefore(state.doc, line, shown)?.pos !== above.pos) {
+    return null;
+  }
+  return state.tr.setSelection(NodeSelection.create(state.doc, above.pos + 1)).scrollIntoView();
+}
+
+/**
+ * Delete at the end of a line of text with an image or a file next (its
+ * first block inside, or the one after it): the image selected, the next
+ * Delete taking it away, for the same reason as {@link backspaceOntoMedia}.
+ * Null anywhere else, left to BlockNote; an empty line it takes away
+ * itself, the image then selected.
+ */
+export function deleteOntoMedia(state: EditorState, shown: Shown): Transaction | null {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const { $from } = selection;
+  if (!$from.parent.inlineContent || $from.parentOffset !== $from.parent.content.size) return null;
+  if ($from.parent.content.size === 0) return null;
+  const line = blockAt($from);
+  if (!line) return null;
+  const next = blockAfter(state.doc, line, () => true);
+  if (!next || !isMedia(next.node) || blockAfter(state.doc, line, shown)?.pos !== next.pos) {
+    return null;
+  }
+  return state.tr.setSelection(NodeSelection.create(state.doc, next.pos + 1)).scrollIntoView();
+}
+
+/** A transaction, if there is one, dispatched: whether there was. */
+function run(view: EditorView | undefined, make: (state: EditorState, shown: Shown) => Transaction | null) {
+  const tr = view && make(view.state, shownOn(view));
+  if (!tr) return false;
+  view.dispatch(tr);
+  return true;
+}
+
 /** Whether a selection ends (or starts) at an image, not in a line of text. */
 const endsAtMedia = (selection: Selection) =>
   selection instanceof TextSelection &&
@@ -491,4 +546,17 @@ export const selectMedia = createExtension(({ editor }) => ({
       },
     }),
   ],
+}));
+
+/**
+ * Backspace and Delete next to an image or a file: the image selected first,
+ * not taken away at once (see {@link backspaceOntoMedia}). In the quick
+ * note's editor too, which has images but not the rest of this file.
+ */
+export const mediaKeys = createExtension(({ editor }) => ({
+  key: "memocaMediaKeys",
+  keyboardShortcuts: {
+    Backspace: () => run(editor.prosemirrorView, backspaceOntoMedia),
+    Delete: () => run(editor.prosemirrorView, deleteOntoMedia),
+  },
 }));

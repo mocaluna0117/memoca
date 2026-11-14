@@ -2,13 +2,18 @@
 
 import { useLiveQuery } from "dexie-react-hooks";
 import { isHiddenNote } from "@/lib/quick/todo-id";
-import { useDeferredValue, useEffect, useMemo, useSyncExternalStore } from "react";
-import { db } from "@/lib/db";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { db, type BodyState } from "@/lib/db";
+import type { Folder, Note } from "@/lib/types";
+import { usePageShown } from "@/lib/hooks/use-page-shown";
 import { useVaultUnlocked } from "@/lib/hooks/use-decrypted";
 import { buildIndex, search, type SearchHit } from "@/lib/search/engine";
 import { isKanaQuery, isYomiOn, onYomiOn, readingsForSearch } from "@/lib/search/yomi";
 import { searchScope } from "@/lib/search/rows";
 import { openTitles, useOpenedTitles } from "@/lib/vault/titles";
+
+/** What the index is built from. */
+type SearchRows = { notes: Note[]; folders: Folder[]; bodies: BodyState[] };
 
 /**
  * Builds the search index from what this device already holds.
@@ -37,9 +42,18 @@ export function useSearch(
   const readings = useSyncExternalStore(onYomiOn, isYomiOn, () => false);
 
   // Dexie runs the query again only on writes to the tables it read: read
-  // none, it is left alone until the search is enabled.
-  const rows = useLiveQuery(async () => {
+  // none, it is left alone until the search is enabled. Nor while the page
+  // is out of sight (the search page left open in a window put away, which
+  // read every note and built the index again with each note written),
+  // once it has read them: what it found then is kept, and it catches up as
+  // it is shown again.
+  const shown = usePageShown();
+  const last = useRef<SearchRows | null>(null);
+  const [readOnce, setReadOnce] = useState(false);
+  const reads = enabled && (shown || !readOnce);
+  const rows = useLiveQuery(async (): Promise<SearchRows | null> => {
     if (!enabled) return null;
+    if (!reads) return last.current;
     const database = db();
     const [notes, folders, bodies] = await Promise.all([
       database.notes.toArray(),
@@ -47,8 +61,11 @@ export function useSearch(
       database.bodies.toArray(),
     ]);
     // The quick note's Todo is not a note to be found (lib/quick/todo).
-    return { notes: notes.filter((note) => !isHiddenNote(note.noteId)), folders, bodies };
-  }, [enabled]);
+    const found = { notes: notes.filter((note) => !isHiddenNote(note.noteId)), folders, bodies };
+    last.current = found;
+    setReadOnce(true);
+    return found;
+  }, [enabled, reads]);
 
   useEffect(() => {
     if (unlocked && rows) void openTitles(rows.notes);

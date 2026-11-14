@@ -66,6 +66,29 @@ test.describe("opening the quick note on a computer", () => {
     });
   });
 
+  test("not from ⌘K's Enter on a search that found nothing: nothing opens", async ({
+    page,
+    context,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    let opened = 0;
+    context.on("page", () => (opened += 1));
+    await page.keyboard.press("Control+k");
+    const palette = page.getByRole("dialog", { name: "検索" });
+    await palette.getByRole("combobox").fill("議事録の下書き");
+    await expect(palette.getByText("見つかりませんでした")).toBeVisible();
+    await page.keyboard.press("Enter");
+    await page.waitForTimeout(500);
+    expect(opened).toBe(0);
+    await expect(palette).toBeVisible();
+    // An action is still there by its name.
+    await palette.getByRole("combobox").fill("設定");
+    await expect(palette.getByRole("option")).toHaveText(["設定"]);
+    await page.keyboard.press("Enter");
+    await expect(page).toHaveURL(/\/app\/settings/);
+  });
+
   test("with Q; again, the window already open comes forward as it is", async ({
     page,
     context,

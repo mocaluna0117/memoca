@@ -23,6 +23,7 @@ import { useOpenQuickNote } from "@/components/notes/quick-entry";
 import { useLockActions } from "@/components/vault/use-lock-actions";
 import { useSearch } from "@/lib/hooks/use-search";
 import { lockedSearchNote } from "@/lib/search/rows";
+import { actionsFor } from "@/lib/search/palette-actions";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { createFolder, setNotePinned } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
@@ -44,6 +45,7 @@ export function CommandPalette() {
   // The index is every note on the device: built only while the palette is open.
   const { hits, locked } = useSearch(query, { enabled: open });
   const lockedNote = query.trim().length > 0 ? lockedSearchNote(locked) : null;
+  const shown = actionsFor(query);
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -108,55 +110,77 @@ export function CommandPalette() {
               </p>
             ) : null}
 
-            <CommandSeparator />
+            {shown.size > 0 ? (
+              <>
+                <CommandSeparator />
 
-            <CommandGroup heading="操作">
-              <CommandItem value="quick-note" onSelect={() => run(openQuickNote)}>
-                <Zap className="size-4 opacity-70" aria-hidden />
-                {t.nav.quick}
-              </CommandItem>
-              <CommandItem
-                value="new-note"
-                onSelect={() =>
-                  run(async () => {
-                    const noteId = await createNoteIn(selection.folderId);
-                    // Made in the pinned view: pinned, to be in it.
-                    if (noteId && selection.pinned) await setNotePinned(noteId, true);
-                    if (noteId) navigate({ noteId });
-                  })
-                }
-              >
-                <FilePlus2 className="size-4 opacity-70" aria-hidden />
-                {t.action.newNote}
-              </CommandItem>
-              <CommandItem
-                value="new-folder"
-                onSelect={() =>
-                  run(async () => {
-                    const id = await createFolder({ parentId: null, name: "新しいフォルダ" });
-                    navigate({ folderId: id, noteId: null });
-                  })
-                }
-              >
-                <FolderPlus className="size-4 opacity-70" aria-hidden />
-                {t.action.addFolder}
-              </CommandItem>
-              <CommandItem value="search" onSelect={() => run(() => router.push("/app/search"))}>
-                <Search className="size-4 opacity-70" aria-hidden />
-                {t.nav.search}
-              </CommandItem>
-              <CommandItem value="trash" onSelect={() => run(() => router.push("/app/trash"))}>
-                <Trash2 className="size-4 opacity-70" aria-hidden />
-                {t.nav.trash}
-              </CommandItem>
-              <CommandItem
-                value="settings"
-                onSelect={() => run(() => router.push("/app/settings"))}
-              >
-                <Settings className="size-4 opacity-70" aria-hidden />
-                {t.nav.settings}
-              </CommandItem>
-            </CommandGroup>
+                <CommandGroup heading="操作">
+                  {shown.has("quick-note") ? (
+                    <CommandItem value="quick-note" onSelect={() => run(openQuickNote)}>
+                      <Zap className="size-4 opacity-70" aria-hidden />
+                      {t.nav.quick}
+                    </CommandItem>
+                  ) : null}
+                  {shown.has("new-note") ? (
+                    <CommandItem
+                      value="new-note"
+                      onSelect={() =>
+                        run(async () => {
+                          const noteId = await createNoteIn(selection.folderId);
+                          // Made in the pinned view: pinned, to be in it.
+                          if (noteId && selection.pinned) await setNotePinned(noteId, true);
+                          if (noteId) navigate({ noteId });
+                        })
+                      }
+                    >
+                      <FilePlus2 className="size-4 opacity-70" aria-hidden />
+                      {t.action.newNote}
+                    </CommandItem>
+                  ) : null}
+                  {shown.has("new-folder") ? (
+                    <CommandItem
+                      value="new-folder"
+                      onSelect={() =>
+                        run(async () => {
+                          const id = await createFolder({ parentId: null, name: "新しいフォルダ" });
+                          navigate({ folderId: id, noteId: null });
+                        })
+                      }
+                    >
+                      <FolderPlus className="size-4 opacity-70" aria-hidden />
+                      {t.action.addFolder}
+                    </CommandItem>
+                  ) : null}
+                  {shown.has("search") ? (
+                    <CommandItem
+                      value="search"
+                      onSelect={() => run(() => router.push("/app/search"))}
+                    >
+                      <Search className="size-4 opacity-70" aria-hidden />
+                      {t.nav.search}
+                    </CommandItem>
+                  ) : null}
+                  {shown.has("trash") ? (
+                    <CommandItem
+                      value="trash"
+                      onSelect={() => run(() => router.push("/app/trash"))}
+                    >
+                      <Trash2 className="size-4 opacity-70" aria-hidden />
+                      {t.nav.trash}
+                    </CommandItem>
+                  ) : null}
+                  {shown.has("settings") ? (
+                    <CommandItem
+                      value="settings"
+                      onSelect={() => run(() => router.push("/app/settings"))}
+                    >
+                      <Settings className="size-4 opacity-70" aria-hidden />
+                      {t.nav.settings}
+                    </CommandItem>
+                  ) : null}
+                </CommandGroup>
+              </>
+            ) : null}
           </CommandList>
         </Command>
       </DialogContent>

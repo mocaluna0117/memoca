@@ -296,6 +296,14 @@ test.describe("the quick note's Todo", () => {
     page,
   }, testInfo) => {
     test.skip(testInfo.project.name !== "desktop", "a pointer over the items");
+    // The window's closing, counted (a page opened by the test cannot close).
+    await page.addInitScript(() => {
+      const counted = window as unknown as { closes: number };
+      counted.closes = 0;
+      window.close = () => {
+        counted.closes += 1;
+      };
+    });
     await signUp(page);
     await page.goto("/quick?window=1");
     await openTodo(page);
@@ -324,6 +332,11 @@ test.describe("the quick note's Todo", () => {
     await page.keyboard.press("Escape");
     await expect(picker).toBeHidden();
     await expect.poll(() => dueLines(page)).toEqual([`【今日】ES の提出 ${dayLabel(0)} 23:59`]);
+    // Esc closed the calendar only, not the window with it; the next one does.
+    const closes = () => page.evaluate(() => (window as unknown as { closes: number }).closes);
+    expect(await closes()).toBe(0);
+    await page.keyboard.press("Escape");
+    await expect.poll(closes).toBe(1);
   });
 
   test("on a phone, the caret's item has the calendar: a due given with a touch", async ({ page }, testInfo) => {

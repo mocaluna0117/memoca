@@ -60,7 +60,7 @@ import { paintFrame, settleRefusedBlock, showUploadPreview } from "@/components/
 import { dragHandle } from "@/components/editor/drag-handle";
 import { fromTitle, linesAbove } from "@/components/editor/line-above";
 import { linesBelow } from "@/components/editor/line-below";
-import { selectMedia } from "@/components/editor/select-media";
+import { mediaKeys, selectMedia } from "@/components/editor/select-media";
 import { imeCommit } from "@/components/editor/ime-commit";
 import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
@@ -312,6 +312,7 @@ function EditorSurface({
           stuckToggles,
           dragHandle,
           selectMedia(),
+          mediaKeys(),
           blockSelect(),
           linesAbove(),
           linesBelow(),
