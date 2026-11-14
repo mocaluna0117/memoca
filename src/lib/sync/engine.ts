@@ -823,14 +823,25 @@ export class SyncEngine {
         if (this.stopped) return;
         void (async () => {
           const body = await db().bodies.get(noteId);
-          if (body) await this.refreshText(noteId, body.throughSeq, body.keyEpoch);
+          if (body) await this.refreshText(noteId, body.throughSeq, body.keyEpoch, true);
         })().catch(() => {});
       }, TEXT_AFTER_MS),
     );
   }
 
   /** Recomputes the searchable text and preview after the body changed. */
-  async refreshText(noteId: string, throughSeq: number, keyEpoch: number): Promise<void> {
+  async refreshText(
+    noteId: string,
+    throughSeq: number,
+    keyEpoch: number,
+    /**
+     * Only the text, links and preview written, how far the body reaches
+     * left as it is by then: taken a moment after the changes came (see
+     * textSoon), a batch landing meanwhile has moved it on, and putting
+     * back the one read before made the note look behind.
+     */
+    textOnly = false,
+  ): Promise<void> {
     const database = db();
     const note = await database.notes.get(noteId);
     const locked = note?.locked === true;
@@ -846,14 +857,22 @@ export class SyncEngine {
     }
 
     if (this.stopped) return;
-    await database.bodies.put({
-      noteId,
-      throughSeq,
-      keyEpoch,
-      text: locked ? null : text,
-      links: locked ? [] : links,
-      updatedAt: Date.now(),
-    });
+    if (textOnly) {
+      await database.bodies.update(noteId, {
+        text: locked ? null : text,
+        links: locked ? [] : links,
+        updatedAt: Date.now(),
+      });
+    } else {
+      await database.bodies.put({
+        noteId,
+        throughSeq,
+        keyEpoch,
+        text: locked ? null : text,
+        links: locked ? [] : links,
+        updatedAt: Date.now(),
+      });
+    }
 
     // Keep the list row in step with the body this device just caught up on,
     // without sending anything: the peer that made the edit already published

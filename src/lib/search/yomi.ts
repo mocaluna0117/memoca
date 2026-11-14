@@ -136,8 +136,12 @@ async function send(request: { type: "warm" } | { type: "readings"; texts: strin
   });
 }
 
-/** How long the worker has to answer, its dictionary loaded first: long, for a slow network. */
-const ANSWER_WITHIN_MS = 3 * 60_000;
+/**
+ * How long the worker has to answer, its dictionary (11 MB, fetched anew
+ * each time) loaded first: long, so that a slow network is not cut off
+ * every time; only one that has stopped is.
+ */
+const ANSWER_WITHIN_MS = 15 * 60_000;
 
 /** The readings of texts, in katakana; throws when the dictionary cannot be had. */
 async function readingsFor(texts: string[]): Promise<string[]> {

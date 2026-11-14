@@ -1,6 +1,6 @@
 "use client";
 
-import { ASK_MS, FILE_MS, timeoutSignal, within } from "@/lib/time-limit";
+import { FILE_MS, timeoutSignal } from "@/lib/time-limit";
 import type { ConvexReactClient } from "convex/react";
 import { api } from "@convex/_generated/api";
 import type { Id } from "@convex/_generated/dataModel";
@@ -30,13 +30,10 @@ export async function uploadBytes(
   bytes: Uint8Array,
   contentType: string,
 ): Promise<Id<"_storage">> {
-  // Given a time each (see time-limit): a lock waiting on one that never
-  // answered held the vault open for good.
-  const uploadUrl = await within(
-    client.mutation(api.notes.snapshotUploadUrl, {}),
-    ASK_MS,
-    "upload address",
-  );
+  // The address asked for as before: a mutation given up on would still go
+  // once the network was back (Convex's client keeps it), one for each try
+  // made meanwhile. The sending itself is given a time (see time-limit).
+  const uploadUrl = await client.mutation(api.notes.snapshotUploadUrl, {});
   const response = await fetch(uploadUrl, {
     method: "POST",
     headers: { "Content-Type": contentType },

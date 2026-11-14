@@ -99,6 +99,8 @@ export type ArgonParams = { m: number; t: number; p: number };
 export const DEFAULT_ARGON: ArgonParams = { m: 65536, t: 3, p: 1 };
 
 const ARGON_WORKER = `/argon/${argonAsset.version}/argon-worker.js`;
+/** How long the worker has to answer before the page works the key out itself (see argonInWorker). */
+const WORKER_WITHIN_MS = 15_000;
 
 /**
  * Argon2id in a worker of its own, let go once it answers (its 64 MB with
@@ -115,10 +117,18 @@ async function argonInWorker(password: string, salt: Uint8Array, params: ArgonPa
   }
   try {
     return await new Promise<Uint8Array | null>((resolve) => {
-      worker.onmessage = (event: MessageEvent<{ raw?: Uint8Array; error?: string }>) =>
+      // Its script stalled on the way (a weak network, the first time): no
+      // answer and no error ever, the vault's prompt waiting with it. The
+      // page's own thread then, after a while: the work itself takes a
+      // second or two, so no answer by then is a script not loaded.
+      const stalled = setTimeout(() => resolve(null), WORKER_WITHIN_MS);
+      worker.onmessage = (event: MessageEvent<{ raw?: Uint8Array; error?: string }>) => {
+        clearTimeout(stalled);
         resolve(event.data.raw ?? null);
+      };
       worker.onerror = (event) => {
         event.preventDefault();
+        clearTimeout(stalled);
         resolve(null);
       };
       worker.postMessage({

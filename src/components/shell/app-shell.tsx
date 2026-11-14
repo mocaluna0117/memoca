@@ -119,6 +119,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 onSelectFolder={select}
                 pinnedSelected={selection.pinned}
                 onSelectPinned={selectPinned}
+                onCreatedFolder={selectWithoutClosing}
                 selectedNoteId={selection.noteId}
                 onOpenNote={openNoteHere}
                 onHide={hideSidebar}

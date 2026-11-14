@@ -33,5 +33,9 @@ export function timeoutSignal(ms: number): AbortSignal {
 
 /** A question to the server (an address, a list): small, so answered soon or not at all. */
 export const ASK_MS = 30_000;
-/** A file fetched or sent: given long, for a large one on a slow network. */
-export const FILE_MS = 5 * 60_000;
+/**
+ * A file fetched or sent: given long, for a large one (a video) on a slow
+ * network. A whole time, not one for a stall: too short, a large file on a
+ * slow line would fail every time, from the start each time.
+ */
+export const FILE_MS = 30 * 60_000;
