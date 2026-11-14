@@ -469,6 +469,17 @@ describe("the quick note, saving", () => {
     expect(bodyOf("note-2")).toEqual(["二度目"]);
   });
 
+  test("saved again after its note was locked, with the vault closed: into a new one, not dropped", async () => {
+    await render();
+    await type("一度目");
+    await key({ key: "Enter", ctrlKey: true });
+    await db().notes.update("note-1", { locked: true });
+    await type("二度目");
+    await key({ key: "Enter", ctrlKey: true });
+    expect(h.createNote).toHaveBeenCalledTimes(2);
+    expect(bodyOf("note-2")).toEqual(["二度目"]);
+  });
+
   test("a save that fails says so, and keeps the text and its draft", async () => {
     h.createNote.mockRejectedValue(new Error("quota"));
     await render();

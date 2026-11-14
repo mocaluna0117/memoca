@@ -82,6 +82,7 @@ import {
 import { makeTabNote, onSavedChange, readSaved, writeSaved } from "@/lib/quick/tabs";
 import { wholeBody } from "@/lib/quick/todo";
 import { migrateLocalDrafts } from "@/lib/quick/migrate-drafts";
+import { vault } from "@/lib/crypto/vault";
 import { db } from "@/lib/db";
 import {
   CloseTabDialog,
@@ -974,7 +975,12 @@ function Capture({
         // a text editor saves a document again; or a new one, with no title:
         // its first line stands in for one where notes are listed.
         const before = savedRef.current ? await db().notes.get(savedRef.current.noteId) : undefined;
-        const again = before && before.deletedAt === null && !before.purged ? before.noteId : null;
+        // Not one locked since, with the vault closed: what was written
+        // into it could only be kept encrypted, and was dropped, the tab
+        // said saved. Into a new note then, as for one deleted.
+        const writable = before && (!before.locked || vault.isUnlocked);
+        const again =
+          before && writable && before.deletedAt === null && !before.purged ? before.noteId : null;
         const saved =
           unfinished.current ??
           again ??

@@ -61,3 +61,28 @@ test("every file pasted goes in, not only the first, and one turned away does no
     expect(urls).toEqual(["memoca://a.png", "memoca://b.png"]);
   });
 });
+
+test("pasted in a line with text, they go under it in the order they came, not reversed", async () => {
+  const uploadFile = vi.fn(async (file: File) => `memoca://${file.name}`);
+  const editor = BlockNoteEditor.create({ uploadFile });
+  const host = document.createElement("div");
+  document.body.append(host);
+  editor.mount(host);
+  unmount = () => {
+    editor.unmount();
+    host.remove();
+  };
+  editor.replaceBlocks(editor.document, [{ type: "paragraph", content: "旅行の写真" }]);
+  editor.setTextCursorPosition(editor.document[0]!, "end");
+  const files = ["1.png", "2.png", "3.png"].map(
+    (name) => new File([new Uint8Array(4)], name, { type: "image/png" }),
+  );
+  const view = editor.prosemirrorView!;
+  view.someProp("handleDOMEvents", (handlers) => handlers.paste?.(view, pasted(files, () => false)));
+  await vi.waitFor(() => {
+    const lines = editor.document.map(
+      (block) => (block.props as { url?: string }).url ?? block.type,
+    );
+    expect(lines).toEqual(["paragraph", "memoca://1.png", "memoca://2.png", "memoca://3.png"]);
+  });
+});
