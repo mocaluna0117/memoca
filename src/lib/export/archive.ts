@@ -121,6 +121,19 @@ function* everyBlock(blocks: AnyBlock[]): Generator<AnyBlock> {
  * readable: the archive is not encrypted.
  */
 export async function exportAll(options: ExportOptions): Promise<ExportResult> {
+  // The vault kept open until the archive is made: closing by itself on the
+  // way (its time up, with every note to fetch and write), the locked notes
+  // after that were written as their names alone, and the export said it
+  // was done. A close asked for meanwhile comes once it is.
+  const release = options.includeLocked && vault.isUnlocked ? vault.hold() : null;
+  try {
+    return await exportHeld(options);
+  } finally {
+    release?.();
+  }
+}
+
+async function exportHeld(options: ExportOptions): Promise<ExportResult> {
   const database = db();
   const now = options.now ?? new Date();
   const folders = (await database.folders.toArray()).filter((f) => !f.deletedAt && !f.purged);

@@ -27,6 +27,28 @@ test("[[ typed with the input method on, as 「「, opens the menu of notes too"
   await expect(editor(page)).not.toContainText("「");
 });
 
+test("「「 that opened the menu, closed with Esc: 「「 stays as it was typed, not [[", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "typed on a computer's keyboard");
+  await signUp(page);
+  await openApp(page);
+  await createNote(page, "行き先");
+  await createNote(page, "出発");
+  await editor(page).click();
+  await page.keyboard.type("引用は");
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.imeSetComposition", { text: "「「", selectionStart: 2, selectionEnd: 2 });
+  await cdp.send("Input.insertText", { text: "「「" });
+  await cdp.detach();
+  await expect(page.getByRole("option", { name: "行き先" })).toBeVisible();
+  await page.keyboard.type("行");
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("option", { name: "行き先" })).toHaveCount(0);
+  await expect(editor(page)).toContainText("引用は「「行");
+  await expect(editor(page)).not.toContainText("[[");
+});
+
 test("[[ with no note of that name: Enter is a new line, and what was typed stays", async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== "desktop", "typed on a computer's keyboard");
   await signUp(page);

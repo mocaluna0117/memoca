@@ -5,6 +5,7 @@ import { type EditorState, NodeSelection, Selection, TextSelection } from "prose
 import { describe, expect, test } from "vitest";
 import {
   caretOutOfClosed,
+  closedToggleAtEnd,
   copyRange as copyRangeOf,
   cutRange,
   dropByToggle,
@@ -961,4 +962,26 @@ test("toggles emptied by a change: those with lines inside before, none after", 
   ]).doc;
   expect(emptiedToggles(before, after)).toEqual(["a"]);
   expect(emptiedToggles(after, before)).toEqual([]);
+});
+
+describe("Delete at the end of a closed toggle's line", () => {
+  const blocks: PartialBlock[] = [
+    { type: "toggleListItem", content: "箱", children: [{ type: "paragraph", content: "隠れた行" }] },
+    { type: "paragraph", content: "後" },
+  ];
+
+  test("closed, with lines inside: the toggle, to open (not its first line pulled up)", () => {
+    const state = stateOf(blocks);
+    const ready = withCaret(state, textAt(state.doc, "箱") + 1);
+    expect(closedToggleAtEnd(ready, () => false)?.node.firstChild!.textContent).toBe("箱");
+  });
+
+  test("left to BlockNote: open, the caret not at the end, nothing inside", () => {
+    const state = stateOf(blocks);
+    const atEnd = withCaret(state, textAt(state.doc, "箱") + 1);
+    expect(closedToggleAtEnd(atEnd, () => true)).toBeNull();
+    expect(closedToggleAtEnd(withCaret(state, textAt(state.doc, "箱")), () => false)).toBeNull();
+    const bare = stateOf([{ type: "toggleListItem", content: "箱" }, { type: "paragraph", content: "後" }]);
+    expect(closedToggleAtEnd(withCaret(bare, textAt(bare.doc, "箱") + 1), () => false)).toBeNull();
+  });
 });

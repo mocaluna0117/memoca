@@ -277,6 +277,13 @@ function VaultPrompt({ request }: { request: VaultRequest }) {
     ok();
   };
   const cancel = () => {
+    // The offer of the computer's check comes once the vault is open: closed
+    // (Esc, ×, a click beside it), it is あとで, and what asked for the vault
+    // goes on. It was called off, the vault open behind it.
+    if (deviceOffer) {
+      declineDeviceOffer();
+      return;
+    }
     abort.current?.abort();
     deviceRun.current += 1;
     finish(dismissResult(view) === "ok" ? { ok: true } : { ok: false, reason: "cancelled" });

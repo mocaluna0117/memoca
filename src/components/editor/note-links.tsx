@@ -4,6 +4,7 @@ import { type BlockNoteEditor, createExtension } from "@blocknote/core";
 import { isHiddenNote } from "@/lib/quick/todo-id";
 import { SuggestionMenu } from "@blocknote/core/extensions";
 import { SuggestionMenuController } from "@blocknote/react";
+import { type EditorState, Plugin, PluginKey } from "prosemirror-state";
 import { FileText, Link2 } from "lucide-react";
 import { db } from "@/lib/db";
 import { noteLink } from "@/lib/note-links";
@@ -48,6 +49,18 @@ export function openNoteLinkMenu(editor: BlockNoteEditor) {
 }
 
 /**
+ * Where the [[ put in for a 「「 starts, while the menu it opened is open:
+ * mapped through every change after it.
+ */
+const fromJa = new PluginKey<number | null>("memocaNoteLinkFromJa");
+
+/** Whether BlockNote's menu (the / one, or [['s) is open: its plugin's state, set only then. */
+const menuOpen = (state: EditorState) =>
+  state.plugins
+    .find((plugin) => (plugin as unknown as { key: string }).key === "SuggestionMenuPlugin$")
+    ?.getState(state) !== undefined;
+
+/**
  * [[, typed with the input method on, comes as 「「, committed at once and
  * not as typing, which the menu does not hear: once it is committed, the
  * 「「 goes and the menu opens, as for [[.
@@ -68,14 +81,55 @@ export const noteLinkInput = createExtension(({ editor }) => ({
             $from.parentOffset,
           );
           if (before !== LINK_TRIGGER_JA) return;
-          view.dispatch(view.state.tr.delete($from.pos - LINK_TRIGGER_JA.length, $from.pos));
+          const at = $from.pos - LINK_TRIGGER_JA.length;
+          view.dispatch(view.state.tr.delete(at, $from.pos));
           openNoteLinkMenu(editor as unknown as BlockNoteEditor);
+          view.dispatch(view.state.tr.setMeta(fromJa, at));
         });
       },
       { signal },
     );
   },
+  // The menu closed with no note chosen (Esc, the caret moved away): the
+  // 「「 that was typed back in place of the [[ put in for it, and what was
+  // typed after it kept. It was left [[, which was never typed.
+  prosemirrorPlugins: [
+    new Plugin<number | null>({
+      key: fromJa,
+      state: {
+        init: () => null,
+        apply: (tr, at) => {
+          const set = tr.getMeta(fromJa) as number | null | undefined;
+          if (set !== undefined) return set;
+          if (at === null) return null;
+          const mapped = tr.mapping.mapResult(at, 1);
+          return mapped.deleted ? null : mapped.pos;
+        },
+      },
+      view: () => ({
+        update(view) {
+          const at = fromJa.getState(view.state);
+          if (at == null || menuOpen(view.state)) return;
+          // After this update, not inside it.
+          queueMicrotask(() => {
+            if (fromJa.getState(view.state) !== at || menuOpen(view.state)) return;
+            view.dispatch(backToJa(view.state, at));
+          });
+        },
+      }),
+    }),
+  ],
 }));
+
+/** The [[ at `at`, if it is still there, made 「「 again; the marker let go of. */
+function backToJa(state: EditorState, at: number) {
+  const tr = state.tr.setMeta(fromJa, null);
+  const end = at + LINK_TRIGGER.length;
+  if (end <= tr.doc.content.size && tr.doc.textBetween(at, end) === LINK_TRIGGER) {
+    tr.insertText(LINK_TRIGGER_JA, at, end);
+  }
+  return tr;
+}
 
 /** The menu [[ opens: the notes to link to, by name. */
 export function NoteLinkMenu({ editor, noteId }: { editor: BlockNoteEditor; noteId: string }) {

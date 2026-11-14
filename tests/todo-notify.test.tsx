@@ -9,10 +9,38 @@ vi.mock("convex/react", () => ({
   useQuery: (...args: unknown[]) => h.useQuery(...args),
 }));
 
+// Where sync stands, as the provider keeps it: changes taken in just now.
+const sync = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  let status: Record<string, unknown> = {};
+  return {
+    reset() {
+      // Ahead of the page's start however the clock is faked after this.
+      status = { state: "idle", catchingUp: false, lastSyncAt: Date.now() + 60_000 };
+      listeners.clear();
+    },
+    set(patch: Record<string, unknown>) {
+      status = { ...status, ...patch };
+      for (const listener of listeners) listener();
+    },
+    store: {
+      get: () => status,
+      set: () => {},
+      subscribe: (listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  };
+});
+vi.mock("@/components/providers/sync-provider", () => ({
+  useSyncStatusStore: () => sync.store,
+}));
+
 import { TodoDuePicker } from "@/components/notes/todo-due-picker";
 import { TodoNotify, useSendReminders, useShellReminders } from "@/components/notes/todo-notify";
 import { QuickTips } from "@/components/notes/quick-tip";
-import type { MemocaShell, ShellReminder, ShellReminderState } from "@/lib/quick/shell";
+import { type MemocaShell, SHELL_HIDDEN, type ShellReminder, type ShellReminderState } from "@/lib/quick/shell";
 import { NONE, NOTIFY_MAP, ON_KEY } from "@/lib/notify/reminders";
 import { DUE_MAP, TODO_DUE } from "@/lib/quick/todo-due";
 import { ORIGIN, bodyFragment } from "@/lib/sync/ydoc";
@@ -28,6 +56,7 @@ beforeEach(() => {
   h.query.mockReset();
   h.useQuery.mockReset();
   localStorage.clear();
+  sync.reset();
   host = document.createElement("div");
   document.body.append(host);
   root = createRoot(host);
@@ -158,9 +187,51 @@ describe("the Todo's reminders, sent as it is changed here", () => {
     await act(async () => root.render(<Sender doc={doc} />));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
     expect(h.mutation).toHaveBeenCalledTimes(1);
+    sync.set({ lastSyncAt: Date.now() - 1 });
     window.dispatchEvent(new Event("online"));
     await act(async () => vi.advanceTimersByTimeAsync(2000));
+    // Not before the server's changes made meanwhile have come in.
+    expect(h.mutation).toHaveBeenCalledTimes(1);
+    await act(async () => sync.set({ lastSyncAt: Date.now() + 1 }));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
     expect(h.mutation).toHaveBeenCalledTimes(2);
+  });
+
+  test("put away by the desktop app a moment after a change: sent then, not left for later", async () => {
+    vi.useFakeTimers();
+    const doc = todo();
+    doc.transact(() => doc.getMap<string>(NOTIFY_MAP).set(ON_KEY, "1"), TODO_DUE);
+    await act(async () => root.render(<Sender doc={doc} />));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    h.mutation.mockClear();
+    doc.transact(() => doc.getMap<string>(DUE_MAP).set("a", tomorrow()), TODO_DUE);
+    await act(async () => vi.advanceTimersByTimeAsync(300));
+    window.dispatchEvent(new Event(SHELL_HIDDEN));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(h.mutation).toHaveBeenCalledTimes(1);
+  });
+
+  test("on a device that has been away, not before the server's changes are in: the Todo sent is then the account's", async () => {
+    vi.useFakeTimers();
+    // Last taken in a session before (a week ago).
+    sync.reset();
+    sync.set({ lastSyncAt: performance.timeOrigin - 7 * 24 * 60 * 60 * 1000 });
+    const doc = todo();
+    doc.transact(() => doc.getMap<string>(NOTIFY_MAP).set(ON_KEY, "1"), TODO_DUE);
+    doc.transact(() => doc.getMap<string>(DUE_MAP).set("a", tomorrow()), TODO_DUE);
+    await act(async () => root.render(<Sender doc={doc} />));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(h.mutation).not.toHaveBeenCalled();
+    // Coming in: still not.
+    await act(async () => sync.set({ state: "syncing", catchingUp: true }));
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
+    expect(h.mutation).not.toHaveBeenCalled();
+    // Another device had taken the due off; in, and then sent: none.
+    doc.transact(() => doc.getMap<string>(DUE_MAP).delete("a"), ORIGIN.remote);
+    await act(async () => sync.set({ state: "idle", catchingUp: false, lastSyncAt: Date.now() }));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(h.mutation).toHaveBeenCalledTimes(1);
+    expect(h.mutation.mock.calls[0]![1]).toEqual({ reminders: [] });
   });
 });
 

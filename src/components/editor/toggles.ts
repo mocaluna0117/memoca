@@ -639,6 +639,27 @@ export function closedToggleToOpen(
 }
 
 /**
+ * Delete at the end of a closed toggle's own line, with lines inside it:
+ * the toggle, to open, as Backspace at its start does. BlockNote pulled the
+ * first line inside it, out of sight, up onto the toggle's line. Null for
+ * anything else, left to BlockNote.
+ */
+export function closedToggleAtEnd(
+  state: EditorState,
+  isOpen: (block: Found) => boolean,
+): Found | null {
+  const { selection } = state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return null;
+  const { $from } = selection;
+  if (!isToggle($from.parent) || $from.parentOffset !== $from.parent.content.size) return null;
+  if ($from.depth < 2) return null;
+  const container = $from.node($from.depth - 1);
+  if (container.type.name !== "blockContainer" || container.childCount < 2) return null;
+  const block = { node: container, pos: $from.before($from.depth - 1) };
+  return isOpen(block) ? null : block;
+}
+
+/**
  * A toggle just closed with the caret inside it: the caret to the end of its
  * line, as Notion has it. Left inside, out of sight, it takes what is typed
  * next, and a click at the end of the line does not always bring it out.
@@ -753,6 +774,14 @@ export const toggles = createExtension(({ editor }) => ({
       const tr = backspaceInToggle(view.state, isOpen) ?? backspaceAfterHidden(view.state, isOpen);
       if (!tr) return false;
       view.dispatch(tr);
+      return true;
+    },
+    Delete: () => {
+      const view = editor.prosemirrorView;
+      if (!view) return false;
+      const closed = closedToggleAtEnd(view.state, (block) => isOpenOnScreen(view, block));
+      if (!closed) return false;
+      buttonOf(view, closed)?.click();
       return true;
     },
     Enter: () => {

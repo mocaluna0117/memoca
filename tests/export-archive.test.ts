@@ -170,6 +170,28 @@ describe("exporting every note", () => {
   });
 });
 
+describe("exporting with the locked notes", () => {
+  test("keeps the vault open until it is done: a close on the way comes after", async () => {
+    const { vault } = await import("@/lib/crypto/vault");
+    const key = await crypto.subtle.generateKey({ name: "AES-KW", length: 256 }, false, [
+      "wrapKey",
+      "unwrapKey",
+    ]);
+    vault.adopt(key);
+    await keep(note("n1", "遅れ", null, { lastUpdateSeq: 5 }), [
+      { type: "paragraph", content: "a" },
+    ]);
+    let asked: string | null = null;
+    // Its time up while the notes are fetched.
+    const fetchBodies = async () => {
+      asked = await vault.close("idle");
+    };
+    await exportAll({ client, includeLocked: true, fetchBodies, now: NOW });
+    expect(asked).toBe("deferred");
+    await vi.waitFor(() => expect(vault.isUnlocked).toBe(false));
+  });
+});
+
 describe("a name for a file", () => {
   test("loses what a computer would not take, and is never empty", () => {
     expect(safeName('a/b:c*?"<>|. ', "x")).toBe("a b c");

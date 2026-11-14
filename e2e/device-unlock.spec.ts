@@ -83,10 +83,37 @@ test("Touch ID left unanswered (the Mac's keychain asking, say): the prompt can 
   const asks = await page.evaluate(() => (window as unknown as { __asked: boolean[] }).__asked);
   expect(asks.filter((create) => !create)).toHaveLength(1);
 
-  // Answering again: Touch ID alone opens it, as before.
+  // Answering again: Touch ID alone opens it, as before (the prompt maybe
+  // never drawn, the answer coming at once).
   await page.evaluate(() => localStorage.removeItem("e2e:touch-id-hangs"));
   await openApp(page);
-  await openLocked(page);
+  await page.getByText("ロックされたメモ").filter({ visible: true }).first().click();
+  await page.getByRole("button", { name: "金庫を開く", exact: true }).filter({ visible: true }).first().click();
   await expect(prompt).toHaveCount(0);
   await expect(editor(page)).toContainText("秘密の本文", { timeout: 15_000 });
+});
+
+test("the offer of Touch ID closed with Esc is あとで: the note it was opened for is locked all the same", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop", "the desktop app, on a computer");
+  test.slow();
+  await inDesktopApp(page);
+  await signUp(page);
+  await openApp(page);
+  await createVaultInSettings(page);
+  await openApp(page);
+  await createNote(page, "ロックするメモ", "秘密の本文");
+  await waitForSynced(page);
+
+  await page.getByRole("button", { name: "メモの操作" }).click();
+  await page.getByRole("menuitem", { name: "ロックする", exact: true }).click();
+  await enterVaultPassword(page, "ロックする");
+  await expect(vaultPrompt(page).getByRole("button", { name: "Touch ID を使う" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(vaultPrompt(page)).toHaveCount(0);
+  await expect(page.getByText("メモをロックしました")).toBeVisible({ timeout: 30_000 });
+  // Not taken up: not asked to make Touch ID's key.
+  const asks = await page.evaluate(() => (window as unknown as { __asked: boolean[] }).__asked);
+  expect(asks.filter((create) => create)).toHaveLength(0);
 });

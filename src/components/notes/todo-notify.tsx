@@ -24,12 +24,34 @@ import {
   remindersIn,
   writeTimings,
 } from "@/lib/notify/reminders";
-import type { ShellReminderState } from "@/lib/quick/shell";
+import { SHELL_HIDDEN, type ShellReminderState } from "@/lib/quick/shell";
 import { DUE_MAP, TODO_DUE } from "@/lib/quick/todo-due";
+import { useSyncStatusStore } from "@/components/providers/sync-provider";
+import type { SyncStatus } from "@/lib/sync/engine";
 import { ORIGIN, bodyFragment } from "@/lib/sync/ydoc";
 
 /** How long after the Todo changes its reminders are worked out and sent: once for a run of typing. */
 const SEND_AFTER_MS = 1500;
+/**
+ * How long after the network comes back the reminders wait for the server's
+ * changes to have come in, at the most, before they are sent as they are.
+ */
+const WAIT_FOR_PULL_MS = 15_000;
+
+/**
+ * Whether this device has the account's changes from the server, so that
+ * the reminders worked out from its Todo are the account's: the network up,
+ * and changes taken in since `since` (the page's start, or the network's
+ * return), with none still coming. Sent before, from a device that had been
+ * away (a computer opened after a week), they were the Todo as it was a
+ * week before, and replaced the server's: what other devices had added since
+ * went unreminded, and what they had ticked was reminded of, until the Todo
+ * was changed again somewhere.
+ */
+export function caughtUp(status: SyncStatus, since: number, online: boolean): boolean {
+  return online && status.state === "idle" && !status.catchingUp && (status.lastSyncAt ?? 0) >= since;
+}
+
 /**
  * What was sent last from this device, for this Todo (an account's own), so
  * that the same is not sent again as the Todo opens. Forgotten as another
@@ -66,6 +88,7 @@ const writeSent = (todoId: string, sent: string | null) => {
  */
 export function useSendReminders(doc: Y.Doc | null, todoId: string | null) {
   const convex = useConvex();
+  const statusStore = useSyncStatusStore();
   useEffect(() => {
     if (!doc || !todoId) return;
     const body = bodyFragment(doc);
@@ -74,10 +97,27 @@ export function useSendReminders(doc: Y.Doc | null, todoId: string | null) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let sending = false;
     let again = false;
+    // Changes taken in since the page started (the last time this was
+    // stored is a session before), or since the network came back.
+    let since = 0;
+    let waiting = false;
+    let waitedEnough = false;
+    let fallback: ReturnType<typeof setTimeout> | undefined;
     const send = async () => {
       clearTimeout(timer);
       timer = undefined;
       if (notify.get(ON_KEY) !== "1") return;
+      // Not until this device has what the server has (see caughtUp): then
+      // sent, as the status says so. A mutation made offline would also
+      // wait in Convex's client and go, as it was, once the network was back.
+      if (!navigator.onLine) return;
+      const status = statusStore.get();
+      const taking = status.state === "syncing" || status.catchingUp;
+      if (!caughtUp(status, since, true) && !(waitedEnough && !taking)) {
+        waiting = true;
+        return;
+      }
+      waiting = false;
       if (sending) {
         again = true;
         return;
@@ -119,22 +159,48 @@ export function useSendReminders(doc: Y.Doc | null, todoId: string | null) {
     const hidden = () => {
       if (document.visibilityState === "hidden") now();
     };
+    // The server's changes come in first, or a while passes (sync stuck on
+    // an error, say): sent as this device has them then.
+    const waitFrom = (from: number) => {
+      since = from;
+      waitedEnough = false;
+      clearTimeout(fallback);
+      fallback = setTimeout(() => {
+        waitedEnough = true;
+        if (waiting) void send();
+      }, WAIT_FOR_PULL_MS);
+    };
+    const online = () => {
+      waitFrom(Date.now());
+      soon();
+    };
+    waitFrom(performance.timeOrigin);
+    const unfollow = statusStore.subscribe(() => {
+      if (waiting) void send();
+    });
     body.observeDeep(changed);
     dues.observe(changed);
     notify.observe(changed);
-    window.addEventListener("online", soon);
+    window.addEventListener("online", online);
     document.addEventListener("visibilitychange", hidden);
+    // Put away by the desktop app (the page stays, and may not be told it
+    // is hidden): a change just made, an item ticked, sent now, not left
+    // for the next time the Todo changes, its reminder still coming.
+    window.addEventListener(SHELL_HIDDEN, now);
     soon();
     return () => {
+      unfollow();
+      clearTimeout(fallback);
       body.unobserveDeep(changed);
       dues.unobserve(changed);
       notify.unobserve(changed);
-      window.removeEventListener("online", soon);
+      window.removeEventListener("online", online);
       document.removeEventListener("visibilitychange", hidden);
+      window.removeEventListener(SHELL_HIDDEN, now);
       // Leaving the Todo with a change not sent yet: sent now.
       now();
     };
-  }, [doc, todoId, convex]);
+  }, [doc, todoId, convex, statusStore]);
 }
 
 /** Said in the page as this computer's choice changes (the bell's switch): read again where it is followed. */
