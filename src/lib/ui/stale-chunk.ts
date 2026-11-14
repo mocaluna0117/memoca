@@ -8,7 +8,7 @@
 export function isStaleChunk(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   if (error.name === "ChunkLoadError") return true;
-  return /Loading (CSS )?chunk|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(
+  return /Failed to load chunk|Loading (CSS )?chunk|Failed to fetch dynamically imported module|Importing a module script failed|error loading dynamically imported module/i.test(
     error.message,
   );
 }

@@ -33,7 +33,7 @@ import { ORIGIN, bodyFragment } from "@/lib/sync/ydoc";
 /** How long after the Todo changes its reminders are worked out and sent: once for a run of typing. */
 const SEND_AFTER_MS = 1500;
 /**
- * How long after the network comes back the reminders wait for the server's
+ * How long after the Todo opens, or the network comes back, the reminders wait for the server's
  * changes to have come in, at the most, before they are sent as they are.
  */
 const WAIT_FOR_PULL_MS = 15_000;
@@ -41,7 +41,7 @@ const WAIT_FOR_PULL_MS = 15_000;
 /**
  * Whether this device has the account's changes from the server, so that
  * the reminders worked out from its Todo are the account's: the network up,
- * and changes taken in since `since` (the page's start, or the network's
+ * and changes taken in since `since` (the Todo's opening, or the network's
  * return), with none still coming. Sent before, from a device that had been
  * away (a computer opened after a week), they were the Todo as it was a
  * week before, and replaced the server's: what other devices had added since
@@ -97,9 +97,12 @@ export function useSendReminders(doc: Y.Doc | null, todoId: string | null) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let sending = false;
     let again = false;
-    // Changes taken in since the page started (the last time this was
-    // stored is a session before), or since the network came back.
+    // Changes taken in since the Todo opened (the desktop app's quick
+    // window stays loaded for days, through sleeps, and what it had taken
+    // in before may be a week old), or since the network came back.
     let since = 0;
+    // Gone (the Todo closed) with a send still waiting: kept until it goes.
+    let closing = false;
     let waiting = false;
     let waitedEnough = false;
     let fallback: ReturnType<typeof setTimeout> | undefined;
@@ -118,6 +121,7 @@ export function useSendReminders(doc: Y.Doc | null, todoId: string | null) {
         return;
       }
       waiting = false;
+      if (closing) stopFollowing();
       if (sending) {
         again = true;
         return;
@@ -174,10 +178,16 @@ export function useSendReminders(doc: Y.Doc | null, todoId: string | null) {
       waitFrom(Date.now());
       soon();
     };
-    waitFrom(performance.timeOrigin);
+    // With nothing changed elsewhere, nothing comes in to say so: sent
+    // after the wait then, a change made here among it.
+    waitFrom(Date.now());
     const unfollow = statusStore.subscribe(() => {
       if (waiting) void send();
     });
+    const stopFollowing = () => {
+      unfollow();
+      clearTimeout(fallback);
+    };
     body.observeDeep(changed);
     dues.observe(changed);
     notify.observe(changed);
@@ -189,16 +199,17 @@ export function useSendReminders(doc: Y.Doc | null, todoId: string | null) {
     window.addEventListener(SHELL_HIDDEN, now);
     soon();
     return () => {
-      unfollow();
-      clearTimeout(fallback);
       body.unobserveDeep(changed);
       dues.unobserve(changed);
       notify.unobserve(changed);
       window.removeEventListener("online", online);
       document.removeEventListener("visibilitychange", hidden);
       window.removeEventListener(SHELL_HIDDEN, now);
-      // Leaving the Todo with a change not sent yet: sent now.
+      // Leaving the Todo with a change not sent yet: sent now, or, while
+      // the server's changes are still to come in, once they have.
       now();
+      if (waiting) closing = true;
+      else stopFollowing();
     };
   }, [doc, todoId, convex, statusStore]);
 }

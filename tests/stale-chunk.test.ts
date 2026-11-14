@@ -9,6 +9,8 @@ describe("a part of the app that failed to load", () => {
     expect(isStaleChunk(new TypeError("Failed to fetch dynamically imported module: https://x/_next/a.js"))).toBe(true);
     expect(isStaleChunk(new TypeError("Importing a module script failed."))).toBe(true);
     expect(isStaleChunk(new Error("Loading CSS chunk 9 failed"))).toBe(true);
+    // Turbopack's, its name aside.
+    expect(isStaleChunk(new Error("Failed to load chunk /_next/static/chunks/a.js from module 12"))).toBe(true);
   });
 
   it("is not any other error", () => {

@@ -197,6 +197,36 @@ describe("the Todo's reminders, sent as it is changed here", () => {
     expect(h.mutation).toHaveBeenCalledTimes(2);
   });
 
+  test("in a window loaded for days (taken in since, before a sleep): not before what came in meanwhile, or the wait", async () => {
+    vi.useFakeTimers();
+    // Taken in after the page started, but before the Todo opened (an hour ago).
+    sync.set({ lastSyncAt: Date.now() - 60 * 60 * 1000 });
+    const doc = todo();
+    doc.transact(() => doc.getMap<string>(NOTIFY_MAP).set(ON_KEY, "1"), TODO_DUE);
+    doc.transact(() => doc.getMap<string>(DUE_MAP).set("a", tomorrow()), TODO_DUE);
+    await act(async () => root.render(<Sender doc={doc} />));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    expect(h.mutation).not.toHaveBeenCalled();
+    // Nothing comes in (nothing changed elsewhere): sent once the wait is over.
+    await act(async () => vi.advanceTimersByTimeAsync(15_000));
+    expect(h.mutation).toHaveBeenCalledTimes(1);
+  });
+
+  test("closed while waiting for the server's changes: sent once they are in", async () => {
+    vi.useFakeTimers();
+    sync.set({ lastSyncAt: Date.now() - 60 * 60 * 1000 });
+    const doc = todo();
+    doc.transact(() => doc.getMap<string>(NOTIFY_MAP).set(ON_KEY, "1"), TODO_DUE);
+    doc.transact(() => doc.getMap<string>(DUE_MAP).set("a", tomorrow()), TODO_DUE);
+    await act(async () => root.render(<Sender doc={doc} />));
+    await act(async () => vi.advanceTimersByTimeAsync(2000));
+    await act(async () => root.render(null));
+    expect(h.mutation).not.toHaveBeenCalled();
+    await act(async () => sync.set({ lastSyncAt: Date.now() + 1 }));
+    await act(async () => vi.advanceTimersByTimeAsync(0));
+    expect(h.mutation).toHaveBeenCalledTimes(1);
+  });
+
   test("put away by the desktop app a moment after a change: sent then, not left for later", async () => {
     vi.useFakeTimers();
     const doc = todo();
