@@ -25,9 +25,9 @@ export default function NewsPage() {
   // though they are seen from then on.
   const joinedAt = useSync().me?.createdAt;
   const [fresh] = useState<ReadonlySet<string>>(
-    () => new Set(NEWS.slice(0, unread(joinedAt)).map((item) => item.id)),
+    () => new Set(NEWS.slice(0, unread(joinedAt, NEWS)).map((item) => item.id)),
   );
-  useEffect(() => markNewsSeen(), []);
+  useEffect(() => markNewsSeen(NEWS[0]), []);
 
   return (
     <div className="flex flex-1 flex-col">

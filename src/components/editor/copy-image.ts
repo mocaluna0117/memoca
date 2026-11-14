@@ -83,6 +83,66 @@ export async function sizeOf(blob: Blob): Promise<ImageSize> {
   return { width, height };
 }
 
+/**
+ * A picture's fingerprint: its brightness on an 8 × 8 grid. The same picture
+ * written again (the browser's PNG, the shell's) gives nearly the same; two
+ * pictures of one size (two screenshots) do not. Null where it cannot be
+ * worked out (no canvas: tests, an image the browser cannot draw).
+ */
+export async function printOf(blob: Blob): Promise<Uint8Array | null> {
+  try {
+    const bitmap = await createImageBitmap(blob, { resizeWidth: 8, resizeHeight: 8, resizeQuality: "medium" });
+    const canvas = document.createElement("canvas");
+    canvas.width = 8;
+    canvas.height = 8;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      bitmap.close();
+      return null;
+    }
+    context.drawImage(bitmap, 0, 0);
+    bitmap.close();
+    const { data } = context.getImageData(0, 0, 8, 8);
+    const print = new Uint8Array(64);
+    for (let i = 0; i < 64; i += 1) {
+      print[i] = Math.round(0.299 * data[i * 4]! + 0.587 * data[i * 4 + 1]! + 0.114 * data[i * 4 + 2]!);
+    }
+    return print;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether two fingerprints are of the same picture: near on average, as written again it is. */
+export function samePrint(a: Uint8Array, b: Uint8Array): boolean {
+  let off = 0;
+  for (let i = 0; i < 64; i += 1) off += Math.abs(a[i]! - b[i]!);
+  return off / 64 < 8;
+}
+
+/**
+ * Whether pasted pictures are those copied: each matched to one of them, in
+ * any order. Told by their sizes alone where a fingerprint is missing.
+ */
+export function samePictures(
+  pasted: { size: ImageSize; print: Uint8Array | null }[],
+  copied: { size: ImageSize; print: Uint8Array | null }[],
+): boolean {
+  if (pasted.length !== copied.length) return false;
+  const left = [...copied];
+  for (const one of pasted) {
+    const at = left.findIndex(
+      (other) =>
+        other.size.width === one.size.width &&
+        other.size.height === one.size.height &&
+        (!one.print || !other.print || samePrint(one.print, other.print)),
+    );
+    if (at < 0) return false;
+    left.splice(at, 1);
+  }
+  return true;
+}
+
 /** Space left between two images joined into one, and around them. */
 const STITCH_GAP = 16;
 
@@ -212,11 +272,25 @@ const RECOGNISED_MS = 30 * 60 * 1000;
  * size of each image the clipboard has for them (one, joined, from a
  * browser; one each from the desktop shell).
  */
-let lastImage: { html: string; sizes: ImageSize[]; at: number } | null = null;
+let lastImage: {
+  html: string;
+  sizes: ImageSize[];
+  prints: Promise<(Uint8Array | null)[]> | null;
+  at: number;
+} | null = null;
 
-/** Remembers images copied alone, as the clipboard now has them, to know them again when pasted. */
-export function rememberImageCopy(copy: { html: string; sizes: ImageSize[] }): void {
-  lastImage = { ...copy, at: Date.now() };
+/**
+ * Remembers images copied alone, as the clipboard now has them, to know them
+ * again when pasted: by their sizes, and their fingerprints (`prints`, one a
+ * size, worked out meanwhile) where there are. By sizes alone, a screenshot
+ * of the same size taken within the half hour was pasted as the image copied.
+ */
+export function rememberImageCopy(copy: {
+  html: string;
+  sizes: ImageSize[];
+  prints?: Promise<(Uint8Array | null)[]>;
+}): void {
+  lastImage = { html: copy.html, sizes: copy.sizes, prints: copy.prints ?? null, at: Date.now() };
 }
 
 /** Forgets the last image copied alone: for tests. */
@@ -253,10 +327,17 @@ export function pasteOwnImage(event: ClipboardEvent, editor: BlockNoteEditor): b
   }
   if (data.types.includes("text/html") || data.types.includes("blocknote/html")) return false;
   // In any order: an app may hand files over in another.
-  const key = ({ width, height }: ImageSize) => `${width}x${height}`;
-  const wanted = last.sizes.map(key).sort().join();
-  void Promise.all(files.map(sizeOf))
-    .then((sizes) => sizes.map(key).sort().join() === wanted)
+  void Promise.all([
+    Promise.all(files.map(sizeOf)),
+    Promise.all(files.map(printOf)),
+    last.prints ?? Promise.resolve(last.sizes.map(() => null)),
+  ])
+    .then(([sizes, prints, kept]) =>
+      samePictures(
+        sizes.map((size, index) => ({ size, print: prints[index] ?? null })),
+        last.sizes.map((size, index) => ({ size, print: kept[index] ?? null })),
+      ),
+    )
     .catch(() => false)
     .then((same) => {
       if (same) {

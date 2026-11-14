@@ -1600,6 +1600,10 @@ export class SyncEngine {
 
 /** Whether this device keeps parts of a note under a key other than the note's own. */
 async function hasStaleParts(noteId: string, keyEpoch: number): Promise<boolean> {
+  // A note never locked (its key's epoch 0: each lock and unlock goes one
+  // up) has no parts under another. Not read for it: its whole snapshot, up
+  // to 200 of them, read as the desktop app's hidden window started.
+  if (keyEpoch === 0) return false;
   const database = db();
   const snapshot = await database.snapshots.get(noteId);
   if (snapshot && snapshot.keyEpoch !== keyEpoch) return true;

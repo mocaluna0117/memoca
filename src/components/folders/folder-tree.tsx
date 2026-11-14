@@ -265,7 +265,21 @@ export function FolderTree({
     if (!row) return;
     refocus.current = null;
     row.focus();
-  }, [tree, topNotes, editing, editingNote]);
+  }, [tree, topNotes, folderNotes, editing, editingNote]);
+
+  /**
+   * Focus kept on a row moved with Option (Alt) and an arrow, as the list is
+   * drawn again. Its folder's notes are read apart from the tree, and were
+   * not waited for: the row to focus stayed, and focus jumped to it later,
+   * at the next change of anything. Given up after a moment, a move that
+   * changed nothing (already at the end) among them.
+   */
+  const refocusAfterMove = (key: string) => {
+    refocus.current = key;
+    setTimeout(() => {
+      if (refocus.current === key) refocus.current = null;
+    }, 1500);
+  };
 
   // The folder just opened, scrolled to before it is drawn: its notes in
   // sight from the first, rather than wherever the tree was scrolled to (in
@@ -675,7 +689,7 @@ export function FolderTree({
       const group = notesIn(folderId).filter((each) => each.pinned === note.pinned);
       const index = group.findIndex((each) => each.noteId === note.noteId) + direction;
       if (index < 0 || index >= group.length) return;
-      refocus.current = rowKey(row);
+      refocusAfterMove(rowKey(row));
       await placeInFolder(note, folderId, index);
       return;
     }
@@ -690,7 +704,7 @@ export function FolderTree({
         direction < 0
           ? [beyond?.sortKey ?? null, neighbour.sortKey]
           : [neighbour.sortKey, beyond?.sortKey ?? null];
-      refocus.current = rowKey(row);
+      refocusAfterMove(rowKey(row));
       await moveFolder(node.folderId, node.parentId, between(before, after));
       return;
     }
@@ -700,7 +714,7 @@ export function FolderTree({
     const beyond = top[index + direction * 2];
     const [before, after] =
       direction < 0 ? [beyond?.key ?? null, neighbour.key] : [neighbour.key, beyond?.key ?? null];
-    refocus.current = rowKey(row);
+    refocusAfterMove(rowKey(row));
     if (row.kind === "folder") await moveFolder(row.node.folderId, null, between(before, after));
     else await moveNote(row.note.noteId, null, between(before, after));
   };

@@ -124,6 +124,16 @@ describe("・ and a space after it, as a Japanese list is written (・　牛乳)
     }
   });
 
+  test("Backspace after the space dropped: the space does not come back, the item is a line again", async () => {
+    const editor = editorOf([{ type: "paragraph", content: "" }]);
+    caret(editor, "");
+    type(editor, "・　");
+    expect(outline(editor)).toEqual(["bulletListItem:"]);
+    await Promise.resolve();
+    press(editor, "Backspace");
+    expect(outline(editor)).toEqual(["paragraph:"]);
+  });
+
   test("a space typed at the start of an item with text in it stays", () => {
     const editor = editorOf([{ type: "bulletListItem", content: "牛乳" }]);
     caret(editor, "牛乳");

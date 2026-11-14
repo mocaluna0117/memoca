@@ -121,8 +121,23 @@ async function send(request: { type: "warm" } | { type: "readings"; texts: strin
   return new Promise<string[]>((resolve, reject) => {
     pending.set(id, { resolve, reject });
     active.postMessage({ ...request, id });
+    // Not answered in time (the dictionary's 11 MB stalled on a weak
+    // network): given up, as for a worker that failed, and tried afresh next
+    // time. Waited on for good before, reading search said 読み込み中 until
+    // the page was loaded again, and every search for readings waited on it.
+    setTimeout(() => {
+      if (!pending.has(id) || worker !== active) return;
+      setState("unavailable");
+      for (const waiting of pending.values()) waiting.reject(new Error("the dictionary took too long to load"));
+      pending.clear();
+      active.terminate();
+      worker = null;
+    }, ANSWER_WITHIN_MS);
   });
 }
+
+/** How long the worker has to answer, its dictionary loaded first: long, for a slow network. */
+const ANSWER_WITHIN_MS = 3 * 60_000;
 
 /** The readings of texts, in katakana; throws when the dictionary cannot be had. */
 async function readingsFor(texts: string[]): Promise<string[]> {

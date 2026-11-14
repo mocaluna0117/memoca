@@ -80,6 +80,12 @@ export function findStatus(state: EditorState): { count: number; current: number
   return { count: found.matches.length, current: found.current };
 }
 
+/** Where the match on starts, if there is one. */
+export function currentMatchAt(state: EditorState): number | null {
+  const found = key.getState(state) ?? EMPTY;
+  return found.matches[found.current]?.from ?? null;
+}
+
 /** Looks for `query` in the note, the match on being the first at or after the caret. */
 export function setFindQuery(view: EditorView, query: string): void {
   view.dispatch(view.state.tr.setMeta(key, { query, from: view.state.selection.from }));

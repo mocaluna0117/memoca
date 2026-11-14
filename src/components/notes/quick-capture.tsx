@@ -309,7 +309,18 @@ function Tabbed({
           tabs.active === TODO_TAB_ID ||
           (await shownIsHidden(tabs, there)) ||
           (there.trim() !== "" && !holdsShared(there, shared));
-        const tab = busy ? ((await openTab(userKey)) ?? tabs.active) : tabs.active;
+        let tab = busy ? ((await openTab(userKey)) ?? tabs.active) : tabs.active;
+        // No room for another (the most tabs there may be) with the Todo
+        // shown: the Todo takes no shared text, and it was lost. At the top
+        // of the last tab instead, shown, and said why.
+        if (tab === TODO_TAB_ID) {
+          const last = [...tabs.ids].reverse().find((id) => id !== TODO_TAB_ID);
+          if (last) {
+            await showTab(userKey, last);
+            tab = last;
+            toast(t.quick.tabsFull(MAX_TABS), { id: "quick-tabs-full" });
+          }
+        }
         if (current) setShare({ tab, text: shared });
       }
     })()

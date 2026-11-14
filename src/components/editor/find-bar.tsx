@@ -5,7 +5,8 @@ import type { BlockNoteEditor } from "@blocknote/core";
 import { useEffect, useRef, useState } from "react";
 import type { EditorView } from "prosemirror-view";
 import { Button } from "@/components/ui/button";
-import { endFind, findStatus, setFindQuery, stepFind } from "@/components/editor/find-in-note";
+import { currentMatchAt, endFind, findStatus, setFindQuery, stepFind } from "@/components/editor/find-in-note";
+import { openTogglesAround } from "@/components/editor/toggles";
 
 /**
  * Finding in the open note, as a browser's own find does in a page (which,
@@ -146,8 +147,13 @@ export function FindBar({ editor: note }: { editor: BlockNoteEditor }) {
   );
 }
 
-/** The match on, scrolled to the middle of the screen once it is drawn. */
+/**
+ * The match on, scrolled to the middle of the screen once it is drawn: the
+ * toggles it is in opened first, closed it was counted but not shown.
+ */
 function scrollToCurrent(view: EditorView) {
+  const at = currentMatchAt(view.state);
+  if (at !== null) openTogglesAround(view, at);
   requestAnimationFrame(() => {
     view.dom.querySelector(".memoca-find-current")?.scrollIntoView({ block: "center" });
   });

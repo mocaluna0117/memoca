@@ -79,9 +79,11 @@ export function AppShell({ children }: { children: ReactNode }) {
     [navigate, hideDrawer],
   );
 
+  // A folder just made, chosen to be named: the note open stays open, as a
+  // folder made beside what is being written is not a move away from it.
   const selectWithoutClosing = useCallback(
-    (folderId: string) => openFolder(folderId),
-    [openFolder],
+    (folderId: string) => navigate({ folderId, pinned: false }),
+    [navigate],
   );
 
   return (

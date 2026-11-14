@@ -706,6 +706,22 @@ function wrapperOf(view: EditorView, id: string): Element | null {
 }
 
 /** A toggle's ▼ button, on the screen. */
+/**
+ * The closed toggles a position is inside (not on their own line), opened,
+ * the outermost first: for find in the note, whose match there was counted
+ * but not to be seen, as a browser's own find opens a <details>.
+ */
+export function openTogglesAround(view: EditorView, pos: number): void {
+  const $pos = view.state.doc.resolve(pos);
+  for (let depth = 1; depth <= $pos.depth; depth += 1) {
+    const node = $pos.node(depth);
+    if (node.type.name !== "blockContainer" || !isToggle(node.firstChild)) continue;
+    const block = { node, pos: $pos.before(depth) };
+    if (pos <= block.pos + 1 + node.firstChild!.nodeSize) continue;
+    if (!isOpenOnScreen(view, block)) buttonOf(view, block)?.click();
+  }
+}
+
 function buttonOf(view: EditorView, block: Found): HTMLElement | null {
   const content = view.nodeDOM(block.pos + 1);
   return content instanceof HTMLElement

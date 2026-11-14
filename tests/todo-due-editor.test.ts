@@ -216,3 +216,13 @@ describe("the Todo's dues", () => {
     expect(host.querySelectorAll(".todo-due-add")).toHaveLength(0);
   });
 });
+
+describe("the due of an item made by Enter", () => {
+  test("its day's end; today's end for one made from a late item, not born late", async () => {
+    const { madeDue } = await import("@/components/editor/todo-due");
+    const now = new Date(2026, 10, 15, 10, 0);
+    expect(madeDue(new Date(2026, 10, 16), now)).toBe("2026-11-16T23:59");
+    expect(madeDue(new Date(2026, 10, 15), now)).toBe("2026-11-15T23:59");
+    expect(madeDue(new Date(2026, 10, 10), now)).toBe("2026-11-15T23:59");
+  });
+});

@@ -112,8 +112,14 @@ let running: Running | null = null;
 let failures = 0;
 /** When the last of them was, for the worker to be asked again after RETRY_AFTER_MS. */
 let failedAt = 0;
-/** The encoder could not be loaded: not tried again until the network is back. */
+/**
+ * The encoder could not be loaded: not tried again until the network is
+ * back, or a while has passed (blockedAt). Failed with the network up (a
+ * slow load, the server's moment of trouble), no "online" came to free it,
+ * and every image after went without it for as long as the page was open.
+ */
 let loadBlocked = false;
+let blockedAt = 0;
 let idle: ReturnType<typeof setTimeout> | null = null;
 let nextId = 0;
 const waiting = new Map<number, (reply: Reply | null) => void>();
@@ -129,7 +135,7 @@ if (typeof window !== "undefined") {
 /** Whether asking the worker is worth it here: it can run, and has not kept failing, or not lately. */
 export function webpWorkerAvailable(): boolean {
   return (
-    !loadBlocked &&
+    (!loadBlocked || Date.now() - blockedAt >= RETRY_AFTER_MS) &&
     (failures < GIVE_UP_AFTER || Date.now() - failedAt >= RETRY_AFTER_MS) &&
     typeof Worker !== "undefined" &&
     typeof WebAssembly !== "undefined"
@@ -270,6 +276,7 @@ async function encodeOnce(
   const encoder = startWorker();
   if (!encoder) {
     loadBlocked = true;
+    blockedAt = Date.now();
     return { webp: null, waitedMs: since(), issue: "no worker" };
   }
 
@@ -286,6 +293,7 @@ async function encodeOnce(
     // Most likely offline with nothing cached yet: not the encoder's fault,
     // and tried again once the network is back.
     loadBlocked = true;
+    blockedAt = Date.now();
     stopWorker();
     return { webp: null, waitedMs: since(), issue: ready.error };
   }
@@ -389,6 +397,7 @@ async function prepareOnce(
   const encoder = startWorker();
   if (!encoder) {
     loadBlocked = true;
+    blockedAt = Date.now();
     return null;
   }
   const ready = await new Promise<Ready>((resolve) => {
@@ -402,6 +411,7 @@ async function prepareOnce(
   });
   if (!ready.ready) {
     loadBlocked = true;
+    blockedAt = Date.now();
     stopWorker();
     return null;
   }

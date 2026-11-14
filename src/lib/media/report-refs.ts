@@ -81,7 +81,10 @@ export async function reportAttachmentRefs(
     // every file it shows as gone. The vault is held open while it is read,
     // and a note that reads as no blocks at all is not reported: every note
     // the editor has touched has at least one.
-    const release = note.locked ? vault.hold() : null;
+    // Held for the reading only, not for the server's answer: offline, the
+    // mutation waits for the network, and the vault, held, could not close
+    // (its time up, or asked to) until it came back.
+    let release = note.locked ? vault.hold() : null;
     try {
       if (note.locked && !vault.isUnlocked) continue;
       const read = empty
@@ -90,6 +93,8 @@ export async function reportAttachmentRefs(
             refs: attachmentRefs(doc),
             blocks: bodyFragment(doc).length,
           }));
+      release?.();
+      release = null;
       if (!empty && read.blocks === 0) continue;
       const refs = read.refs;
       if (refs.length > MAX_REFS) continue;

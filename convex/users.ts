@@ -3,6 +3,7 @@ import { components, internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, internalMutation, mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { nearLimit } from "./lib/budget";
 import { DEFAULTS } from "./lib/constants";
 import { openSeq } from "./lib/seq";
 import { styleValidator } from "./lib/style";
@@ -261,8 +262,9 @@ export const deleteAccount = mutation({
 export const purgeAccount = internalMutation({
   args: { userId: v.id("users") },
   handler: async (ctx, { userId }) => {
-    const BATCH = 200;
-    let work = BATCH;
+    // At most this many rows a transaction, and fewer where they are large
+    // (see nearLimit): the rest in the next, scheduled below.
+    let work = 200;
 
     type PurgeableId =
       | Id<"attachmentRefs">
@@ -273,68 +275,43 @@ export const purgeAccount = internalMutation({
       | Id<"notes">
       | Id<"folders">;
 
-    const drop = async (rows: { _id: PurgeableId }[]) => {
-      for (const row of rows) {
+    /** Each row as it is read, deleted (its file first), until the transaction has done enough. */
+    const sweep = async <Row extends { _id: PurgeableId }>(
+      rows: AsyncIterable<Row>,
+      before?: (row: Row) => Promise<void>,
+    ) => {
+      if (work <= 0) return;
+      for await (const row of rows) {
+        if (before) await before(row);
         await ctx.db.delete(row._id);
         work -= 1;
+        if (work <= 0 || (await nearLimit(ctx))) {
+          work = 0;
+          return;
+        }
       }
     };
 
-    const updates = await ctx.db
-      .query("noteUpdates")
-      .withIndex("by_user_seq", (q) => q.eq("userId", userId))
-      .take(work);
-    await drop(updates);
-
-    if (work > 0) {
-      const snapshots = await ctx.db
-        .query("noteSnapshots")
-        .withIndex("by_user_seq", (q) => q.eq("userId", userId))
-        .take(work);
-      for (const row of snapshots) {
+    await sweep(ctx.db.query("noteUpdates").withIndex("by_user_seq", (q) => q.eq("userId", userId)));
+    await sweep(
+      ctx.db.query("noteSnapshots").withIndex("by_user_seq", (q) => q.eq("userId", userId)),
+      async (row) => {
         if (row.storageId) await ctx.storage.delete(row.storageId);
-      }
-      await drop(snapshots);
-    }
-    if (work > 0) {
-      const versions = await ctx.db
-        .query("noteVersions")
-        .withIndex("by_user_note_created", (q) => q.eq("userId", userId))
-        .take(work);
-      for (const row of versions) await ctx.storage.delete(row.storageId);
-      await drop(versions);
-    }
-    if (work > 0) {
-      const attachments = await ctx.db
-        .query("attachments")
-        .withIndex("by_user_seq", (q) => q.eq("userId", userId))
-        .take(work);
-      for (const row of attachments) {
+      },
+    );
+    await sweep(
+      ctx.db.query("noteVersions").withIndex("by_user_note_created", (q) => q.eq("userId", userId)),
+      async (row) => ctx.storage.delete(row.storageId),
+    );
+    await sweep(
+      ctx.db.query("attachments").withIndex("by_user_seq", (q) => q.eq("userId", userId)),
+      async (row) => {
         if (row.storageId) await ctx.storage.delete(row.storageId);
-      }
-      await drop(attachments);
-    }
-    if (work > 0) {
-      const refs = await ctx.db
-        .query("attachmentRefs")
-        .withIndex("by_user_note", (q) => q.eq("userId", userId))
-        .take(work);
-      await drop(refs);
-    }
-    if (work > 0) {
-      const notes = await ctx.db
-        .query("notes")
-        .withIndex("by_user_seq", (q) => q.eq("userId", userId))
-        .take(work);
-      await drop(notes);
-    }
-    if (work > 0) {
-      const folders = await ctx.db
-        .query("folders")
-        .withIndex("by_user_seq", (q) => q.eq("userId", userId))
-        .take(work);
-      await drop(folders);
-    }
+      },
+    );
+    await sweep(ctx.db.query("attachmentRefs").withIndex("by_user_note", (q) => q.eq("userId", userId)));
+    await sweep(ctx.db.query("notes").withIndex("by_user_seq", (q) => q.eq("userId", userId)));
+    await sweep(ctx.db.query("folders").withIndex("by_user_seq", (q) => q.eq("userId", userId)));
 
     if (work <= 0) {
       await ctx.scheduler.runAfter(0, internal.users.purgeAccount, { userId });

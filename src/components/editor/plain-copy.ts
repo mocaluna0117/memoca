@@ -9,6 +9,7 @@ import {
   imagesAlone,
   isWebKit,
   putImageOnClipboard,
+  printOf,
   rememberImageCopy,
   stitch,
 } from "@/components/editor/copy-image";
@@ -125,12 +126,16 @@ export function usePlainTextCopy(
           // what the copy wrote, as the browser's own write would be.
           void Promise.all(
             images.map(({ url, name }, index) =>
-              load(url).then((blob) => asFile(blob, name, index)),
+              load(url).then(async (blob) => ({ ...(await asFile(blob, name, index)), print: printOf(blob) })),
             ),
           )
             .then(async (files) => {
               if (!current()) return;
-              rememberImageCopy({ html: clipboardHTML, sizes: files.map(({ size }) => size) });
+              rememberImageCopy({
+                html: clipboardHTML,
+                sizes: files.map(({ size }) => size),
+                prints: Promise.all(files.map(({ print }) => print)),
+              });
               await copyFiles(files.map(({ file }) => file));
             })
             .catch(() => {});
@@ -140,7 +145,11 @@ export function usePlainTextCopy(
           .then((blobs) => (blobs.length === 1 ? asPng(blobs[0]!) : stitch(blobs)))
           .then(({ png, width, height }) => {
             if (!current()) throw new Error("overtaken");
-            rememberImageCopy({ html: clipboardHTML, sizes: [{ width, height }] });
+            rememberImageCopy({
+              html: clipboardHTML,
+              sizes: [{ width, height }],
+              prints: printOf(png).then((print) => [print]),
+            });
             return png;
           });
         if (isWebKit()) {

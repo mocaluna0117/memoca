@@ -1,8 +1,26 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { useSync } from "@/components/providers/sync-provider";
-import { NEWS } from "@/lib/news";
+
+/** What the unread count needs of each お知らせ: when, and which. */
+type Dated = { id: string; date: string };
+
+/**
+ * The お知らせ, loaded once the shell is up: not in the JavaScript every page
+ * starts with (all of them, 120 KB and growing with each change), for a dot
+ * on one button. Null until then, and none unread.
+ */
+let loaded: readonly Dated[] | null = null;
+let loading: Promise<void> | null = null;
+
+function loadNews(): Promise<void> {
+  loading ??= import("@/lib/news").then(({ NEWS }) => {
+    loaded = NEWS.map(({ id, date }) => ({ id, date }));
+    for (const listener of listeners) listener();
+  });
+  return loading;
+}
 
 /** Where this device keeps the newest お知らせ it has seen, by its id. */
 const KEY = "memoca:news-seen";
@@ -31,13 +49,14 @@ const dayOf = (at: number) => {
  * (`joinedAt`): what came before is not news to someone new. Not knowing
  * when that was yet, none.
  */
-export function unread(joinedAt: number | null | undefined): number {
+export function unread(joinedAt: number | null | undefined, news: readonly Dated[] | null = loaded): number {
+  if (!news) return 0;
   const seen = seenId();
-  const at = seen === null ? -1 : NEWS.findIndex((item) => item.id === seen);
+  const at = seen === null ? -1 : news.findIndex((item) => item.id === seen);
   if (at >= 0) return at;
   if (joinedAt == null) return 0;
   const joined = dayOf(joinedAt);
-  return NEWS.filter((item) => item.date > joined).length;
+  return news.filter((item) => item.date > joined).length;
 }
 
 function subscribe(onChange: () => void) {
@@ -56,6 +75,12 @@ function subscribe(onChange: () => void) {
  */
 export function useUnreadNews(): number {
   const joinedAt = useSync().me?.createdAt;
+  useEffect(() => {
+    void loadNews().catch(() => {
+      // Offline before the お知らせ were ever loaded: tried again next time.
+      loading = null;
+    });
+  }, []);
   return useSyncExternalStore(
     subscribe,
     () => unread(joinedAt),
@@ -64,8 +89,7 @@ export function useUnreadNews(): number {
 }
 
 /** Marks every お知らせ there is as seen on this device. */
-export function markNewsSeen(): void {
-  const newest = NEWS[0];
+export function markNewsSeen(newest: Dated | undefined): void {
   if (!newest) return;
   try {
     localStorage.setItem(KEY, newest.id);

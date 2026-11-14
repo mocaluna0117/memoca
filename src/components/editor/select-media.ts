@@ -41,12 +41,24 @@ export function blockAt($pos: ResolvedPos): Found | null {
   return null;
 }
 
-/** The block reading after a position between blocks: the next at its level, or after the block it is in. */
+/** Columns, and the row of them: what holds blocks side by side, read one column after another. */
+const isColumns = (node: Node | null | undefined) =>
+  node?.type.name === "columnList" || node?.type.name === "column";
+
+/**
+ * The block reading after a position between blocks: the next at its level,
+ * or after the block it is in; into columns, and from one column on to the
+ * next. Columns stopped it: ↑ and ↓ over chosen blocks went no further.
+ */
 function blockAfterPos(doc: Node, pos: number): Found | null {
   let $pos = doc.resolve(pos);
   for (;;) {
     const next = $pos.nodeAfter;
     if (next?.type.name === "blockContainer") return { node: next, pos: $pos.pos };
+    if (isColumns(next)) {
+      $pos = doc.resolve($pos.pos + 1);
+      continue;
+    }
     if ($pos.depth === 0) return null;
     $pos = doc.resolve($pos.after());
   }
@@ -61,12 +73,27 @@ export function blockAfter(doc: Node, block: Found, shown: Shown): Found | null 
 
 /** The block reading before a block: the one before it (its last inside, if shown), or the one it is in. */
 export function blockBefore(doc: Node, block: Found, shown: Shown): Found | null {
-  const $pos = doc.resolve(block.pos);
-  const previous = $pos.nodeBefore;
+  let $pos = doc.resolve(block.pos);
+  let previous = $pos.nodeBefore;
+  // Through columns as blockAfterPos goes: into the end of the ones before,
+  // and out of the first column to before the row of them.
+  for (;;) {
+    if (isColumns(previous)) {
+      $pos = doc.resolve($pos.pos - 1);
+      previous = $pos.nodeBefore;
+      continue;
+    }
+    if (!previous && isColumns($pos.parent)) {
+      $pos = doc.resolve($pos.before());
+      previous = $pos.nodeBefore;
+      continue;
+    }
+    break;
+  }
   if (previous?.type.name !== "blockContainer") {
     return $pos.depth > 1 ? blockAt(doc.resolve($pos.before())) : null;
   }
-  let found: Found = { node: previous, pos: block.pos - previous.nodeSize };
+  let found: Found = { node: previous, pos: $pos.pos - previous.nodeSize };
   while (hasShownInside(found, shown)) {
     const group = found.node.child(1);
     const last = group.lastChild!;
@@ -447,7 +474,10 @@ export function deleteOntoMedia(state: EditorState, shown: Shown): Transaction |
 }
 
 /** A transaction, if there is one, dispatched: whether there was. */
-function run(view: EditorView | undefined, make: (state: EditorState, shown: Shown) => Transaction | null) {
+function run(
+  view: EditorView | undefined,
+  make: (state: EditorState, shown: Shown) => Transaction | null,
+) {
   const tr = view && make(view.state, shownOn(view));
   if (!tr) return false;
   view.dispatch(tr);
@@ -465,88 +495,102 @@ const endsAtMedia = (selection: Selection) =>
  * ↑, or ⌘A) as text around them is, and shown as selected when they are:
  * see {@link extendOverMedia}.
  */
-export const selectMedia = createExtension(({ editor }) => ({
-  key: "memocaSelectMedia",
-  mount({ dom, root, signal }) {
-    // A drag of the mouse to select, from where it began: not a click, and
-    // not one that began on an image (which drags the image).
-    let down: { x: number; y: number; anchor: number } | null = null;
-    dom.addEventListener(
-      "mousedown",
-      (event) => {
-        // Taken for a box of blocks (block-select.ts): not a selection of text.
-        if (event.defaultPrevented) {
+export const selectMedia = createExtension(({ editor }) => {
+  // A triple click selecting a line (its paragraph): not all of the note's
+  // text, though in a note of one line it is the same range, and the image
+  // under the line was taken in, to go with what was typed next.
+  let lineClick = false;
+  return {
+    key: "memocaSelectMedia",
+    mount({ dom, root, signal }) {
+      dom.addEventListener(
+        "mousedown",
+        (event) => {
+          lineClick = event.detail >= 3;
+        },
+        { signal, capture: true },
+      );
+      dom.addEventListener("keydown", () => (lineClick = false), { signal, capture: true });
+      // A drag of the mouse to select, from where it began: not a click, and
+      // not one that began on an image (which drags the image).
+      let down: { x: number; y: number; anchor: number } | null = null;
+      dom.addEventListener(
+        "mousedown",
+        (event) => {
+          // Taken for a box of blocks (block-select.ts): not a selection of text.
+          if (event.defaultPrevented) {
+            down = null;
+            return;
+          }
+          const view = editor.prosemirrorView;
+          const target = event.target instanceof Element ? event.target : null;
+          const block = target?.closest(".bn-block-content");
+          const onImage =
+            !!block?.querySelector("img, video, audio") && !target?.closest(".bn-inline-content");
+          const at = view?.posAtCoords({ left: event.clientX, top: event.clientY });
+          down =
+            event.button === 0 && !event.shiftKey && !onImage && at
+              ? { x: event.clientX, y: event.clientY, anchor: at.pos }
+              : null;
+        },
+        { signal },
+      );
+      // A drag of what is selected, to move it, ends with no mouseup.
+      dom.addEventListener("dragstart", () => (down = null), { signal });
+      root.addEventListener(
+        "mouseup",
+        (event) => {
+          const start = down;
           down = null;
-          return;
-        }
-        const view = editor.prosemirrorView;
-        const target = event.target instanceof Element ? event.target : null;
-        const block = target?.closest(".bn-block-content");
-        const onImage =
-          !!block?.querySelector("img, video, audio") && !target?.closest(".bn-inline-content");
-        const at = view?.posAtCoords({ left: event.clientX, top: event.clientY });
-        down =
-          event.button === 0 && !event.shiftKey && !onImage && at
-            ? { x: event.clientX, y: event.clientY, anchor: at.pos }
-            : null;
-      },
-      { signal },
-    );
-    // A drag of what is selected, to move it, ends with no mouseup.
-    dom.addEventListener("dragstart", () => (down = null), { signal });
-    root.addEventListener(
-      "mouseup",
-      (event) => {
-        const start = down;
-        down = null;
-        const view = editor.prosemirrorView;
-        if (!start || !view) return;
-        const { clientX: x, clientY: y } = event as MouseEvent;
-        if (Math.hypot(x - start.x, y - start.y) < 4) return;
-        // Once ProseMirror has taken the selection the drag made.
-        setTimeout(() => {
-          if (signal.aborted) return;
-          const media = mediaAtPointer(view, x, y);
-          if (!media) return;
-          const { selection } = view.state;
-          const anchor = selection instanceof TextSelection ? selection.anchor : start.anchor;
-          const tr = dragOntoMedia(view.state, anchor, media);
-          if (tr) view.dispatch(tr);
-        });
-      },
-      { signal },
-    );
-  },
-  keyboardShortcuts: {
-    "Shift-ArrowDown": () => extend(editor.prosemirrorView, "down"),
-    "Shift-ArrowUp": () => extend(editor.prosemirrorView, "up"),
-    Enter: () => enterOverMedia(editor.prosemirrorView),
-    // Without Shift, a selection ending at an image lets go, as it does
-    // ending in text: the browser has no text there to move the caret to.
-    ArrowDown: () => collapse(editor.prosemirrorView, 1),
-    End: () => collapse(editor.prosemirrorView, 1),
-  },
-  prosemirrorPlugins: [
-    new Plugin({
-      appendTransaction: (transactions, _before, after) =>
-        transactions.some((tr) => tr.selectionSet) ? selectAllOfIt(after) : null,
-      props: {
-        decorations: mediaSelected,
-        handleDOMEvents: {
-          // Typed over with an input method, the browser changes the text it
-          // can see and ProseMirror takes that: an image selected with it
-          // would stay. Taken out first, as typing over it without one does.
-          compositionstart: (view) => {
-            if (endsAtMedia(view.state.selection)) {
-              view.dispatch(view.state.tr.deleteSelection());
-            }
-            return false;
+          const view = editor.prosemirrorView;
+          if (!start || !view) return;
+          const { clientX: x, clientY: y } = event as MouseEvent;
+          if (Math.hypot(x - start.x, y - start.y) < 4) return;
+          // Once ProseMirror has taken the selection the drag made.
+          setTimeout(() => {
+            if (signal.aborted) return;
+            const media = mediaAtPointer(view, x, y);
+            if (!media) return;
+            const { selection } = view.state;
+            const anchor = selection instanceof TextSelection ? selection.anchor : start.anchor;
+            const tr = dragOntoMedia(view.state, anchor, media);
+            if (tr) view.dispatch(tr);
+          });
+        },
+        { signal },
+      );
+    },
+    keyboardShortcuts: {
+      "Shift-ArrowDown": () => extend(editor.prosemirrorView, "down"),
+      "Shift-ArrowUp": () => extend(editor.prosemirrorView, "up"),
+      Enter: () => enterOverMedia(editor.prosemirrorView),
+      // Without Shift, a selection ending at an image lets go, as it does
+      // ending in text: the browser has no text there to move the caret to.
+      ArrowDown: () => collapse(editor.prosemirrorView, 1),
+      End: () => collapse(editor.prosemirrorView, 1),
+    },
+    prosemirrorPlugins: [
+      new Plugin({
+        appendTransaction: (transactions, _before, after) =>
+          !lineClick && transactions.some((tr) => tr.selectionSet) ? selectAllOfIt(after) : null,
+        props: {
+          decorations: mediaSelected,
+          handleDOMEvents: {
+            // Typed over with an input method, the browser changes the text it
+            // can see and ProseMirror takes that: an image selected with it
+            // would stay. Taken out first, as typing over it without one does.
+            compositionstart: (view) => {
+              if (endsAtMedia(view.state.selection)) {
+                view.dispatch(view.state.tr.deleteSelection());
+              }
+              return false;
+            },
           },
         },
-      },
-    }),
-  ],
-}));
+      }),
+    ],
+  };
+});
 
 /**
  * Backspace and Delete next to an image or a file: the image selected first,

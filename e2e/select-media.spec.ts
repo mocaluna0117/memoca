@@ -183,6 +183,23 @@ test.describe("an image selected with Shift and the arrow keys", () => {
     await expect(looksSelected(page)).toHaveCount(0);
   });
 
+  test("a line triple-clicked, in a note of that line and an image: the line alone, the image kept as it is typed over", async ({
+    page,
+  }) => {
+    await signUp(page);
+    await openApp(page);
+    await createNote(page, "画像");
+    await editor(page).click();
+    await page.keyboard.type("一行目");
+    await pasteImage(page);
+    await editor(page).getByText("一行目").click({ clickCount: 3 });
+    await page.waitForTimeout(100);
+    await expect(looksSelected(page)).toHaveCount(0);
+    await page.keyboard.type("書き換え");
+    await expect(editor(page)).toContainText("書き換え");
+    await expect(noteImages(page)).toHaveCount(1);
+  });
+
   test("typed over with the input method, the image selected goes with the text", async ({
     page,
   }) => {

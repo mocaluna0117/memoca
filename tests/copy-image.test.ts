@@ -10,6 +10,7 @@ import {
   isWebKit,
   pasteOwnImage,
   rememberImageCopy,
+  samePictures,
 } from "@/components/editor/copy-image";
 
 const IMAGE: PartialBlock = { type: "image", props: { url: "memoca://att/0190" } };
@@ -177,5 +178,34 @@ describe("the image put on the clipboard", () => {
     vi.setSystemTime(Date.now() + 31 * 60 * 1000);
     expect(pasteOwnImage(pasteOf(), editor)).toBe(false);
     vi.useRealTimers();
+  });
+});
+
+describe("pictures pasted told from those copied", () => {
+  const size = { width: 800, height: 600 };
+  const print = (shade: number) => new Uint8Array(64).fill(shade);
+
+  test("the same picture written again (nearly the same print) is the one copied", () => {
+    const again = print(120).map((value, index) => value + (index % 3));
+    expect(samePictures([{ size, print: again }], [{ size, print: print(120) }])).toBe(true);
+  });
+
+  test("another picture of the same size (a screenshot since) is not", () => {
+    expect(samePictures([{ size, print: print(30) }], [{ size, print: print(200) }])).toBe(false);
+  });
+
+  test("with no print on either side, its size alone tells, as before", () => {
+    expect(samePictures([{ size, print: null }], [{ size, print: print(200) }])).toBe(true);
+    expect(samePictures([{ size: { width: 1, height: 1 }, print: null }], [{ size, print: null }])).toBe(false);
+  });
+
+  test("several, in another order", () => {
+    const other = { width: 10, height: 10 };
+    expect(
+      samePictures(
+        [{ size: other, print: print(5) }, { size, print: print(90) }],
+        [{ size, print: print(90) }, { size: other, print: print(5) }],
+      ),
+    ).toBe(true);
   });
 });

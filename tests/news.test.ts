@@ -24,24 +24,24 @@ describe("those not seen on this device", () => {
   const after = (day: string) => NEWS.filter((item) => item.date > day).length;
 
   test("with none seen here, those after the day the account was made", () => {
-    expect(unread(madeOn("2026-01-01"))).toBe(NEWS.length);
-    expect(unread(madeOn("2026-09-28"))).toBe(after("2026-09-28"));
+    expect(unread(madeOn("2026-01-01"), NEWS)).toBe(NEWS.length);
+    expect(unread(madeOn("2026-09-28"), NEWS)).toBe(after("2026-09-28"));
     expect(after("2026-09-28")).toBeGreaterThan(0);
     expect(after("2026-09-28")).toBeLessThan(NEWS.length);
     // Made on the day of the newest, or later: nothing new to them.
-    expect(unread(madeOn(NEWS[0]!.date))).toBe(0);
+    expect(unread(madeOn(NEWS[0]!.date), NEWS)).toBe(0);
     // Not known yet when: none, not all.
-    expect(unread(null)).toBe(0);
+    expect(unread(null, NEWS)).toBe(0);
   });
 
   test("once seen, those after the newest seen, however old the account", () => {
     localStorage.setItem("memoca:news-seen", NEWS[2]!.id);
-    expect(unread(madeOn("2026-01-01"))).toBe(2);
-    expect(unread(madeOn("2030-01-01"))).toBe(2);
-    markNewsSeen();
-    expect(unread(madeOn("2026-01-01"))).toBe(0);
+    expect(unread(madeOn("2026-01-01"), NEWS)).toBe(2);
+    expect(unread(madeOn("2030-01-01"), NEWS)).toBe(2);
+    markNewsSeen(NEWS[0]);
+    expect(unread(madeOn("2026-01-01"), NEWS)).toBe(0);
     // One seen that is no longer there: as if none were.
     localStorage.setItem("memoca:news-seen", "gone");
-    expect(unread(madeOn("2026-09-28"))).toBe(after("2026-09-28"));
+    expect(unread(madeOn("2026-09-28"), NEWS)).toBe(after("2026-09-28"));
   });
 });

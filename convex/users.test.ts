@@ -148,3 +148,31 @@ describe("deleting the account", () => {
     }
   });
 });
+
+describe("an account's rows purged", () => {
+  test("large ones (snapshots kept inline, near 1 MB each) across several transactions, not one that fails", async () => {
+    vi.useFakeTimers();
+    const t = setup();
+    await signedIn(t);
+    const userId = await t.run(async (ctx) => (await ctx.db.query("users").first())!._id);
+    await t.run(async (ctx) => {
+      for (let n = 0; n < 30; n += 1) {
+        await ctx.db.insert("noteSnapshots", {
+          userId,
+          noteId: `note-${n}`,
+          keyEpoch: 0,
+          coversThroughSeq: 1,
+          payload: new Uint8Array(800_000).fill(n).buffer,
+          size: 800_000,
+          seq: n + 1,
+          createdAt: 0,
+        });
+      }
+    });
+    const { internal } = await import("./_generated/api");
+    await t.mutation(internal.users.purgeAccount, { userId });
+    await t.finishAllScheduledFunctions(vi.runAllTimers);
+    expect(await t.run(async (ctx) => (await ctx.db.query("noteSnapshots").collect()).length)).toBe(0);
+    vi.useRealTimers();
+  });
+});

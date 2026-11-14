@@ -7,6 +7,7 @@ import { fileTombstone } from "./lib/files";
 import { systemOf } from "./lib/folders";
 import { type Stamp, isNewer } from "./lib/hlc";
 import { stampV } from "./lib/ops";
+import { nearLimit } from "./lib/budget";
 import { allNotesReported, dropNoteRefs, isInUse, settleUse } from "./lib/refs";
 import { type SeqWriter, openSeq } from "./lib/seq";
 import { requireUser } from "./lib/user";
@@ -210,7 +211,7 @@ async function purgeTargets(
 
   for (const { folders, notes, complete } of subtrees) {
     for (const note of notes) {
-      if (budget <= 0) {
+      if (budget <= 0 || (await nearLimit(ctx))) {
         more = true;
         break;
       }
@@ -227,7 +228,7 @@ async function purgeTargets(
   }
 
   for (const noteId of noteIds) {
-    if (budget <= 0) {
+    if (budget <= 0 || (await nearLimit(ctx))) {
       more = true;
       break;
     }

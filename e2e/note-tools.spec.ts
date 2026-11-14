@@ -95,4 +95,27 @@ test.describe("in a note", () => {
     await expect(page.locator(".memoca-find-match")).toHaveCount(0);
     expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("リンゴ");
   });
+
+  test("a match inside a closed toggle: the toggle opened, the match to be seen", async ({ page }) => {
+    await createNote(page, "箱のメモ", "前置き");
+    await editor(page).locator(".bn-block-content").last().click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.keyboard.type("/折りたたみリスト");
+    await page.getByRole("option", { name: /^折りたたみリスト/ }).click();
+    await expect(editor(page).locator('[data-content-type="toggleListItem"]')).toHaveCount(1);
+    await page.keyboard.type("箱");
+    const toggle = editor(page).locator('[data-content-type="toggleListItem"]');
+    await toggle.locator(".bn-toggle-button").click();
+    await toggle.locator(".bn-toggle-add-block-button").click();
+    await page.keyboard.type("隠れた宝物");
+    await toggle.locator(".bn-toggle-button").click();
+    const wrapper = toggle.locator(".bn-toggle-wrapper");
+    await expect(wrapper).toHaveAttribute("data-show-children", "false");
+
+    await page.keyboard.press("ControlOrMeta+f");
+    await page.getByRole("textbox", { name: "メモ内を検索" }).fill("宝物");
+    await expect(wrapper).toHaveAttribute("data-show-children", "true");
+    await expect(page.locator(".memoca-find-current")).toBeVisible();
+  });
 });

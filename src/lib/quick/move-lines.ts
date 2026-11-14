@@ -97,7 +97,9 @@ export function removeLines(editor: BlockNoteEditor, ids: string[]): void {
 
 /** Puts lines taken out back where they were (into an empty tab, as its lines; with nowhere found, at its top). */
 export function putBackLines(editor: BlockNoteEditor, blocks: Block[], anchor: LinesAnchor): void {
-  const lines = linesOnly(blocks);
+  // Not those back already: ⌘ + Z in the quick note put them back before
+  // the toast's 元に戻す was pressed too, and they were there twice.
+  const lines = linesOnly(blocks).filter((line) => !line.id || !editor.getBlock(line.id));
   if (lines.length === 0) return;
   const document = editor.document;
   const first = document[0];

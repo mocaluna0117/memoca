@@ -40,6 +40,25 @@ export async function openPdf(blob: Blob): Promise<PDFDocumentProxy | null> {
   if (!looksLikePdf(data)) return null;
   const { lib, worker } = await pdfjs();
   const base = assets(lib.version);
+  try {
+    return await openWith(lib, worker, data, base);
+  } catch (error) {
+    // The worker never started (its script not fetched: offline with the
+    // first PDF shown, say): made again for the next one, not kept broken
+    // for every PDF until the page is loaded again.
+    const started = await worker.promise.then(
+      () => true,
+      () => false,
+    );
+    if (!started || worker.destroyed) {
+      worker.destroy();
+      loading = null;
+    }
+    throw error;
+  }
+}
+
+function openWith(lib: PdfJs, worker: PDFWorker, data: Uint8Array, base: string): Promise<PDFDocumentProxy> {
   return lib.getDocument({
     data,
     worker,

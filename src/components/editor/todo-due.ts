@@ -59,6 +59,16 @@ export function enteredIn(view: EditorView, id: string): void {
 /** The time a new item is given, on the day of the item it was made from: the end of that day. */
 export const MADE_AT_TIME = "23:59";
 
+/**
+ * The due of an item made by Enter in one due on `day`: that day, at its
+ * end; today's end for one made from an item already late, which was born
+ * late (red, under 期限切れ) otherwise.
+ */
+export function madeDue(day: Date, now: Date): string {
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  return dueOf(day < today ? today : day, MADE_AT_TIME);
+}
+
 /** The list's items, as its blocks are, in order. */
 function itemsOf(doc: Node): { id: string; node: Node }[] {
   const found: { id: string; node: Node }[] = [];
@@ -252,7 +262,7 @@ export const todoDue = createExtension(({ editor, options }: ExtensionOptions<{ 
             const source = itemsOf(current.state.doc).find((item) => item.id === last.id);
             const due = readDue(map.get(last.id));
             if (!source || isChecked(source.node) || !due || map.has(made)) return;
-            const give = () => map.set(made, dueOf(due.day, MADE_AT_TIME));
+            const give = () => map.set(made, madeDue(due.day, new Date()));
             if (map.doc) map.doc.transact(give, TODO_DUE);
             else give();
           },

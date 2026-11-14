@@ -6,10 +6,11 @@ import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import * as Y from "yjs";
 import { db, resetLocalData, setMeta } from "@/lib/db";
 import { META } from "@/lib/db/meta";
-import { DRAFT_DELAY_MS, keepDraft, loadTabs } from "@/lib/quick/draft";
+import { DRAFT_DELAY_MS, MAX_TABS, keepDraft, loadTabs, newTabId } from "@/lib/quick/draft";
 import { imageUrls } from "@/lib/quick/body";
 import { SHELL_HIDDEN } from "@/lib/quick/shell";
 import { readSaved } from "@/lib/quick/tabs";
+import { TODO_TAB_ID } from "@/lib/quick/todo-id";
 import { bodyFragment, extractText } from "@/lib/sync/ydoc";
 
 const ME = "user-me";
@@ -1485,6 +1486,13 @@ describe("the quick note's Todo tab", () => {
     await press(host.querySelector<HTMLButtonElement>('button[aria-label="Todo のタブを閉じる"]')!);
     expect(document.querySelector('[role="alertdialog"]')).toBeNull();
     expect(tabs()).toEqual(["新しいメモ"]);
+  });
+
+  test("with the most tabs there may be and it shown: what is shared goes into the last tab, not lost", async () => {
+    const ids = Array.from({ length: MAX_TABS }, () => newTabId());
+    await setMeta(`${META.quickTabs}:${ME}`, { userKey: ME, ids: [...ids, TODO_TAB_ID], active: TODO_TAB_ID });
+    await render("window=1&text=共有された文");
+    expect(field().value).toBe("共有された文");
   });
 
   test("what is shared never goes into it: a tab of its own", async () => {

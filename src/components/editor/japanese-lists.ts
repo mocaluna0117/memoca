@@ -244,6 +244,14 @@ export const japaneseLists = createExtension({
         const { block } = editor.getTextCursorPosition();
         if (block.type !== "bulletListItem") return undefined;
         if (!Array.isArray(block.content) || block.content.length > 0) return undefined;
+        // Not a change Backspace takes back: it put back the space dropped,
+        // at the item's start, where it was not wanted. Forgotten as the
+        // caret is set again (input rules keep what they did only until
+        // then), Backspace is the list's own: the item a line again.
+        queueMicrotask(() => {
+          const view = editor.prosemirrorView;
+          if (view) view.dispatch(view.state.tr.setSelection(view.state.selection));
+        });
         return { type: "bulletListItem", props: block.props };
       },
     },

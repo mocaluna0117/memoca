@@ -93,6 +93,19 @@ describe("lines indented under another, moved into the Todo", () => {
     putBackLines(editor, taken.blocks, taken.anchor);
     expect(outline()).toEqual(["bulletListItem:買い物", "  bulletListItem:牛乳", "  bulletListItem:卵"]);
   });
+
+  test("back already (⌘ + Z, then the toast's 元に戻す too): not put back twice", () => {
+    editorOf([
+      { type: "paragraph", content: "前" },
+      { type: "paragraph", content: "移す" },
+    ]);
+    select("移す", "移す");
+    const taken = linesForTodo(editor);
+    removeLines(editor, taken.blocks.map((block) => block.id));
+    putBackLines(editor, taken.blocks, taken.anchor);
+    putBackLines(editor, taken.blocks, taken.anchor);
+    expect(outline()).toEqual(["paragraph:前", "paragraph:移す"]);
+  });
 });
 
 describe("an image under a line moved into the Todo", () => {

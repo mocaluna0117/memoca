@@ -4,6 +4,7 @@ import { v } from "convex/values";
 import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import { internalAction } from "./_generated/server";
+import { PUSH_TRIES, againAfterMs, worthAgain } from "./lib/pushRetry";
 
 /** Where a reminder opens, tapped: the quick note's Todo. */
 const OPENS = "/quick?todo=1";
@@ -21,6 +22,8 @@ export const send = internalAction({
     title: v.string(),
     body: v.string(),
     tag: v.string(),
+    /** Which try this is: 0 the first (see lib/pushRetry). */
+    attempt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const publicKey = process.env.VAPID_PUBLIC_KEY;
@@ -31,6 +34,7 @@ export const send = internalAction({
     webpush.setVapidDetails(process.env.VAPID_SUBJECT ?? "https://memoca-app.vercel.app", publicKey, privateKey);
     const payload = JSON.stringify({ title: args.title, body: args.body, tag: args.tag, url: OPENS });
     const gone: Id<"pushSubscriptions">[] = [];
+    const again: typeof args.devices = [];
     await Promise.all(
       args.devices.map(async (device) => {
         try {
@@ -43,9 +47,14 @@ export const send = internalAction({
         } catch (error) {
           const status = (error as { statusCode?: number }).statusCode;
           if (status === 404 || status === 410) gone.push(device.id);
+          else if (worthAgain(status)) again.push(device);
         }
       }),
     );
     if (gone.length > 0) await ctx.runMutation(internal.pushSubscriptions.drop, { ids: gone });
+    const attempt = (args.attempt ?? 0) + 1;
+    if (again.length > 0 && attempt < PUSH_TRIES) {
+      await ctx.scheduler.runAfter(againAfterMs(attempt), internal.push.send, { ...args, devices: again, attempt });
+    }
   },
 });

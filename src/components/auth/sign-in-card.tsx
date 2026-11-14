@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "convex/react";
 import { api } from "@convex/_generated/api";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,17 @@ export function SignInCard({ next }: { next: string }) {
   const status = useQuery(api.users.signupStatus);
   const [busy, setBusy] = useState(false);
   const [failed, setFailed] = useState(false);
+
+  // Back from Google's page (the browser's ← before signing in there): this
+  // page shown again as it was left, from the browser's cache, the button
+  // still saying ログイン中… and not to be pressed again.
+  useEffect(() => {
+    const shown = (event: PageTransitionEvent) => {
+      if (event.persisted) setBusy(false);
+    };
+    window.addEventListener("pageshow", shown);
+    return () => window.removeEventListener("pageshow", shown);
+  }, []);
 
   const start = async () => {
     setBusy(true);
