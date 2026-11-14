@@ -1,0 +1,100 @@
+{
+  "runs": 3,
+  "cpuSlow": 4,
+  "modes": {
+    "explorer": {
+      "0": {
+        "error": "Error: rows: {\"timedOut\":true,\"found\":0} of 1"
+      },
+      "500": {
+        "load": 1153.4,
+        "loadLongMs": 871,
+        "open": 661.9,
+        "openLongMs": 603,
+        "scrollLongFrames": 0,
+        "scrollP95": 33.4,
+        "scrollLongMs": 0,
+        "typeP50": 15.1,
+        "typeP95": 26.2,
+        "typeLongMs": 0,
+        "heapMB": 231,
+        "nodes": 54228
+      },
+      "2000": {
+        "load": 3310,
+        "loadLongMs": 3857,
+        "open": 3262.5,
+        "openLongMs": 3183,
+        "scrollLongFrames": 26,
+        "scrollP95": 50.1,
+        "scrollLongMs": 1371,
+        "typeP50": 26.9,
+        "typeP95": 74.5,
+        "typeLongMs": 282,
+        "heapMB": 409,
+        "nodes": 127205
+      },
+      "5000": {
+        "load": 12948.6,
+        "loadLongMs": 13713,
+        "open": 14400.4,
+        "openLongMs": 14300,
+        "scrollLongFrames": 382,
+        "scrollP95": 133.3,
+        "scrollLongMs": 33690,
+        "typeP50": 64.4,
+        "typeP95": 346.1,
+        "typeLongMs": 2500,
+        "heapMB": 967,
+        "nodes": 316247
+      }
+    },
+    "list": {
+      "0": {
+        "error": "Error: rows: {\"timedOut\":true,\"found\":0} of 1"
+      },
+      "500": {
+        "load": 852.1,
+        "loadLongMs": 593,
+        "open": 693.6,
+        "openLongMs": 640,
+        "scrollLongFrames": 0,
+        "scrollP95": 16.7,
+        "scrollLongMs": 0,
+        "typeP50": 10.9,
+        "typeP95": 18.1,
+        "typeLongMs": 0,
+        "heapMB": 189,
+        "nodes": 19870
+      },
+      "2000": {
+        "load": 1677.7,
+        "loadLongMs": 2042,
+        "open": 3199.9,
+        "openLongMs": 3114,
+        "scrollLongFrames": 2,
+        "scrollP95": 16.8,
+        "scrollLongMs": 0,
+        "typeP50": 10.7,
+        "typeP95": 35.7,
+        "typeLongMs": 233,
+        "heapMB": 416,
+        "nodes": 55276
+      },
+      "5000": {
+        "load": 4873.6,
+        "loadLongMs": 4428,
+        "open": 16179.1,
+        "openLongMs": 15979,
+        "scrollLongFrames": 14,
+        "scrollP95": 33.4,
+        "scrollLongMs": 2679,
+        "typeP50": 12.5,
+        "typeP95": 159.1,
+        "typeLongMs": 1203,
+        "heapMB": 946,
+        "nodes": 136264
+      }
+    }
+  }
+}
