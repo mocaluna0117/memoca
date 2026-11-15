@@ -13,8 +13,12 @@
 //! (its warning) is common on such a Mac, even with little open, so the
 //! window is let go of then only once it has been put away for a while;
 //! very short, sooner. Elsewhere it is kept as before.
+//!
+//! The quick note's window, which is never let go of, is loaded again out
+//! of sight instead, sooner than its usual 12 hours while memory is short:
+//! a page kept for hours holds two or three times what a fresh one does.
 
-use crate::app_window;
+use crate::{app_window, window};
 use std::time::{Duration, Instant};
 use tauri::AppHandle;
 
@@ -37,6 +41,12 @@ const PUT_AWAY_FOR_CRITICAL: Duration = Duration::from_secs(60);
 /// How long memory is to have been enough again before the window, let go
 /// of, is made again, hidden.
 const ENOUGH_FOR: Duration = Duration::from_secs(5 * 60);
+/// The quick note's window, put away this long, memory short, is loaded
+/// again if its page is older than QUICK_LOADED_FOR: what a page kept for
+/// hours comes to hold let go of (92 MB fresh; 240 to 320 MB after days).
+/// Its usual time is 12 hours (window.rs).
+const QUICK_PUT_AWAY_FOR: Duration = Duration::from_secs(10 * 60);
+const QUICK_LOADED_FOR: Duration = Duration::from_secs(2 * 60 * 60);
 
 /// What the system says now: None where it cannot be asked.
 #[cfg(target_os = "macos")]
@@ -99,6 +109,14 @@ fn makes_again(let_go: bool, enough_for: Option<Duration>) -> bool {
     let_go && enough_for.is_some_and(|enough| enough >= ENOUGH_FOR)
 }
 
+/// Whether the quick note's window, put away `put_away_for` (None: out),
+/// its page loaded `loaded_for` ago, is to be loaded again now.
+fn refreshes_quick(pressure: Pressure, put_away_for: Option<Duration>, loaded_for: Duration) -> bool {
+    pressure != Pressure::Normal
+        && put_away_for.is_some_and(|away| away >= QUICK_PUT_AWAY_FOR)
+        && loaded_for >= QUICK_LOADED_FOR
+}
+
 /// Asks the system every half minute, for as long as the app runs.
 pub fn watch(app: AppHandle) {
     std::thread::spawn(move || {
@@ -118,6 +136,9 @@ pub fn watch(app: AppHandle) {
                 app_window::let_go(&app);
             } else if makes_again(app_window::was_let_go(), enough_since.map(|at| at.elapsed())) {
                 app_window::make_again(&app);
+            }
+            if refreshes_quick(now, window::put_away_for(), window::loaded_for(&app)) {
+                window::refresh_put_away(&app);
             }
         }
     });
@@ -150,6 +171,17 @@ mod tests {
     fn out_or_memory_enough_the_window_stays() {
         assert!(!lets_go(Pressure::Critical, None));
         assert!(!lets_go(Pressure::Normal, Some(60 * MINUTE)));
+    }
+
+    #[test]
+    fn the_quick_note_loaded_again_put_away_a_while_memory_short_its_page_old() {
+        let hour = 60 * MINUTE;
+        assert!(refreshes_quick(Pressure::Warning, Some(10 * MINUTE), 2 * hour));
+        // Its page fresh enough, put away a moment, out, or memory enough: not.
+        assert!(!refreshes_quick(Pressure::Warning, Some(10 * MINUTE), hour));
+        assert!(!refreshes_quick(Pressure::Warning, Some(5 * MINUTE), 3 * hour));
+        assert!(!refreshes_quick(Pressure::Critical, None, 3 * hour));
+        assert!(!refreshes_quick(Pressure::Normal, Some(60 * MINUTE), 10 * hour));
     }
 
     #[test]

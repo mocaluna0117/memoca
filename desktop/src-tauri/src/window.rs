@@ -175,6 +175,34 @@ pub struct CameFromApp(AtomicBool);
 
 const STALE: Duration = Duration::from_secs(12 * 60 * 60);
 
+/// When the window was put away (or made, hidden), while it is: None while
+/// it is out. For memory.rs, which loads it again sooner while memory is
+/// short (see refresh_put_away).
+static PUT_AWAY_AT: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// How long the window has been put away: None while it is out.
+pub fn put_away_for() -> Option<Duration> {
+    PUT_AWAY_AT.lock().unwrap().map(|at| at.elapsed())
+}
+
+/// How long ago the window's page was loaded.
+pub fn loaded_for(app: &AppHandle) -> Duration {
+    app.state::<Loaded>().0.lock().unwrap().elapsed()
+}
+
+/// Loads the page again, out of sight, while the window is put away: what
+/// it had come to hold (a page kept for hours holds two or three times
+/// what a fresh one does) let go of. What is written is kept as a draft,
+/// stored as it was typed and as it was put away. Not while it is out.
+pub fn refresh_put_away(app: &AppHandle) {
+    let Some(window) = window(app) else { return };
+    if window.is_visible().unwrap_or(true) || PUT_AWAY_AT.lock().unwrap().is_none() {
+        return;
+    }
+    *app.state::<Loaded>().0.lock().unwrap() = Instant::now();
+    let _ = window.navigate(quick_url());
+}
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let (guard, opener) = (app.clone(), app.clone());
     // As big as it was last put away, or as it starts.
@@ -212,6 +240,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let builder = builder.additional_browser_args(&browser_args());
     let window = builder.build()?;
     app.manage(Loaded(Mutex::new(Instant::now())));
+    // Made hidden: put away from the first, until it is shown.
+    *PUT_AWAY_AT.lock().unwrap() = Some(Instant::now());
     app.manage(CameFromApp(AtomicBool::new(false)));
     #[cfg(target_os = "windows")]
     out_of_alt_tab(&window);
@@ -503,6 +533,7 @@ fn place(app: &AppHandle, window: &WebviewWindow, place: &Place) {
 /// (pinned, say, and moved by hand) stays where it is.
 pub fn show(app: &AppHandle, where_: Place) {
     let Some(window) = window(app) else { return };
+    *PUT_AWAY_AT.lock().unwrap() = None;
     // Any look at Memoca's own window under way is over (activation.rs):
     // this one takes the keyboard.
     activation::begin();
@@ -576,6 +607,7 @@ pub fn put_away(app: &AppHandle) -> bool {
     }
     remember(app, &window);
     let _ = window.hide();
+    *PUT_AWAY_AT.lock().unwrap() = Some(Instant::now());
     // Loaded long ago: loaded again now, out of sight (see Loaded). The page
     // keeps what is written as a draft, stored as it is typed.
     let loaded = app.state::<Loaded>();
