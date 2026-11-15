@@ -152,10 +152,52 @@ pub fn hide(app: &AppHandle) {
 }
 
 /// Closes the window for good, if made: on signing out, what it holds is
-/// the account's.
+/// the account's. Not made again by memory.rs, as one let go of is.
 pub fn discard(app: &AppHandle) {
+    LET_GO.store(false, Ordering::SeqCst);
+    *PUT_AWAY_AT.lock().unwrap() = None;
     if let Some(window) = window(app) {
         let _ = window.destroy();
+    }
+}
+
+/// When the window was put away (or made hidden), while it is: None while
+/// it is out, or not made.
+static PUT_AWAY_AT: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// Whether the window was let go of for memory (memory.rs), to be made again
+/// once there is room: not one gone on signing out.
+static LET_GO: AtomicBool = AtomicBool::new(false);
+
+/// How long the window has been put away: None while it is out, or not made.
+pub fn put_away_for() -> Option<std::time::Duration> {
+    PUT_AWAY_AT.lock().unwrap().map(|at| at.elapsed())
+}
+
+/// Whether the window was let go of for memory and not made since.
+pub fn was_let_go() -> bool {
+    LET_GO.load(Ordering::SeqCst)
+}
+
+/// Lets go of the window, put away, for the memory its page holds (see
+/// memory.rs): made again when it is opened, or once there is room.
+pub fn let_go(app: &AppHandle) {
+    let Some(window) = window(app) else {
+        return;
+    };
+    if window.is_visible().unwrap_or(true) || MAKING.load(Ordering::SeqCst) {
+        return;
+    }
+    LET_GO.store(true, Ordering::SeqCst);
+    *PUT_AWAY_AT.lock().unwrap() = None;
+    let _ = window.destroy();
+}
+
+/// Makes the window again, hidden, on the notes, once memory allows (see
+/// memory.rs): to come out at once again. Here: off the main thread.
+pub fn make_again(app: &AppHandle) {
+    if window(app).is_none() && LET_GO.load(Ordering::SeqCst) {
+        make(app, window::origin().join("/app").unwrap(), false);
     }
 }
 
@@ -175,6 +217,7 @@ fn quick_note_away(app: &AppHandle) {
 fn quick_note_away(_app: &AppHandle) {}
 
 fn bring_out(window: &WebviewWindow) {
+    *PUT_AWAY_AT.lock().unwrap() = None;
     // On a Mac, an app in the Dock and ⌘Tab while it is out, made active
     // and looked at again after (activation.rs): being made active is only
     // asked for, and may be refused.
@@ -199,6 +242,7 @@ fn put_away(app: &AppHandle, window: &WebviewWindow) {
     activation::begin();
     let _ = app.save_window_state(KEPT);
     let _ = window.hide();
+    *PUT_AWAY_AT.lock().unwrap() = Some(std::time::Instant::now());
     #[cfg(target_os = "macos")]
     {
         let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -243,6 +287,8 @@ fn make(app: &AppHandle, url: Url, shown: bool) {
     }
     let made = url.clone();
     if window(app).is_none() {
+        // Made again (opened, or memory allows): no longer let go of.
+        LET_GO.store(false, Ordering::SeqCst);
         if let Err(error) = create(app, url, shown) {
             eprintln!("Memoca: could not make its window: {error}");
         }
@@ -334,6 +380,12 @@ fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
         WindowEvent::Destroyed => {
             // Kept now, not only when the app quits: an update starts it again.
             let _ = handle.save_window_state(KEPT);
+            // Let go of for memory, put away already: the menu bar alone
+            // already, and the quick note, maybe being brought out just
+            // then, left to it.
+            if LET_GO.load(Ordering::SeqCst) {
+                return;
+            }
             activation::begin();
             // Back to the menu bar alone.
             #[cfg(target_os = "macos")]
@@ -343,6 +395,9 @@ fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
     });
     if shown {
         bring_out(&window);
+    } else {
+        // Hidden from the first: put away since now (see memory.rs).
+        *PUT_AWAY_AT.lock().unwrap() = Some(std::time::Instant::now());
     }
     Ok(())
 }

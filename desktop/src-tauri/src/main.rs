@@ -15,6 +15,7 @@ mod clipboard;
 mod commands;
 mod corner;
 mod device_unlock;
+mod memory;
 mod reminders;
 mod screen;
 mod settings;
@@ -225,8 +226,10 @@ fn main() {
             if std::env::args().any(|arg| arg == "--app") {
                 app_window::open(app.handle());
             }
-            // Memoca's own window, made hidden, to come out at once.
+            // Memoca's own window, made hidden, to come out at once; let go
+            // of while memory is short (memory.rs).
             app_window::prepare(app.handle());
+            memory::watch(app.handle().clone());
             Ok(())
         })
         .build(tauri::generate_context!())
