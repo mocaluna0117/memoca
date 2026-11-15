@@ -76,3 +76,10 @@ E2E が覆っていない流れを、手元の Convex と手元のビルドに�
 `UX_BASE=http://localhost:3100 node scripts/ux-explore/big-folder.mjs [--counts=500,2000,5000] [--modes=explorer,list] [--runs=3]`
 Inbox にメモを足して（この端末だけ）、開くまで・フォルダを開き直すまで・下までのスクロール・横にその一覧がある状態での入力の遅れ・メモリと DOM の数を、CPU 4 倍遅くして測る。
 `--only=memory` はメモリだけ（毎回 GC してから）。2026-11-15 の結果：`big-folder-2026-11-14T19-04-41-863Z.json`（メモリの欄は GC 前の値で当てにならない）。
+
+## ほかのアプリが重いとき（Zoom など）の入力の遅れ
+
+`UX_BASE=http://localhost:3100 node scripts/ux-explore/typing-under-load.mjs [--notes=150] [--rate=6]`
+メモ 150 件で、ふつうのメモと即席メモに打ったときの 1 文字の遅れ（Chromium、CPU 6 倍遅く）。
+`--engine=webkit --burn=8` は Mac 版と同じ WebKit で、CPU のコアを 8 つ埋める処理を裏で走らせて測る。
+2026-11-15：Chromium 6 倍でメモ p95 33 ms・即席メモ 12 ms、WebKit はコアを全部埋めても遅れが増えなかった（CPU の取り合いだけでは遅れない）。
