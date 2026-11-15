@@ -1,0 +1,13 @@
+{
+  // Build output VS Code need not watch for changes: Rust's (13 GB, some
+  // 39,000 files) and Next.js's. Watched, the file watcher held them in
+  // memory. VS Code's own defaults are listed too, so that they stay.
+  "files.watcherExclude": {
+    "**/.git/objects/**": true,
+    "**/.git/subtree-cache/**": true,
+    "**/.hg/store/**": true,
+    "**/node_modules/*/**": true,
+    "**/desktop/src-tauri/target/**": true,
+    "**/.next/**": true
+  }
+}
