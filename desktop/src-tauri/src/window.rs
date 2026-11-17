@@ -226,6 +226,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .initialization_script(bridge())
         // The page's own: images dropped into the quick note.
         .disable_drag_drop_handler()
+        // A click on the window while it is not the one in use (pinned and
+        // left out over another app, or out without Memoca made active)
+        // reaches the page as well as making it active: the tab clicked is
+        // shown at once, not at the second click. (On a Mac, WebKit lets
+        // such a click through only on a scrollbar.)
+        .accept_first_mouse(true)
         .on_navigation(move |url| {
             sign_in::on_navigation(&guard, LABEL, url);
             may_go(&guard, url)
