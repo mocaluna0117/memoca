@@ -30,13 +30,14 @@ tauri-plugin-window-state = "2"
 [target.'cfg(target_os = "macos")'.dependencies]
 # Touch ID (device_unlock.rs): asked by the app, the secret kept in the keychain.
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSError", "NSArray", "NSURL", "NSProcessInfo", "NSBundle", "NSSet"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSError", "NSArray", "NSURL", "NSProcessInfo", "NSBundle", "NSSet", "NSNotification", "NSOperation", "block2"] }
 objc2-local-authentication = { version = "0.3", features = ["LAContext", "LAError", "block2"] }
 block2 = "0.6"
 security-framework = "3"
 # Images copied as files (clipboard.rs); the app made active and its windows
-# looked at, asked of AppKit itself (activation.rs).
-objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSApplication", "NSResponder", "NSWindow", "NSRunningApplication"] }
+# looked at, asked of AppKit itself (activation.rs); the app in use before
+# Memoca, followed and handed the keyboard back (previous_app.rs).
+objc2-app-kit = { version = "0.3", default-features = false, features = ["std", "NSPasteboard", "NSApplication", "NSResponder", "NSWindow", "NSRunningApplication", "NSWorkspace", "libc"] }
 # The Todo's reminders (reminders.rs): shown by the Mac's notifications, and
 # the one clicked opening the Todo.
 objc2-user-notifications = { version = "0.3", default-features = false, features = ["std", "block2", "UNNotification", "UNNotificationContent", "UNNotificationRequest", "UNNotificationResponse", "UNNotificationSettings", "UNNotificationSound", "UNNotificationTrigger", "UNUserNotificationCenter", "UNError"] }

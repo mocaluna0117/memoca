@@ -28,6 +28,18 @@ struct CornerItems(Vec<(Option<Corner>, CheckMenuItem<Wry>)>);
 /// The item that starts the app at login, ticked as the system has it.
 struct AtLogin(CheckMenuItem<Wry>);
 
+/// The item that keeps the quick note out (ピン留め), ticked as the settings have it.
+struct PinItem(CheckMenuItem<Wry>);
+
+/// Pins the quick note's window, or not: from the menu, or from Memoca's
+/// settings page (commands::pinned_set). The item ticked as it now is.
+pub fn set_pinned(app: &AppHandle, on: bool) {
+    app.state::<Store>().update(|settings| settings.pinned = on);
+    if let Some(item) = app.try_state::<PinItem>() {
+        let _ = item.0.set_checked(on);
+    }
+}
+
 /// The icon's clicks so far: when it was last right-clicked, and whether
 /// the left click under way is one with Control held.
 #[derive(Default)]
@@ -156,6 +168,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     )?;
     app.manage(CornerItems(corners));
     app.manage(AtLogin(at_login));
+    app.manage(PinItem(pin));
     app.manage(Clicks::default());
     app.manage(VersionItem(version));
 
@@ -212,9 +225,7 @@ fn chosen(app: &AppHandle, id: &str) {
     match id {
         "show" => window::show(app, window::Place::Cursor),
         "app" => app_window::open(app),
-        "pin" => app
-            .state::<Store>()
-            .update(|settings| settings.pinned = !settings.pinned),
+        "pin" => set_pinned(app, !app.state::<Store>().get().pinned),
         // Memoca's settings page, where they are changed at once (the file
         // may still be written by hand: docs/DESKTOP.md).
         "settings" => {

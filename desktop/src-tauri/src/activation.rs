@@ -187,8 +187,9 @@ mod mac {
 
     /// macOS 14 or later, where `activate` is: on 11 to 13 (the least the
     /// app runs on, tauri.conf.json) the message is unknown, and would
-    /// abort the app.
-    fn has_activate() -> bool {
+    /// abort the app. (previous_app.rs asks too, for yieldActivationToApplication,
+    /// of the same version.)
+    pub fn has_activate() -> bool {
         static YES: OnceLock<bool> = OnceLock::new();
         *YES.get_or_init(|| {
             NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(NSOperatingSystemVersion {

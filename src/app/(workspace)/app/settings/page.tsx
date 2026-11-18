@@ -44,6 +44,7 @@ import { type Unsent, anyUnsent, unsentOnDevice } from "@/lib/sync/unsent";
 import { formatBytes } from "@/lib/bytes";
 import { resetLocalData } from "@/lib/db";
 import { DesktopHotkeys } from "@/components/settings/desktop-hotkeys";
+import { DesktopPin } from "@/components/settings/desktop-pin";
 import { StylePicker } from "@/components/settings/style-picker";
 import { turnOff } from "@/lib/notify/push";
 import { t } from "@/lib/i18n/ja";
@@ -174,6 +175,16 @@ export default function SettingsPage() {
               description="どのアプリを使っているときでも、このキーで Memoca の窓を出せます。このパソコンだけの設定です。"
             >
               <DesktopHotkeys />
+            </Section>
+
+            <Separator />
+
+            <Section
+              id="pin"
+              title="デスクトップ版の窓"
+              description="即席メモや Memoca のウィンドウを、出したままにできます。このパソコンだけの設定です。"
+            >
+              <DesktopPin />
             </Section>
 
             <Separator />

@@ -1,8 +1,9 @@
 //! What the page may ask of the app (capabilities/quick.json), besides
 //! signing in (sign_in.rs), in the quick note's window and Memoca's own.
 
-use crate::{app_window, reminders, window};
-use tauri::AppHandle;
+use crate::settings::Store;
+use crate::{app_window, reminders, tray, window};
+use tauri::{AppHandle, Manager};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
@@ -64,4 +65,20 @@ pub fn show_quick(app: AppHandle) {
 pub fn sign_out_app(app: AppHandle) {
     app_window::discard(&app);
     reminders::turn_off(&app);
+}
+
+/// Whether the quick note's window is pinned: kept out when another app is
+/// clicked, and Memoca's own window kept out as it is put away (window.rs).
+/// For the settings page, which changes it as the menu's ピン留め does.
+#[tauri::command]
+pub fn pinned_get(app: AppHandle) -> bool {
+    app.state::<Store>().get().pinned
+}
+
+/// Pins the quick note's window, or not, from the settings page: the
+/// menu's item ticked to match. What it is after.
+#[tauri::command]
+pub fn pinned_set(app: AppHandle, on: bool) -> bool {
+    tray::set_pinned(&app, on);
+    app.state::<Store>().get().pinned
 }

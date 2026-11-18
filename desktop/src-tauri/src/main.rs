@@ -16,6 +16,8 @@ mod commands;
 mod corner;
 mod device_unlock;
 mod memory;
+#[cfg(target_os = "macos")]
+mod previous_app;
 mod reminders;
 mod screen;
 mod settings;
@@ -147,6 +149,8 @@ fn main() {
             shortcut::hotkeys_set,
             shortcut::hotkeys_recording,
             commands::sign_out_app,
+            commands::pinned_get,
+            commands::pinned_set,
         ])
         .setup(|app| {
             // A menu bar app: no Dock icon, and not in ⌘Tab.
@@ -183,10 +187,17 @@ fn main() {
                         .permission("allow-set-reminders")
                         .permission("allow-hotkeys-get")
                         .permission("allow-hotkeys-set")
-                        .permission("allow-hotkeys-recording"),
+                        .permission("allow-hotkeys-recording")
+                        .permission("allow-sign-out-app")
+                        .permission("allow-pinned-get")
+                        .permission("allow-pinned-set"),
                 )?;
             }
 
+            // Which app was in use before Memoca, for the keyboard to go
+            // back to it with Memoca's own window left out (window.rs).
+            #[cfg(target_os = "macos")]
+            previous_app::watch();
             clipboard::clear(app.handle());
             let first_run = settings::init(app.handle())?;
             window::create(app.handle())?;

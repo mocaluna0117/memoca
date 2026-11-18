@@ -83,6 +83,17 @@ export type MemocaShell = {
    * account's reminders. Not before 0.4.13, where the menu did so at once.
    */
   signOut?(): Promise<void>;
+  /**
+   * Whether the quick note's window is pinned (the menu bar icon's ピン留め):
+   * kept out when another app is clicked, put away by one press of its
+   * hotkey, and, on a Mac, Memoca's own window kept out as the quick note
+   * is put away. Changed from the settings page as from the menu, which
+   * is ticked to match. `set` says what it is after. Not before 0.4.16.
+   */
+  pinned?: {
+    get(): Promise<boolean>;
+    set(on: boolean): Promise<boolean>;
+  };
   platform: "macos" | "windows";
 };
 

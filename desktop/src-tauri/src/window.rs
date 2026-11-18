@@ -134,6 +134,10 @@ pub fn bridge() -> String {
         recording: (on) => invoke("hotkeys_recording", {{ on: Boolean(on) }}),
       }}),
       signOut: () => invoke("sign_out_app"),
+      pinned: Object.freeze({{
+        get: () => invoke("pinned_get"),
+        set: (on) => invoke("pinned_set", {{ on: Boolean(on) }}),
+      }}),
       platform: {platform:?},
     }}),
   }});
@@ -586,19 +590,57 @@ pub fn hide(app: &AppHandle) {
     if put_away(app) {
         // Any look at Memoca's own window under way is over (activation.rs).
         activation::begin();
-        // On a Mac, the app in use before is the one the keyboard goes back
-        // to only once Memoca is hidden: unless Memoca's own window was the
-        // one in use before, or is now (clicked, say). Out but not in use,
-        // it is put away too, rather than hidden with the app and left in
-        // the Dock and ⌘Tab with no window to show.
         #[cfg(target_os = "macos")]
-        if !app.state::<CameFromApp>().0.load(Ordering::Relaxed) && !app_window::is_in_use(app) {
-            if app_window::is_shown(app) {
-                app_window::hide(app);
-            } else {
+        match after_hidden(
+            app.state::<CameFromApp>().0.load(Ordering::Relaxed),
+            app_window::is_in_use(app),
+            app_window::is_shown(app),
+            app.state::<Store>().get().pinned,
+        ) {
+            AfterHidden::Nothing => {}
+            AfterHidden::HideApp => {
                 let _ = app.hide();
             }
+            AfterHidden::HideAppWindow => app_window::hide(app),
+            AfterHidden::GiveBack => {
+                crate::previous_app::give_back();
+            }
         }
+    }
+}
+
+/// What else is done, on a Mac, as the quick note is put away.
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+enum AfterHidden {
+    /// Memoca's own window was the one in use before, or is now (clicked,
+    /// say): the keyboard is its.
+    Nothing,
+    /// No window of Memoca's out: the app hidden, which hands the keyboard
+    /// back to the app in use before.
+    HideApp,
+    /// Memoca's own window out but not in use: put away too, rather than
+    /// hidden with the app and left in the Dock and ⌘Tab with no window to
+    /// show.
+    HideAppWindow,
+    /// The same, pinned: the window stays out, as pinned ones stay until
+    /// put away by hand, and the keyboard is handed back to the app in use
+    /// before (previous_app.rs).
+    GiveBack,
+}
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn after_hidden(
+    came_from_app: bool,
+    app_in_use: bool,
+    app_shown: bool,
+    pinned: bool,
+) -> AfterHidden {
+    match (came_from_app || app_in_use, app_shown, pinned) {
+        (true, _, _) => AfterHidden::Nothing,
+        (false, false, _) => AfterHidden::HideApp,
+        (false, true, false) => AfterHidden::HideAppWindow,
+        (false, true, true) => AfterHidden::GiveBack,
     }
 }
 
@@ -663,14 +705,28 @@ pub fn is_out(app: &AppHandle) -> bool {
     window(app).is_some_and(|window| window.is_visible().unwrap_or(false))
 }
 
-/// Brings the window out, or puts it away if it is out and in use.
+/// Brings the window out, or puts it away if it is out and in use, or out
+/// pinned.
 pub fn toggle(app: &AppHandle, where_: Place) {
     let Some(window) = window(app) else { return };
-    if window.is_visible().unwrap_or(false) && window.is_focused().unwrap_or(false) {
+    let hides = toggle_hides(
+        window.is_visible().unwrap_or(false),
+        window.is_focused().unwrap_or(false),
+        app.state::<Store>().get().pinned,
+    );
+    if hides {
         hide(app);
     } else {
         show(app, where_);
     }
+}
+
+/// Whether the hotkey (or the menu bar icon) puts the window away: out and
+/// in use; or out pinned, though another app is in use. A pinned window
+/// left out aside took a press to be made the one in use, and another to
+/// go: it is above the others, and clicked into when it is to be typed in.
+fn toggle_hides(visible: bool, focused: bool, pinned: bool) -> bool {
+    visible && (focused || pinned)
 }
 
 /// Loads the window's page again: the quick note.
@@ -685,6 +741,36 @@ pub fn reload(app: &AppHandle) {
 pub fn go(app: &AppHandle, url: Url) {
     if let Some(window) = window(app) {
         let _ = window.navigate(url);
+    }
+}
+
+#[cfg(test)]
+mod toggle_tests {
+    use super::{after_hidden, toggle_hides, AfterHidden};
+
+    #[test]
+    fn the_hotkey_puts_away_the_window_in_use_or_pinned_once() {
+        assert!(toggle_hides(true, true, false));
+        assert!(toggle_hides(true, true, true));
+        // Pinned and left out while another app is in use: away at one press.
+        assert!(toggle_hides(true, false, true));
+        // Not pinned, out but not in use (on its way away): brought back.
+        assert!(!toggle_hides(true, false, false));
+        assert!(!toggle_hides(false, false, false));
+        assert!(!toggle_hides(false, false, true));
+    }
+
+    #[test]
+    fn memocas_own_window_goes_with_the_quick_note_unless_pinned() {
+        // Its window in use before, or now: the keyboard is its.
+        assert_eq!(after_hidden(true, false, true, false), AfterHidden::Nothing);
+        assert_eq!(after_hidden(false, true, true, true), AfterHidden::Nothing);
+        // No window out: the app hidden, the keyboard back to the one before.
+        assert_eq!(after_hidden(false, false, false, false), AfterHidden::HideApp);
+        assert_eq!(after_hidden(false, false, false, true), AfterHidden::HideApp);
+        // Out aside: put away too, or, pinned, left out.
+        assert_eq!(after_hidden(false, false, true, false), AfterHidden::HideAppWindow);
+        assert_eq!(after_hidden(false, false, true, true), AfterHidden::GiveBack);
     }
 }
 
