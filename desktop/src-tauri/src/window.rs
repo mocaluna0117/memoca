@@ -583,10 +583,28 @@ pub fn show(app: &AppHandle, where_: Place) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         #[cfg(target_os = "macos")]
-        let _ = handle.show();
+        unhide_if_hidden(&handle);
+        #[cfg(not(target_os = "macos"))]
+        let _ = handle;
         let _ = window.show();
         focus(&window);
     });
+}
+
+/// On a Mac, the app unhidden, if hidden (the quick note last put away with
+/// no other window of Memoca's out hides it, for the keyboard to go back):
+/// only then. Not hidden, `unhide` brought every window of Memoca's to the
+/// front, Memoca's own over the app in use, though only the quick note was
+/// asked for. Here: on the main thread.
+#[cfg(target_os = "macos")]
+fn unhide_if_hidden(app: &AppHandle) {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    let hidden =
+        MainThreadMarker::new().is_none_or(|mtm| NSApplication::sharedApplication(mtm).isHidden());
+    if hidden {
+        let _ = app.show();
+    }
 }
 
 /// Makes a window, shown, the one in use: here, on the main thread. On
