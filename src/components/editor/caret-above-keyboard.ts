@@ -1,6 +1,6 @@
 import { createExtension } from "@blocknote/core";
 import { Plugin } from "prosemirror-state";
-import { keyboardOf } from "@/lib/hooks/use-keyboard-inset";
+import { keyboardNow } from "@/lib/hooks/use-keyboard-inset";
 
 /** Room kept between the caret and the edge of what can be seen. */
 const MARGIN = 8;
@@ -41,7 +41,7 @@ export const caretAboveKeyboard = createExtension({
             if (!viewport) return;
             // Up, however far down the window what is seen has been moved
             // (by what it covered, scrolled to the end, it was taken for down).
-            if (keyboardOf(window.innerHeight, viewport.height, viewport.offsetTop).height === 0) return;
+            if (keyboardNow().height === 0) return;
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(() => {
               frame = 0;
