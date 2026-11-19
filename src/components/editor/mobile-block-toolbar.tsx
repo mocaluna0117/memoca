@@ -30,7 +30,7 @@ import {
   duplicateChosen,
 } from "@/components/editor/block-select";
 import { useCropTarget, useOpenCrop } from "@/components/editor/image-crop";
-import { useKeyboardInset } from "@/lib/hooks/use-keyboard-inset";
+import { useKeyboard } from "@/lib/hooks/use-keyboard-inset";
 import { cn } from "@/lib/utils";
 
 /**
@@ -61,21 +61,26 @@ export function MobileBlockToolbar() {
   // Only with the keyboard up: what the bar follows (the blocks selected,
   // with every change to the note) is not followed while it is not shown,
   // which on a computer is always.
-  const inset = useKeyboardInset();
+  const keyboard = useKeyboard();
   // Room at the end of the note for the keyboard and this bar over it: the
   // last lines can then be scrolled up above both (see the editor's CSS,
   // and caret-above-keyboard). Without it, the page ended under the
-  // keyboard, and a long note's last line, typed in, stayed there.
+  // keyboard, and a long note's last line, typed in, stayed there. By the
+  // keyboard's height, which stays as the page is scrolled: by what it
+  // covered, which goes down as iOS moves what is seen to the page's end,
+  // the room shrank under the finger and the page shook (keyboardOf).
+  const room = keyboard.height === 0 ? 0 : keyboard.height + BAR_ROOM_PX;
   useEffect(() => {
-    if (inset === 0) return;
+    if (room === 0) return;
     const root = document.documentElement;
-    root.style.setProperty("--memoca-keyboard-room", `${inset + BAR_ROOM_PX}px`);
+    root.style.setProperty("--memoca-keyboard-room", `${room}px`);
     return () => {
       root.style.removeProperty("--memoca-keyboard-room");
     };
-  }, [inset]);
-  if (inset === 0) return null;
-  return <KeyboardBlockBar inset={inset} />;
+  }, [room]);
+  if (keyboard.height === 0) return null;
+  // On the keyboard: where it is now, as what is seen moves.
+  return <KeyboardBlockBar inset={keyboard.covered} />;
 }
 
 /**
@@ -85,8 +90,8 @@ export function MobileBlockToolbar() {
  * Shown, as that one is, only with the keyboard up.
  */
 export function InlineBlockBar() {
-  const inset = useKeyboardInset();
-  if (inset === 0) return null;
+  const keyboard = useKeyboard();
+  if (keyboard.height === 0) return null;
   return <KeyboardBlockBar inset={0} inline />;
 }
 

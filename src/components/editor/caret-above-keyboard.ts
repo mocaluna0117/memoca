@@ -1,10 +1,9 @@
 import { createExtension } from "@blocknote/core";
 import { Plugin } from "prosemirror-state";
+import { keyboardOf } from "@/lib/hooks/use-keyboard-inset";
 
 /** Room kept between the caret and the edge of what can be seen. */
 const MARGIN = 8;
-/** Less of the window covered than this is no keyboard (a browser's bar, say). */
-const KEYBOARD_MIN = 40;
 
 /**
  * How far the page is to scroll for a caret at `caret` (top and bottom on
@@ -40,8 +39,9 @@ export const caretAboveKeyboard = createExtension({
             if (!view.state.selection.empty || view.state.doc.eq(before.doc)) return;
             const viewport = window.visualViewport;
             if (!viewport) return;
-            const covered = window.innerHeight - viewport.height - viewport.offsetTop;
-            if (covered < KEYBOARD_MIN) return;
+            // Up, however far down the window what is seen has been moved
+            // (by what it covered, scrolled to the end, it was taken for down).
+            if (keyboardOf(window.innerHeight, viewport.height, viewport.offsetTop).height === 0) return;
             cancelAnimationFrame(frame);
             frame = requestAnimationFrame(() => {
               frame = 0;

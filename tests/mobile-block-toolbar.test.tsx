@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 const h = vi.hoisted(() => ({
   inset: 0,
+  covered: undefined as number | undefined,
   selectedBlocks: vi.fn(() => [] as unknown[]),
   updateBlock: vi.fn(),
   removeBlocks: vi.fn(),
@@ -21,7 +22,9 @@ vi.mock("@blocknote/react", () => ({
   }),
   useSelectedBlocks: h.selectedBlocks,
 }));
-vi.mock("@/lib/hooks/use-keyboard-inset", () => ({ useKeyboardInset: () => h.inset }));
+vi.mock("@/lib/hooks/use-keyboard-inset", () => ({
+  useKeyboard: () => ({ height: h.inset, covered: h.covered ?? h.inset }),
+}));
 vi.mock("@/components/editor/image-crop", () => ({
   useCropTarget: () => null,
   useOpenCrop: () => () => {},
@@ -36,6 +39,8 @@ let host: HTMLDivElement;
 
 beforeEach(() => {
   h.inset = 0;
+  h.covered = undefined;
+  document.documentElement.style.removeProperty("--memoca-keyboard-room");
   h.selectedBlocks.mockClear();
   host = document.createElement("div");
   document.body.append(host);
@@ -56,6 +61,27 @@ test("with the keyboard up, they are", async () => {
   h.inset = 300;
   await act(() => root.render(<MobileBlockToolbar />));
   expect(h.selectedBlocks).toHaveBeenCalled();
+});
+
+test("scrolled to the end, what is seen moved down: the room for the keyboard stays, the bar goes with it", async () => {
+  h.inset = 300;
+  h.selectedBlocks.mockReturnValue([{ id: "a", type: "paragraph", props: {}, content: [], children: [] }]);
+  await act(() => root.render(<MobileBlockToolbar />));
+  const room = () => document.documentElement.style.getPropertyValue("--memoca-keyboard-room");
+  const bar = () => host.querySelector<HTMLElement>("[data-keyboard-bar]");
+  expect(room()).toBe("364px");
+  expect(bar()?.style.bottom).toBe("300px");
+
+  // iOS moves what is seen 280 px down the window: the keyboard covers only 20 px of it.
+  h.covered = 20;
+  await act(() => root.render(<MobileBlockToolbar />));
+  expect(room()).toBe("364px");
+  expect(bar()?.style.bottom).toBe("20px");
+  // All of it: still up, the bar on it at the window's foot.
+  h.covered = 0;
+  await act(() => root.render(<MobileBlockToolbar />));
+  expect(room()).toBe("364px");
+  expect(bar()?.style.bottom).toBe("0px");
 });
 
 test("a code block made a line again, its text kept, by its button pressed once more", async () => {
