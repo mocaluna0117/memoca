@@ -4,7 +4,11 @@
 //! in the latest release published on GitHub, and taken only if signed with
 //! the key the app was built to trust (tauri.conf.json's pubkey). Put in
 //! while the quick note is away and Memoca's own window closed, so nothing
-//! being written is cut short, and the app started again, hidden.
+//! being written is cut short, and the app started again, hidden. A window
+//! pinned and left out aside is no reason to wait (it may stay out all
+//! day): the quick note's, not the one in use; Memoca's own, on top, left
+//! for ten minutes while another app is in use. Each is put away first,
+//! what it holds kept, and stays away after the restart.
 
 use crate::{app_window, window};
 use std::time::Duration;
@@ -74,10 +78,41 @@ enum Looked {
     Failed,
 }
 
-/// Whether a window is out: the quick note (but one pinned, as long as it
-/// is not the one in use), or Memoca's own.
+/// Whether a window out is to be waited for: Memoca's own (but one pinned
+/// on top and left there a while), or the quick note (but one pinned, as
+/// long as it is not the one in use).
+fn waits(app_shown: bool, app_left_on_top: bool, quick_out: bool, quick_pinned_aside: bool) -> bool {
+    (app_shown && !app_left_on_top) || (quick_out && !quick_pinned_aside)
+}
+
+/// [`waits`], as the windows are now: looked at on the main thread, where a
+/// Mac says which app is in use. Not to be told: waited for.
 fn in_use(app: &AppHandle) -> bool {
-    app_window::is_shown(app) || (window::is_out(app) && !window::is_pinned_aside(app))
+    on_main(app, in_use_here).unwrap_or(true)
+}
+
+fn in_use_here(app: &AppHandle) -> bool {
+    waits(
+        app_window::is_shown(app),
+        app_window::is_left_on_top(app),
+        window::is_out(app),
+        window::is_pinned_aside(app),
+    )
+}
+
+/// `look` done on the main thread, its answer brought back here; None if it
+/// could not be (the app going).
+fn on_main<T: Send + 'static>(
+    app: &AppHandle,
+    look: impl FnOnce(&AppHandle) -> T + Send + 'static,
+) -> Option<T> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let handle = app.clone();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(look(&handle));
+    })
+    .ok()?;
+    rx.recv_timeout(Duration::from_secs(10)).ok()
 }
 
 async fn look(app: &AppHandle, asked: bool) -> Looked {
@@ -114,12 +149,27 @@ async fn look(app: &AppHandle, asked: bool) -> Looked {
     } else {
         // Come down while nothing was out: a window brought out meanwhile
         // (and being written in) is waited for, rather than closed under
-        // the person with the restart.
-        while in_use(app) {
+        // the person with the restart. One pinned and left out is put away,
+        // what it holds kept, in the same turn as the last look, so none is
+        // taken back up in between; and given a moment, as one asked for is.
+        loop {
+            while in_use(app) {
+                std::thread::sleep(AWAY_EVERY);
+            }
+            let put_away = on_main(app, |app| {
+                if in_use_here(app) {
+                    return false;
+                }
+                window::hide(app);
+                app_window::hide(app);
+                true
+            });
+            if put_away == Some(true) {
+                break;
+            }
             std::thread::sleep(AWAY_EVERY);
         }
-        // A pinned one left out, not in use: put away, its draft kept.
-        window::hide(app);
+        std::thread::sleep(Duration::from_millis(1500));
     }
     match update.install(bytes) {
         // On Windows the installer has taken over, and closes the app itself.
@@ -129,5 +179,24 @@ async fn look(app: &AppHandle, asked: bool) -> Looked {
             say(app, "更新できませんでした");
             Looked::Failed
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::waits;
+
+    #[test]
+    fn waited_for_but_a_window_pinned_and_left_out() {
+        assert!(!waits(false, false, false, false));
+        // Memoca's own out: waited for, unless left on top a while.
+        assert!(waits(true, false, false, false));
+        assert!(!waits(true, true, false, false));
+        // The quick note out: waited for, unless pinned aside.
+        assert!(waits(false, false, true, false));
+        assert!(!waits(false, false, true, true));
+        // Both: each as it is.
+        assert!(waits(true, true, true, false));
+        assert!(!waits(true, true, true, true));
     }
 }

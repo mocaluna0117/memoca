@@ -267,6 +267,41 @@ pub fn hotkey_hides(in_use: bool, on_top: bool, out_here: bool) -> bool {
     in_use || (on_top && out_here)
 }
 
+/// When the window last lost the keyboard, while it has not had it back:
+/// None while it has it, or since it was made.
+static ASIDE_SINCE: Mutex<Option<std::time::Instant>> = Mutex::new(None);
+
+/// How long the window, pinned on top, is to have been left aside, another
+/// app in use, before a new version of the app is put in under it: long
+/// enough not to take it from someone going back and forth between it and
+/// another app, as such a window is used (memory.rs waits as long).
+const LEFT_FOR: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Whether the window is out pinned on top and has been left there a while,
+/// another app in use: a new version of the app is put in then (updater.rs),
+/// as for the quick note pinned, rather than waited for as long as it stays
+/// out, which may be all day. Here: on the main thread, where a Mac says
+/// which app is in use.
+pub fn is_left_on_top(app: &AppHandle) -> bool {
+    let aside_for = ASIDE_SINCE.lock().unwrap().map(|at| at.elapsed());
+    left_on_top(
+        is_shown(app),
+        on_top(app),
+        // Asked only of one out on top: the rest is moot otherwise.
+        is_shown(app) && on_top(app) && another_app_in_use(app),
+        aside_for,
+    )
+}
+
+fn left_on_top(
+    shown: bool,
+    on_top: bool,
+    another_app_in_use: bool,
+    aside_for: Option<std::time::Duration>,
+) -> bool {
+    shown && on_top && another_app_in_use && aside_for.is_some_and(|aside| aside >= LEFT_FOR)
+}
+
 /// How long after the window loses the keyboard it is looked at: for the
 /// system to settle which app (and window) has it.
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
@@ -498,11 +533,23 @@ fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
             api.prevent_close();
             put_away(&handle, &closing);
         }
-        // Another app clicked, not pinned: put away, as the quick note is.
-        WindowEvent::Focused(false) if !handle.state::<Store>().get().app_pinned => {
-            after_focus_lost(&handle);
+        WindowEvent::Focused(focused) => {
+            // Since when it has been left aside (updater.rs waits for that).
+            {
+                let mut since = ASIDE_SINCE.lock().unwrap();
+                if *focused {
+                    *since = None;
+                } else {
+                    since.get_or_insert_with(std::time::Instant::now);
+                }
+            }
+            // Another app clicked, not pinned: put away, as the quick note is.
+            if !focused && !handle.state::<Store>().get().app_pinned {
+                after_focus_lost(&handle);
+            }
         }
         WindowEvent::Destroyed => {
+            *ASIDE_SINCE.lock().unwrap() = None;
             // Kept now, not only when the app quits: an update starts it again.
             let _ = handle.save_window_state(KEPT);
             // Let go of for memory, put away already: the menu bar alone
@@ -584,6 +631,20 @@ mod tests {
         // Left behind, or on another desktop: brought out.
         assert!(!hotkey_hides(false, false, true));
         assert!(!hotkey_hides(false, true, false));
+    }
+
+    #[test]
+    fn a_new_version_goes_in_under_the_window_only_left_on_top_a_while() {
+        let minute = std::time::Duration::from_secs(60);
+        assert!(left_on_top(true, true, true, Some(10 * minute)));
+        // Back and forth with another app: not yet.
+        assert!(!left_on_top(true, true, true, Some(9 * minute)));
+        assert!(!left_on_top(true, true, true, None));
+        // Memoca still in use (the quick note, a panel of its own): waited for.
+        assert!(!left_on_top(true, true, false, Some(60 * minute)));
+        // Left behind other windows, or not out: as before.
+        assert!(!left_on_top(true, false, true, Some(60 * minute)));
+        assert!(!left_on_top(false, true, true, Some(60 * minute)));
     }
 
     #[test]
