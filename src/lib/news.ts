@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-11-19-phone-nav-hidden-with-keyboard",
+    date: "2026-11-19",
+    title: "スマホで、キーボードを出しているあいだは下のメニューを隠すように",
+    details: [
+      "iPhone で、キーボードを出したままメモを最後までスクロールすると、下のメニュー（ホーム・検索・即席メモ・設定）がキーボードの上に出て、書ける場所が狭くなり、記法のバーも隠していました。",
+      "キーボードを出しているあいだは下のメニューを隠し、閉じると戻るようにしました。",
+    ],
+  },
+  {
     id: "2026-11-19-phone-scroll-with-keyboard",
     date: "2026-11-19",
     title: "iPhone で、キーボードを出したままメモを下へスクロールできるように",
