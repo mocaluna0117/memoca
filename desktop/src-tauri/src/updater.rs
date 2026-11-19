@@ -1,6 +1,7 @@
 //! New versions of the app itself: the site in its window is new as soon as
 //! it is deployed, but the shell round it is not. Looked for a minute after
-//! the app starts and every six hours since, or when asked from the menu,
+//! the app starts and every ten minutes since (six hours until 0.4.21), or
+//! when asked from the menu,
 //! in the latest release published on GitHub, and taken only if signed with
 //! the key the app was built to trust (tauri.conf.json's pubkey). Put in
 //! while the quick note is away and Memoca's own window closed, so nothing
@@ -17,7 +18,11 @@ use tauri::{AppHandle, Manager, Wry};
 use tauri_plugin_updater::UpdaterExt;
 
 const FIRST: Duration = Duration::from_secs(60);
-const EVERY: Duration = Duration::from_secs(6 * 60 * 60);
+/// Every ten minutes: a release is published by CI as soon as it is built
+/// (.github/workflows/desktop.yml), and wanted here soon after, not hours
+/// on. What is asked is latest.json alone, a few kilobytes, from GitHub's
+/// release files (not its API, which would count the asks).
+const EVERY: Duration = Duration::from_secs(10 * 60);
 /// How long a window that is out is waited for before looking again.
 const WAIT: Duration = Duration::from_secs(5 * 60);
 /// How long asking whether there is a new version may take. With none,

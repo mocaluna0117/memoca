@@ -7,9 +7,11 @@ name: Desktop
 #   use it (scripts/check-windows.ps1, e2e/window.mjs), and each kept as an
 #   artifact of the run.
 # - A tag such as desktop-v0.2.0: the same, into a draft release with the
-#   .dmg, the Windows installer and latest.json, for the owner to look over
-#   and publish. Installed apps update themselves from the latest release
-#   published (src-tauri/src/updater.rs); a draft is not seen.
+#   .dmg, the Windows installer and latest.json; then, both built and the
+#   Windows one checked, and the draft found to hold every file of that
+#   version, published as the latest (from 0.4.21; the owner published it
+#   by hand before). Installed apps look for it every ten minutes
+#   (src-tauri/src/updater.rs); a draft is not seen.
 #
 # Not signed by Apple or Microsoft: see docs/DESKTOP.md for opening it the
 # first time. Updates are signed with the key in the TAURI_SIGNING_* secrets.
@@ -137,3 +139,30 @@ jobs:
         with:
           name: Memoca-windows
           path: desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
+
+  publish:
+    name: Publish the release
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Check the draft holds every file, of this version
+        run: |
+          set -euo pipefail
+          version="${TAG#desktop-v}"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern latest.json --output latest.json
+          jq -e --arg v "$version" '.version == $v' latest.json
+          for platform in darwin-aarch64 darwin-x86_64 windows-x86_64; do
+            jq -e --arg p "$platform" '(.platforms[$p].signature // "") | length > 0' latest.json
+          done
+          assets="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name')"
+          for wanted in "Memoca_${version}_universal.dmg" "Memoca_${version}_x64-setup.exe" Memoca_universal.app.tar.gz; do
+            grep -qxF "$wanted" <<<"$assets" || { echo "missing: $wanted"; exit 1; }
+          done
+
+      # Installed apps take only the latest release published.
+      - name: Publish it, as the latest
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest
