@@ -21,6 +21,8 @@ export function useEscapeFromPage(active: boolean, onEscape: () => void) {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.isComposing || event.defaultPrevented) return;
       if (event.target !== document.body && event.target !== document.documentElement) return;
+      // Taken: not also the desktop app's window put away (escape-hides-window.ts).
+      event.preventDefault();
       latest.current();
     };
     document.addEventListener("keydown", onKeyDown);

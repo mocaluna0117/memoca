@@ -1024,6 +1024,8 @@ export function NoteList({
         if (!event.currentTarget.contains(event.target as Node)) return;
         // Not one ending a drag, which dnd-kit takes as cancelling it.
         if (event.key === "Escape" && choosing && editing === null && !draggingNow.current) {
+          // Taken: not also the desktop app's window put away.
+          event.preventDefault();
           focusNext.current = "header";
           stopChoosing();
         }

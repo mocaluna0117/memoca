@@ -182,7 +182,7 @@ export default function SettingsPage() {
             <Section
               id="pin"
               title="デスクトップ版の窓"
-              description="即席メモや Memoca のウィンドウを、出したままにできます。このパソコンだけの設定です。"
+              description="即席メモと Memoca のウィンドウのそれぞれについて、ほかのアプリをクリックしたときに隠すか、出したままにするかを選べます。このパソコンだけの設定です。"
             >
               <DesktopPin />
             </Section>

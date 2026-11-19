@@ -35,8 +35,14 @@ pub struct Settings {
     pub app_shortcut: String,
     /// The corner the pointer is held in to bring the window out; none by default.
     pub hot_corner: Option<Corner>,
-    /// Kept out when another app is clicked, rather than put away.
+    /// The quick note's window kept out when another app is clicked, rather
+    /// than put away.
     pub pinned: bool,
+    /// Memoca's own window kept out when another app is clicked, and as
+    /// the quick note is put away (app_window.rs, window.rs); put away then,
+    /// as the quick note's is, if not. Kept out unless chosen otherwise, as
+    /// it always was before it could be.
+    pub app_pinned: bool,
     /// The window's size as it was last put away, in points (logical pixels).
     pub size: Option<(f64, f64)>,
     /// Where a pinned window was last put away, in points: it comes out there.
@@ -53,6 +59,7 @@ impl Default for Settings {
             app_shortcut: DEFAULT_APP_SHORTCUT.into(),
             hot_corner: None,
             pinned: false,
+            app_pinned: true,
             size: None,
             position: None,
             reminders: false,
@@ -180,6 +187,8 @@ mod tests {
         assert_eq!(saved.app_shortcut, DEFAULT_APP_SHORTCUT);
         assert!(saved.pinned);
         assert_eq!(saved.hot_corner, None);
+        // A file from before Memoca's own window could be: kept out, as it was.
+        assert!(saved.app_pinned);
     }
 
     #[test]

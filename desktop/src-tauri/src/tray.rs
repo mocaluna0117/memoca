@@ -1,7 +1,7 @@
 //! The menu bar icon: a click brings the window out under it, or puts it
 //! away; its menu (a right click) has the rest.
 
-use crate::settings::{Corner, Store};
+use crate::settings::{Corner, Settings, Store};
 use crate::updater::{self, VersionItem};
 use crate::{app_window, window};
 use std::sync::Mutex;
@@ -28,15 +28,51 @@ struct CornerItems(Vec<(Option<Corner>, CheckMenuItem<Wry>)>);
 /// The item that starts the app at login, ticked as the system has it.
 struct AtLogin(CheckMenuItem<Wry>);
 
-/// The item that keeps the quick note out (ピン留め), ticked as the settings have it.
-struct PinItem(CheckMenuItem<Wry>);
+/// The items that keep a window out (ピン留め), ticked as the settings have them.
+struct PinItems {
+    quick: CheckMenuItem<Wry>,
+    app: CheckMenuItem<Wry>,
+}
 
-/// Pins the quick note's window, or not: from the menu, or from Memoca's
-/// settings page (commands::pinned_set). The item ticked as it now is.
-pub fn set_pinned(app: &AppHandle, on: bool) {
-    app.state::<Store>().update(|settings| settings.pinned = on);
-    if let Some(item) = app.try_state::<PinItem>() {
-        let _ = item.0.set_checked(on);
+/// Which window is pinned: the quick note's, or Memoca's own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pin {
+    Quick,
+    App,
+}
+
+impl Pin {
+    /// As the page names it ("quick", or "app"); the quick note's if it says
+    /// none, as the site of 0.4.16 does.
+    pub fn named(which: Option<&str>) -> Result<Pin, String> {
+        match which {
+            None | Some("quick") => Ok(Pin::Quick),
+            Some("app") => Ok(Pin::App),
+            Some(other) => Err(format!("no window {other:?}")),
+        }
+    }
+
+    pub fn of(self, settings: &Settings) -> bool {
+        match self {
+            Pin::Quick => settings.pinned,
+            Pin::App => settings.app_pinned,
+        }
+    }
+}
+
+/// Pins a window, or not: from the menu, or from Memoca's settings page
+/// (commands::pinned_set). Its item ticked as it now is.
+pub fn set_pinned(app: &AppHandle, which: Pin, on: bool) {
+    app.state::<Store>().update(|settings| match which {
+        Pin::Quick => settings.pinned = on,
+        Pin::App => settings.app_pinned = on,
+    });
+    if let Some(items) = app.try_state::<PinItems>() {
+        let item = match which {
+            Pin::Quick => &items.quick,
+            Pin::App => &items.app,
+        };
+        let _ = item.set_checked(on);
     }
 }
 
@@ -88,13 +124,21 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let settings = app.state::<Store>().get();
     let show = MenuItem::with_id(app, "show", "即席メモを開く", true, None::<&str>)?;
     let memoca = MenuItem::with_id(app, "app", "Memoca を開く", true, None::<&str>)?;
-    let pin = CheckMenuItem::with_id(
+    let pin_quick =
+        CheckMenuItem::with_id(app, "pin", "即席メモ", true, settings.pinned, None::<&str>)?;
+    let pin_app = CheckMenuItem::with_id(
         app,
-        "pin",
+        "pin-app",
+        "Memoca のウィンドウ",
+        true,
+        settings.app_pinned,
+        None::<&str>,
+    )?;
+    let pin = Submenu::with_items(
+        app,
         "ピン留め（ほかをクリックしても隠さない）",
         true,
-        settings.pinned,
-        None::<&str>,
+        &[&pin_quick, &pin_app],
     )?;
     let corners = CORNERS
         .iter()
@@ -168,7 +212,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     )?;
     app.manage(CornerItems(corners));
     app.manage(AtLogin(at_login));
-    app.manage(PinItem(pin));
+    app.manage(PinItems {
+        quick: pin_quick,
+        app: pin_app,
+    });
     app.manage(Clicks::default());
     app.manage(VersionItem(version));
 
@@ -225,7 +272,8 @@ fn chosen(app: &AppHandle, id: &str) {
     match id {
         "show" => window::show(app, window::Place::Cursor),
         "app" => app_window::open(app),
-        "pin" => set_pinned(app, !app.state::<Store>().get().pinned),
+        "pin" => set_pinned(app, Pin::Quick, !app.state::<Store>().get().pinned),
+        "pin-app" => set_pinned(app, Pin::App, !app.state::<Store>().get().app_pinned),
         // Memoca's settings page, where they are changed at once (the file
         // may still be written by hand: docs/DESKTOP.md).
         "settings" => {
@@ -274,5 +322,26 @@ fn chosen(app: &AppHandle, id: &str) {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_window_pinned_as_the_page_names_it() {
+        // The site of 0.4.16 names none: the quick note's.
+        assert_eq!(Pin::named(None), Ok(Pin::Quick));
+        assert_eq!(Pin::named(Some("quick")), Ok(Pin::Quick));
+        assert_eq!(Pin::named(Some("app")), Ok(Pin::App));
+        assert!(Pin::named(Some("other")).is_err());
+        let settings = Settings {
+            pinned: true,
+            app_pinned: false,
+            ..Settings::default()
+        };
+        assert!(Pin::Quick.of(&settings));
+        assert!(!Pin::App.of(&settings));
     }
 }

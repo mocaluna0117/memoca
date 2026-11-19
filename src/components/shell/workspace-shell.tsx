@@ -21,6 +21,7 @@ import { vault } from "@/lib/crypto/vault";
 import { flushAll } from "@/lib/sync/docs";
 import { watchVaultActivity } from "@/lib/vault/activity";
 import { startImeTrace } from "@/lib/debug/ime-trace";
+import { useEscapeHidesWindow } from "@/lib/desktop/escape-hides-window";
 import { tidyYomi } from "@/lib/search/yomi";
 
 /**
@@ -32,6 +33,8 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
 
   // Kept hidden by the desktop shell: a new version loaded out of sight.
   useShellRefresh();
+  // In the desktop app's window: Esc, nothing else taking it, puts it away.
+  useEscapeHidesWindow();
 
   // The vault closes after a period of no use, counted from the last
   // activity, and says so when it does.

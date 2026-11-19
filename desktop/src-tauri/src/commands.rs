@@ -2,15 +2,21 @@
 //! signing in (sign_in.rs), in the quick note's window and Memoca's own.
 
 use crate::settings::Store;
-use crate::{app_window, reminders, tray, window};
-use tauri::{AppHandle, Manager};
+use crate::tray::{self, Pin};
+use crate::{app_window, reminders, window};
+use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
-/// Esc, ×, or saved: the window is put away.
+/// Esc, ×, or saved: the window the page is in is put away (Memoca's own,
+/// by its Esc, from 0.4.17; the quick note's before).
 #[tauri::command]
-pub fn hide(app: AppHandle) {
-    window::hide(&app);
+pub fn hide(app: AppHandle, webview: WebviewWindow) {
+    if app_window::is_label(webview.label()) {
+        app_window::hide(&app);
+    } else {
+        window::hide(&app);
+    }
 }
 
 /// Opens one of Memoca's pages in the browser (a note just saved, from an
@@ -67,18 +73,21 @@ pub fn sign_out_app(app: AppHandle) {
     reminders::turn_off(&app);
 }
 
-/// Whether the quick note's window is pinned: kept out when another app is
-/// clicked, and Memoca's own window kept out as it is put away (window.rs).
-/// For the settings page, which changes it as the menu's ピン留め does.
+/// Whether a window is pinned (`which`: "quick", the quick note's, if none
+/// is said, or "app", Memoca's own): kept out when another app is clicked,
+/// and put away by one press of its hotkey (window.rs, app_window.rs). For
+/// the settings page, which changes it as the menu's ピン留め does.
 #[tauri::command]
-pub fn pinned_get(app: AppHandle) -> bool {
-    app.state::<Store>().get().pinned
+pub fn pinned_get(app: AppHandle, which: Option<String>) -> Result<bool, String> {
+    let which = Pin::named(which.as_deref())?;
+    Ok(which.of(&app.state::<Store>().get()))
 }
 
-/// Pins the quick note's window, or not, from the settings page: the
-/// menu's item ticked to match. What it is after.
+/// Pins a window, or not, from the settings page: the menu's item ticked to
+/// match. What it is after.
 #[tauri::command]
-pub fn pinned_set(app: AppHandle, on: bool) -> bool {
-    tray::set_pinned(&app, on);
-    app.state::<Store>().get().pinned
+pub fn pinned_set(app: AppHandle, on: bool, which: Option<String>) -> Result<bool, String> {
+    let which = Pin::named(which.as_deref())?;
+    tray::set_pinned(&app, which, on);
+    Ok(which.of(&app.state::<Store>().get()))
 }

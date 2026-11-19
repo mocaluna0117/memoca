@@ -5,6 +5,12 @@
 export type MemocaShell = {
   /** Puts the window away, to be shown again as it was. */
   hide(): void;
+  /**
+   * Puts away the window the page is in, Memoca's own as well as the quick
+   * note's (its Esc, src/lib/desktop/escape-hides-window.ts). Not before
+   * 0.4.17, whose `hide` from Memoca's own window put away the quick note's.
+   */
+  hideWindow?(): void;
   /** Opens one of Memoca's pages in the default browser. */
   openExternal(url: string): void;
   /**
@@ -91,6 +97,15 @@ export type MemocaShell = {
    * is ticked to match. `set` says what it is after. Not before 0.4.16.
    */
   pinned?: {
+    get(): Promise<boolean>;
+    set(on: boolean): Promise<boolean>;
+  };
+  /**
+   * The same of Memoca's own window: kept out when another app is clicked
+   * and as the quick note is put away, or else put away then, as the quick
+   * note is. Kept out unless chosen otherwise. Not before 0.4.17.
+   */
+  appPinned?: {
     get(): Promise<boolean>;
     set(on: boolean): Promise<boolean>;
   };

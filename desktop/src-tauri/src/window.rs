@@ -106,6 +106,7 @@ pub fn bridge() -> String {
   Object.defineProperty(window, "memocaShell", {{
     value: Object.freeze({{
       hide: () => void invoke("hide"),
+      hideWindow: () => void invoke("hide"),
       openExternal: (url) => void invoke("open_external", {{ url: String(url) }}),
       openApp: (url) => void invoke("open_app", {{ url: String(url) }}),
       showQuick: () => void invoke("show_quick"),
@@ -137,6 +138,10 @@ pub fn bridge() -> String {
       pinned: Object.freeze({{
         get: () => invoke("pinned_get"),
         set: (on) => invoke("pinned_set", {{ on: Boolean(on) }}),
+      }}),
+      appPinned: Object.freeze({{
+        get: () => invoke("pinned_get", {{ which: "app" }}),
+        set: (on) => invoke("pinned_set", {{ which: "app", on: Boolean(on) }}),
       }}),
       platform: {platform:?},
     }}),
@@ -254,7 +259,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     *PUT_AWAY_AT.lock().unwrap() = Some(Instant::now());
     app.manage(CameFromApp(AtomicBool::new(false)));
     #[cfg(target_os = "windows")]
-    out_of_alt_tab(&window);
+    {
+        out_of_alt_tab(&window);
+        without_alt_menu(&window);
+    }
 
     let handle = app.clone();
     window.on_window_event(move |event| match event {
@@ -569,8 +577,85 @@ pub fn show(app: &AppHandle, where_: Place) {
         #[cfg(target_os = "macos")]
         let _ = handle.show();
         let _ = window.show();
-        let _ = window.set_focus();
+        focus(&window);
     });
+}
+
+/// Makes a window, shown, the one in use: here, on the main thread. On
+/// Windows it is first brought in front by the app itself (see
+/// [`to_front`]), for tauri's own not to press Alt to do so.
+pub fn focus(window: &WebviewWindow) {
+    #[cfg(target_os = "windows")]
+    to_front(window);
+    let _ = window.set_focus();
+}
+
+/// Brings the window in front on Windows, which lets an app do so only now
+/// and then (the one sent the last key, the hotkey's say). Refused, tauri
+/// (tao's set_focus) pressed Alt and let it go, as a person would, to be
+/// let: and Alt alone puts a window into its menu, which takes the next
+/// key: the quick note's Esc, just brought out, put it away only at the
+/// second press. Here the app joins, for a moment, the input of the one in
+/// front, as which it may; in front, the window is left as it is by tauri.
+#[cfg(target_os = "windows")]
+fn to_front(window: &WebviewWindow) {
+    use windows_sys::Win32::Foundation::HWND;
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
+    };
+    let Ok(hwnd) = window.hwnd() else { return };
+    let hwnd = hwnd.0 as HWND;
+    // SAFETY: the window's own handle and the system's, on the thread that
+    // made the window; the input joined is let go of before returning.
+    unsafe {
+        let front = GetForegroundWindow();
+        if front == hwnd || SetForegroundWindow(hwnd) != 0 || front.is_null() {
+            return;
+        }
+        let theirs = GetWindowThreadProcessId(front, std::ptr::null_mut());
+        let ours = GetCurrentThreadId();
+        if theirs == 0 || theirs == ours || AttachThreadInput(ours, theirs, 1) == 0 {
+            return;
+        }
+        BringWindowToTop(hwnd);
+        SetForegroundWindow(hwnd);
+        AttachThreadInput(ours, theirs, 0);
+    }
+}
+
+/// Keeps a window out of its menu on Windows when Alt is pressed and let go
+/// alone (as tauri does to bring it in front, or the person by a slip): the
+/// window has none to show, and in it the next key went to the menu, not
+/// the page. Alt with another key (Alt+Space, the window's menu) is as it
+/// was. Here: on the main thread, which the window is of.
+#[cfg(target_os = "windows")]
+pub fn without_alt_menu(window: &WebviewWindow) {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+    use windows_sys::Win32::UI::Shell::{DefSubclassProc, SetWindowSubclass};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{SC_KEYMENU, WM_SYSCOMMAND};
+
+    unsafe extern "system" fn proc(
+        hwnd: HWND,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        _id: usize,
+        _data: usize,
+    ) -> LRESULT {
+        // SC_KEYMENU's lparam is the key pressed with Alt: none, Alt alone.
+        if message == WM_SYSCOMMAND && (wparam & 0xFFF0) == SC_KEYMENU as usize && lparam == 0 {
+            return 0;
+        }
+        DefSubclassProc(hwnd, message, wparam, lparam)
+    }
+
+    let Ok(hwnd) = window.hwnd() else { return };
+    // SAFETY: the window's own handle, on its thread; the procedure only
+    // passes on what it does not take, and lives as long as the app.
+    unsafe {
+        SetWindowSubclass(hwnd.0 as HWND, Some(proc), 0x4d45_4d4f, 0);
+    }
 }
 
 /// Brings the window out on the Todo: a reminder of its clicked
@@ -595,7 +680,7 @@ pub fn hide(app: &AppHandle) {
             app.state::<CameFromApp>().0.load(Ordering::Relaxed),
             app_window::is_in_use(app),
             app_window::is_shown(app),
-            app.state::<Store>().get().pinned,
+            app.state::<Store>().get().app_pinned,
         ) {
             AfterHidden::Nothing => {}
             AfterHidden::HideApp => {
@@ -623,9 +708,9 @@ enum AfterHidden {
     /// hidden with the app and left in the Dock and ⌘Tab with no window to
     /// show.
     HideAppWindow,
-    /// The same, pinned: the window stays out, as pinned ones stay until
-    /// put away by hand, and the keyboard is handed back to the app in use
-    /// before (previous_app.rs).
+    /// The same, Memoca's own window pinned: it stays out, as pinned ones
+    /// stay until put away by hand, and the keyboard is handed back to the
+    /// app in use before (previous_app.rs).
     GiveBack,
 }
 
@@ -634,9 +719,9 @@ fn after_hidden(
     came_from_app: bool,
     app_in_use: bool,
     app_shown: bool,
-    pinned: bool,
+    app_pinned: bool,
 ) -> AfterHidden {
-    match (came_from_app || app_in_use, app_shown, pinned) {
+    match (came_from_app || app_in_use, app_shown, app_pinned) {
         (true, _, _) => AfterHidden::Nothing,
         (false, false, _) => AfterHidden::HideApp,
         (false, true, false) => AfterHidden::HideAppWindow,

@@ -10,7 +10,8 @@ describe("the desktop app's ピン留め, in the settings page", () => {
   let root: Root;
   let host: HTMLDivElement;
   let kept: boolean;
-  let calls: boolean[];
+  let keptApp: boolean;
+  let calls: string[];
   let refuse: boolean;
 
   beforeEach(() => {
@@ -18,6 +19,7 @@ describe("the desktop app's ピン留め, in the settings page", () => {
     document.body.append(host);
     root = createRoot(host);
     kept = false;
+    keptApp = true;
     calls = [];
     refuse = false;
     window.memocaShell = {
@@ -25,10 +27,18 @@ describe("the desktop app's ピン留め, in the settings page", () => {
       pinned: {
         get: vi.fn(async () => kept),
         set: vi.fn(async (on: boolean) => {
-          calls.push(on);
+          calls.push(`quick ${on}`);
           if (refuse) throw new Error("no");
           kept = on;
           return kept;
+        }),
+      },
+      appPinned: {
+        get: vi.fn(async () => keptApp),
+        set: vi.fn(async (on: boolean) => {
+          calls.push(`app ${on}`);
+          keptApp = on;
+          return keptApp;
         }),
       },
     } as unknown as MemocaShell;
@@ -40,8 +50,8 @@ describe("the desktop app's ピン留め, in the settings page", () => {
     delete window.memocaShell;
   });
 
-  const toggle = () => document.querySelector<HTMLButtonElement>('[role="switch"]');
-  const checked = () => toggle()?.getAttribute("aria-checked");
+  const toggle = (id = "desktop-pin-quick") => document.querySelector<HTMLButtonElement>(`#${id}`);
+  const checked = (id?: string) => toggle(id)?.getAttribute("aria-checked");
 
   test("shown as the app has it, and changed there", async () => {
     kept = true;
@@ -49,8 +59,25 @@ describe("the desktop app's ピン留め, in the settings page", () => {
     expect(checked()).toBe("true");
 
     await act(async () => toggle()!.click());
-    expect(calls).toEqual([false]);
+    expect(calls).toEqual(["quick false"]);
     expect(checked()).toBe("false");
+  });
+
+  test("Memoca's own window has one of its own", async () => {
+    await act(async () => root.render(<DesktopPin />));
+    expect(checked("desktop-pin-app")).toBe("true");
+    await act(async () => toggle("desktop-pin-app")!.click());
+    expect(calls).toEqual(["app false"]);
+    expect(checked("desktop-pin-app")).toBe("false");
+    expect(checked()).toBe("false");
+  });
+
+  test("an app of 0.4.16: the quick note's alone, Memoca's own once it is updated", async () => {
+    delete (window.memocaShell as { appPinned?: unknown }).appPinned;
+    await act(async () => root.render(<DesktopPin />));
+    expect(toggle()).not.toBeNull();
+    expect(toggle("desktop-pin-app")).toBeNull();
+    expect(document.body.textContent).toContain("Memoca のウィンドウのピン留めは、アプリが新しい版に更新されると");
   });
 
   test("read again as the window comes to the front: changed from the menu meanwhile", async () => {
@@ -65,7 +92,7 @@ describe("the desktop app's ピン留め, in the settings page", () => {
     refuse = true;
     await act(async () => root.render(<DesktopPin />));
     await act(async () => toggle()!.click());
-    expect(calls).toEqual([true]);
+    expect(calls).toEqual(["quick true"]);
     expect(checked()).toBe("false");
   });
 

@@ -14,6 +14,7 @@
 //! agent, bridge and WebView2 arguments, and so the same sign-in. Other
 //! sites open in the browser; files the page saves go to Downloads.
 
+use crate::settings::Store;
 use crate::{activation, sign_in, window};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -227,8 +228,84 @@ fn bring_out(window: &WebviewWindow) {
     {
         let _ = window.unminimize();
         let _ = window.show();
-        let _ = window.set_focus();
+        window::focus(window);
     }
+}
+
+/// How long after the window loses the keyboard it is looked at: for the
+/// system to settle which app (and window) has it.
+const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// The window, not pinned, has lost the keyboard: put away a moment later
+/// if another app has it, not if Memoca still does (the quick note brought
+/// out over it, the files to choose from, a panel of the page's), nor if it
+/// is the one in use again by then.
+fn after_focus_lost(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(SETTLE);
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let Some(window) = window(&handle) else {
+                return;
+            };
+            if handle.state::<Store>().get().app_pinned
+                || !window.is_visible().unwrap_or(false)
+                || window.is_focused().unwrap_or(true)
+            {
+                return;
+            }
+            if another_app_in_use(&handle) {
+                put_away(&handle, &window);
+            }
+        });
+    });
+}
+
+/// Whether another app has the keyboard: on a Mac, Memoca no longer the
+/// active app (its panels and the quick note are Memoca's). Here: on the
+/// main thread.
+#[cfg(target_os = "macos")]
+fn another_app_in_use(_app: &AppHandle) -> bool {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    let Some(mtm) = MainThreadMarker::new() else {
+        return false;
+    };
+    !NSApplication::sharedApplication(mtm).isActive()
+}
+
+/// Whether another app has the keyboard: on Windows, the window in front
+/// neither Memoca's nor one of its own (the files to choose from, which
+/// WebView2 shows from a process of its own, are owned by Memoca's window).
+#[cfg(target_os = "windows")]
+fn another_app_in_use(_app: &AppHandle) -> bool {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindow, GetWindowThreadProcessId, GW_OWNER,
+    };
+    let ours = std::process::id();
+    // SAFETY: plain reads of the system's state, no pointers kept.
+    unsafe {
+        let front = GetForegroundWindow();
+        if front.is_null() {
+            return true;
+        }
+        let process = |hwnd| {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, &mut pid);
+            pid
+        };
+        if process(front) == ours {
+            return false;
+        }
+        let owner = GetWindow(front, GW_OWNER);
+        owner.is_null() || process(owner) != ours
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn another_app_in_use(_app: &AppHandle) -> bool {
+    true
 }
 
 /// Hides the window, as closing it does: its size and place kept, the menu
@@ -370,12 +447,22 @@ fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
     let builder = builder.additional_browser_args(&window::browser_args());
     let window = builder.build()?;
 
+    #[cfg(target_os = "windows")]
+    {
+        let plain = window.clone();
+        let _ = app.run_on_main_thread(move || window::without_alt_menu(&plain));
+    }
+
     let closing = window.clone();
     window.on_window_event(move |event| match event {
         // Closed (its button, ⌘W, Alt+F4): hidden, to come out again at once.
         WindowEvent::CloseRequested { api, .. } => {
             api.prevent_close();
             put_away(&handle, &closing);
+        }
+        // Another app clicked, not pinned: put away, as the quick note is.
+        WindowEvent::Focused(false) if !handle.state::<Store>().get().app_pinned => {
+            after_focus_lost(&handle);
         }
         WindowEvent::Destroyed => {
             // Kept now, not only when the app quits: an update starts it again.
