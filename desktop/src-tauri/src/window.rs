@@ -680,13 +680,20 @@ pub fn show_todo(app: &AppHandle) {
 /// The page is told, so it can load a new version of the site while out of
 /// sight.
 pub fn hide(app: &AppHandle) {
+    // Whether Memoca's own window is in use, looked at before the quick note
+    // is put away: AppKit makes it the key window the moment the quick
+    // note's goes, the app still active, and it was taken for the one in
+    // use, the keyboard left with it and it brought in front, not handed
+    // back to the app in use before (0.4.16, 0.4.17).
+    #[cfg(target_os = "macos")]
+    let app_in_use = app_window::is_in_use(app);
     if put_away(app) {
         // Any look at Memoca's own window under way is over (activation.rs).
         activation::begin();
         #[cfg(target_os = "macos")]
         match after_hidden(
             app.state::<CameFromApp>().0.load(Ordering::Relaxed),
-            app_window::is_in_use(app),
+            app_in_use,
             app_window::is_shown(app),
             app.state::<Store>().get().app_pinned,
         ) {
