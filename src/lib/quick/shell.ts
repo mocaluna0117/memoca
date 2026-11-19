@@ -109,6 +109,16 @@ export type MemocaShell = {
     get(): Promise<boolean>;
     set(on: boolean): Promise<boolean>;
   };
+  /**
+   * Whether Memoca's own window, put away a while, is let go of while a Mac
+   * is short of memory, and made again as it is opened (a second or two
+   * later, the vault closed): or kept made, to come out at once. On unless
+   * chosen otherwise. Not before 0.4.17.
+   */
+  letGoWhenShort?: {
+    get(): Promise<boolean>;
+    set(on: boolean): Promise<boolean>;
+  };
   platform: "macos" | "windows";
 };
 

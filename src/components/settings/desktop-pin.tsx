@@ -63,10 +63,11 @@ function PinRow({ id, label, pinned, children }: { id: string; label: string; pi
 }
 
 /**
- * The desktop app's ピン留め, one for each window: the quick note's, and
- * Memoca's own (from 0.4.17). Pinned, a window stays out when another app
- * is clicked; not, it is put away then. Not in a browser; from an app
- * before 0.4.16, where the menu has it.
+ * The desktop app's windows: ピン留め, one for each, the quick note's and
+ * Memoca's own (from 0.4.17), pinned staying out when another app is
+ * clicked, put away then if not; and, on a Mac, whether Memoca's own is
+ * let go of while memory is short (from 0.4.17). Not in a browser; from an
+ * app before 0.4.16, where the menu has the quick note's pin.
  */
 export function DesktopPin() {
   const shell = useClientValue(shellOf, null);
@@ -99,8 +100,17 @@ export function DesktopPin() {
         </p>
       )}
       <p className="text-xs text-muted-foreground leading-relaxed">
-        {where}の ⚡ アイコンのメニューの「ピン留め」と同じです。
+        ピン留めは、{where}の ⚡ アイコンのメニューの「ピン留め」と同じです。
       </p>
+      {mac && shell.letGoWhenShort ? (
+        <PinRow
+          id="desktop-let-go"
+          label="メモリが足りないとき、隠れている Memoca のウィンドウを手放す"
+          pinned={shell.letGoWhenShort}
+        >
+          {`オンにすると、Mac がメモリが足りないと知らせているとき、閉じてから 10 分たった Memoca のウィンドウを手放して、メモリを空けます（かなり足りないときは 1 分）。次に開くときは読み込み直すので 1〜2 秒かかり、開いていた金庫は閉じます。オフにすると、いつでもすぐ開けるように、裏で用意したままにします。`}
+        </PinRow>
+      ) : null}
     </div>
   );
 }

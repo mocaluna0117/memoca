@@ -41,6 +41,13 @@ describe("the desktop app's ピン留め, in the settings page", () => {
           return keptApp;
         }),
       },
+      letGoWhenShort: {
+        get: vi.fn(async () => true),
+        set: vi.fn(async (on: boolean) => {
+          calls.push(`let go ${on}`);
+          return on;
+        }),
+      },
     } as unknown as MemocaShell;
   });
 
@@ -70,6 +77,21 @@ describe("the desktop app's ピン留め, in the settings page", () => {
     expect(calls).toEqual(["app false"]);
     expect(checked("desktop-pin-app")).toBe("false");
     expect(checked()).toBe("false");
+  });
+
+  test("on a Mac, whether Memoca's own window is let go of while memory is short", async () => {
+    await act(async () => root.render(<DesktopPin />));
+    expect(checked("desktop-let-go")).toBe("true");
+    await act(async () => toggle("desktop-let-go")!.click());
+    expect(calls).toEqual(["let go false"]);
+    expect(checked("desktop-let-go")).toBe("false");
+  });
+
+  test("not on Windows, which keeps the window as it is", async () => {
+    (window.memocaShell as { platform: string }).platform = "windows";
+    await act(async () => root.render(<DesktopPin />));
+    expect(toggle("desktop-pin-app")).not.toBeNull();
+    expect(toggle("desktop-let-go")).toBeNull();
   });
 
   test("an app of 0.4.16: the quick note's alone, Memoca's own once it is updated", async () => {

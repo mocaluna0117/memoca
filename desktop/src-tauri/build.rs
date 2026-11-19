@@ -24,6 +24,8 @@ fn main() {
             "sign_out_app",
             "pinned_get",
             "pinned_set",
+            "setting_get",
+            "setting_set",
         ]),
     ))
     .expect("failed to run tauri-build");

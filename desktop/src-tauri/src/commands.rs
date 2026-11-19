@@ -1,8 +1,8 @@
 //! What the page may ask of the app (capabilities/quick.json), besides
 //! signing in (sign_in.rs), in the quick note's window and Memoca's own.
 
-use crate::settings::Store;
-use crate::tray::{self, Pin};
+use crate::settings::{Store, Switch};
+use crate::tray;
 use crate::{app_window, reminders, window};
 use tauri::{AppHandle, Manager, WebviewWindow};
 use tauri_plugin_opener::OpenerExt;
@@ -73,21 +73,40 @@ pub fn sign_out_app(app: AppHandle) {
     reminders::turn_off(&app);
 }
 
-/// Whether a window is pinned (`which`: "quick", the quick note's, if none
-/// is said, or "app", Memoca's own): kept out when another app is clicked,
-/// and put away by one press of its hotkey (window.rs, app_window.rs). For
-/// the settings page, which changes it as the menu's ピン留め does.
+/// Whether the quick note's window is pinned: kept out when another app is
+/// clicked, and put away by one press of its hotkey (window.rs). For the
+/// settings page of 0.4.16; later ones ask [`setting_get`].
 #[tauri::command]
-pub fn pinned_get(app: AppHandle, which: Option<String>) -> Result<bool, String> {
-    let which = Pin::named(which.as_deref())?;
-    Ok(which.of(&app.state::<Store>().get()))
+pub fn pinned_get(app: AppHandle) -> bool {
+    Switch::QuickPinned.of(&app.state::<Store>().get())
 }
 
-/// Pins a window, or not, from the settings page: the menu's item ticked to
-/// match. What it is after.
+/// Pins the quick note's window, or not, from the settings page of 0.4.16:
+/// the menu's item ticked to match. What it is after.
 #[tauri::command]
-pub fn pinned_set(app: AppHandle, on: bool, which: Option<String>) -> Result<bool, String> {
-    let which = Pin::named(which.as_deref())?;
-    tray::set_pinned(&app, which, on);
-    Ok(which.of(&app.state::<Store>().get()))
+pub fn pinned_set(app: AppHandle, on: bool) -> bool {
+    setting_set(app, "quickPinned".into(), on).unwrap_or(false)
+}
+
+/// One of the settings the settings page turns on and off, as it names it
+/// ([`Switch`]): the windows pinned, and Memoca's own let go of while
+/// memory is short.
+#[tauri::command]
+pub fn setting_get(app: AppHandle, name: String) -> Result<bool, String> {
+    Ok(Switch::named(&name)?.of(&app.state::<Store>().get()))
+}
+
+/// Turns one of them on or off: the menu's item ticked to match. What it is
+/// after. Memoca's own window, let go of for memory, is made again at once
+/// as that is turned off, to come out at once as it is then kept.
+#[tauri::command]
+pub fn setting_set(app: AppHandle, name: String, on: bool) -> Result<bool, String> {
+    let switch = Switch::named(&name)?;
+    tray::set_switch(&app, switch, on);
+    if switch == Switch::LetGoWhenShort && !on {
+        // Off the main thread, as the window is made (app_window.rs).
+        let maker = app.clone();
+        std::thread::spawn(move || app_window::make_again(&maker));
+    }
+    Ok(switch.of(&app.state::<Store>().get()))
 }

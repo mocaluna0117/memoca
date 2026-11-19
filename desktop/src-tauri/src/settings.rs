@@ -43,6 +43,10 @@ pub struct Settings {
     /// as the quick note's is, if not. Kept out unless chosen otherwise, as
     /// it always was before it could be.
     pub app_pinned: bool,
+    /// Memoca's own window let go of, put away a while, while the computer
+    /// is short of memory, and made again when opened (memory.rs). On
+    /// unless chosen otherwise: kept made, to come out at once, if not.
+    pub let_go_when_short: bool,
     /// The window's size as it was last put away, in points (logical pixels).
     pub size: Option<(f64, f64)>,
     /// Where a pinned window was last put away, in points: it comes out there.
@@ -60,9 +64,49 @@ impl Default for Settings {
             hot_corner: None,
             pinned: false,
             app_pinned: true,
+            let_go_when_short: true,
             size: None,
             position: None,
             reminders: false,
+        }
+    }
+}
+
+/// What the settings page turns on and off (commands::setting_get and
+/// setting_set), as it names each.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Switch {
+    /// The quick note's window pinned ("quickPinned").
+    QuickPinned,
+    /// Memoca's own window pinned ("appPinned").
+    AppPinned,
+    /// Memoca's own window let go of while memory is short ("letGoWhenShort").
+    LetGoWhenShort,
+}
+
+impl Switch {
+    pub fn named(name: &str) -> Result<Switch, String> {
+        match name {
+            "quickPinned" => Ok(Switch::QuickPinned),
+            "appPinned" => Ok(Switch::AppPinned),
+            "letGoWhenShort" => Ok(Switch::LetGoWhenShort),
+            other => Err(format!("no setting {other:?}")),
+        }
+    }
+
+    pub fn of(self, settings: &Settings) -> bool {
+        match self {
+            Switch::QuickPinned => settings.pinned,
+            Switch::AppPinned => settings.app_pinned,
+            Switch::LetGoWhenShort => settings.let_go_when_short,
+        }
+    }
+
+    pub fn set(self, settings: &mut Settings, on: bool) {
+        match self {
+            Switch::QuickPinned => settings.pinned = on,
+            Switch::AppPinned => settings.app_pinned = on,
+            Switch::LetGoWhenShort => settings.let_go_when_short = on,
         }
     }
 }
@@ -187,8 +231,26 @@ mod tests {
         assert_eq!(saved.app_shortcut, DEFAULT_APP_SHORTCUT);
         assert!(saved.pinned);
         assert_eq!(saved.hot_corner, None);
-        // A file from before Memoca's own window could be: kept out, as it was.
+        // A file from before these could be chosen: as they were.
         assert!(saved.app_pinned);
+        assert!(saved.let_go_when_short);
+    }
+
+    #[test]
+    fn each_switch_as_the_settings_page_names_it() {
+        let mut settings = Settings::default();
+        for (name, switch) in [
+            ("quickPinned", Switch::QuickPinned),
+            ("appPinned", Switch::AppPinned),
+            ("letGoWhenShort", Switch::LetGoWhenShort),
+        ] {
+            assert_eq!(Switch::named(name), Ok(switch));
+            switch.set(&mut settings, true);
+            assert!(switch.of(&settings));
+            switch.set(&mut settings, false);
+            assert!(!switch.of(&settings));
+        }
+        assert!(Switch::named("pinned").is_err());
     }
 
     #[test]

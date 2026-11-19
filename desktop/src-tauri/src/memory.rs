@@ -18,9 +18,10 @@
 //! of sight instead, sooner than its usual 12 hours while memory is short:
 //! a page kept for hours holds two or three times what a fresh one does.
 
+use crate::settings::Store;
 use crate::{app_window, window};
 use std::time::{Duration, Instant};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 /// How short of memory the computer is, as the system says.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,8 +94,11 @@ fn level_of(level: i32) -> Pressure {
 }
 
 /// Whether the window, put away `put_away_for` (None: out, or not made), is
-/// to be let go of now.
-fn lets_go(pressure: Pressure, put_away_for: Option<Duration>) -> bool {
+/// to be let go of now: never if the settings say not to (`allowed`).
+fn lets_go(allowed: bool, pressure: Pressure, put_away_for: Option<Duration>) -> bool {
+    if !allowed {
+        return false;
+    }
     let wanted = match pressure {
         Pressure::Normal => return false,
         Pressure::Warning => PUT_AWAY_FOR,
@@ -104,9 +108,9 @@ fn lets_go(pressure: Pressure, put_away_for: Option<Duration>) -> bool {
 }
 
 /// Whether the window, let go of here, is to be made again: memory enough
-/// for a while.
-fn makes_again(let_go: bool, enough_for: Option<Duration>) -> bool {
-    let_go && enough_for.is_some_and(|enough| enough >= ENOUGH_FOR)
+/// for a while, or letting it go turned off since.
+fn makes_again(allowed: bool, let_go: bool, enough_for: Option<Duration>) -> bool {
+    let_go && (!allowed || enough_for.is_some_and(|enough| enough >= ENOUGH_FOR))
 }
 
 /// Whether the quick note's window, put away `put_away_for` (None: out),
@@ -132,9 +136,15 @@ pub fn watch(app: AppHandle) {
             } else {
                 enough_since = None;
             }
-            if lets_go(now, app_window::put_away_for()) {
+            // The settings page's 「メモリが足りないとき、手放す」.
+            let allowed = app.state::<Store>().get().let_go_when_short;
+            if lets_go(allowed, now, app_window::put_away_for()) {
                 app_window::let_go(&app);
-            } else if makes_again(app_window::was_let_go(), enough_since.map(|at| at.elapsed())) {
+            } else if makes_again(
+                allowed,
+                app_window::was_let_go(),
+                enough_since.map(|at| at.elapsed()),
+            ) {
                 app_window::make_again(&app);
             }
             if refreshes_quick(now, window::put_away_for(), window::loaded_for(&app)) {
@@ -160,17 +170,25 @@ mod tests {
 
     #[test]
     fn memory_short_the_window_goes_once_put_away_a_while() {
-        assert!(!lets_go(Pressure::Warning, Some(9 * MINUTE)));
-        assert!(lets_go(Pressure::Warning, Some(10 * MINUTE)));
+        assert!(!lets_go(true, Pressure::Warning, Some(9 * MINUTE)));
+        assert!(lets_go(true, Pressure::Warning, Some(10 * MINUTE)));
         // Very short: sooner.
-        assert!(!lets_go(Pressure::Critical, Some(MINUTE / 2)));
-        assert!(lets_go(Pressure::Critical, Some(MINUTE)));
+        assert!(!lets_go(true, Pressure::Critical, Some(MINUTE / 2)));
+        assert!(lets_go(true, Pressure::Critical, Some(MINUTE)));
+    }
+
+    #[test]
+    fn turned_off_in_the_settings_the_window_is_kept_and_made_again() {
+        assert!(!lets_go(false, Pressure::Critical, Some(60 * MINUTE)));
+        // Let go of before it was turned off: made again, memory short or not.
+        assert!(makes_again(false, true, None));
+        assert!(!makes_again(false, false, None));
     }
 
     #[test]
     fn out_or_memory_enough_the_window_stays() {
-        assert!(!lets_go(Pressure::Critical, None));
-        assert!(!lets_go(Pressure::Normal, Some(60 * MINUTE)));
+        assert!(!lets_go(true, Pressure::Critical, None));
+        assert!(!lets_go(true, Pressure::Normal, Some(60 * MINUTE)));
     }
 
     #[test]
@@ -186,10 +204,10 @@ mod tests {
 
     #[test]
     fn made_again_only_if_let_go_here_and_memory_enough_a_while() {
-        assert!(makes_again(true, Some(5 * MINUTE)));
-        assert!(!makes_again(true, Some(4 * MINUTE)));
-        assert!(!makes_again(true, None));
+        assert!(makes_again(true, true, Some(5 * MINUTE)));
+        assert!(!makes_again(true, true, Some(4 * MINUTE)));
+        assert!(!makes_again(true, true, None));
         // Gone on signing out, or never let go of: not made by this.
-        assert!(!makes_again(false, Some(60 * MINUTE)));
+        assert!(!makes_again(true, false, Some(60 * MINUTE)));
     }
 }

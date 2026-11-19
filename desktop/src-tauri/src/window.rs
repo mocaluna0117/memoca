@@ -140,8 +140,12 @@ pub fn bridge() -> String {
         set: (on) => invoke("pinned_set", {{ on: Boolean(on) }}),
       }}),
       appPinned: Object.freeze({{
-        get: () => invoke("pinned_get", {{ which: "app" }}),
-        set: (on) => invoke("pinned_set", {{ which: "app", on: Boolean(on) }}),
+        get: () => invoke("setting_get", {{ name: "appPinned" }}),
+        set: (on) => invoke("setting_set", {{ name: "appPinned", on: Boolean(on) }}),
+      }}),
+      letGoWhenShort: Object.freeze({{
+        get: () => invoke("setting_get", {{ name: "letGoWhenShort" }}),
+        set: (on) => invoke("setting_set", {{ name: "letGoWhenShort", on: Boolean(on) }}),
       }}),
       platform: {platform:?},
     }}),

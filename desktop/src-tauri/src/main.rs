@@ -151,6 +151,8 @@ fn main() {
             commands::sign_out_app,
             commands::pinned_get,
             commands::pinned_set,
+            commands::setting_get,
+            commands::setting_set,
         ])
         .setup(|app| {
             // A menu bar app: no Dock icon, and not in ⌘Tab.
@@ -190,7 +192,9 @@ fn main() {
                         .permission("allow-hotkeys-recording")
                         .permission("allow-sign-out-app")
                         .permission("allow-pinned-get")
-                        .permission("allow-pinned-set"),
+                        .permission("allow-pinned-set")
+                        .permission("allow-setting-get")
+                        .permission("allow-setting-set"),
                 )?;
             }
 
