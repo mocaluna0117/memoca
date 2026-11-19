@@ -43,6 +43,11 @@ pub struct Settings {
     /// as the quick note's is, if not. Kept out unless chosen otherwise, as
     /// it always was before it could be.
     pub app_pinned: bool,
+    /// Memoca's own window, kept out (`app_pinned`), above the others, as
+    /// the quick note's is: not left behind the app clicked. Off unless
+    /// chosen (0.4.18); `app_pinned` was on in every 0.4.17 file, chosen
+    /// or not, so it could not be taken to mean this.
+    pub app_on_top: bool,
     /// Memoca's own window let go of, put away a while, while the computer
     /// is short of memory, and made again when opened (memory.rs). On
     /// unless chosen otherwise: kept made, to come out at once, if not.
@@ -64,6 +69,7 @@ impl Default for Settings {
             hot_corner: None,
             pinned: false,
             app_pinned: true,
+            app_on_top: false,
             let_go_when_short: true,
             size: None,
             position: None,
@@ -80,6 +86,8 @@ pub enum Switch {
     QuickPinned,
     /// Memoca's own window pinned ("appPinned").
     AppPinned,
+    /// Memoca's own window above the others ("appOnTop").
+    AppOnTop,
     /// Memoca's own window let go of while memory is short ("letGoWhenShort").
     LetGoWhenShort,
 }
@@ -89,6 +97,7 @@ impl Switch {
         match name {
             "quickPinned" => Ok(Switch::QuickPinned),
             "appPinned" => Ok(Switch::AppPinned),
+            "appOnTop" => Ok(Switch::AppOnTop),
             "letGoWhenShort" => Ok(Switch::LetGoWhenShort),
             other => Err(format!("no setting {other:?}")),
         }
@@ -98,6 +107,7 @@ impl Switch {
         match self {
             Switch::QuickPinned => settings.pinned,
             Switch::AppPinned => settings.app_pinned,
+            Switch::AppOnTop => settings.app_on_top,
             Switch::LetGoWhenShort => settings.let_go_when_short,
         }
     }
@@ -106,7 +116,31 @@ impl Switch {
         match self {
             Switch::QuickPinned => settings.pinned = on,
             Switch::AppPinned => settings.app_pinned = on,
+            Switch::AppOnTop => settings.app_on_top = on,
             Switch::LetGoWhenShort => settings.let_go_when_short = on,
+        }
+    }
+}
+
+/// How Memoca's own window takes another app being clicked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AppWindow {
+    /// Put away, as the quick note is (not kept out).
+    Hide,
+    /// Left behind the app clicked, as any window: as it always was.
+    Behind,
+    /// Kept above the others (ピン留め, as the quick note's).
+    OnTop,
+}
+
+impl Settings {
+    /// How Memoca's own window takes another app being clicked: on top only
+    /// when kept out too (put away, it is not out to be on top).
+    pub fn app_window(&self) -> AppWindow {
+        match (self.app_pinned, self.app_on_top) {
+            (false, _) => AppWindow::Hide,
+            (true, false) => AppWindow::Behind,
+            (true, true) => AppWindow::OnTop,
         }
     }
 }
@@ -233,7 +267,22 @@ mod tests {
         assert_eq!(saved.hot_corner, None);
         // A file from before these could be chosen: as they were.
         assert!(saved.app_pinned);
+        assert!(!saved.app_on_top);
         assert!(saved.let_go_when_short);
+        assert_eq!(saved.app_window(), AppWindow::Behind);
+    }
+
+    #[test]
+    fn memocas_own_window_hidden_left_behind_or_on_top() {
+        let with = |app_pinned, app_on_top| Settings {
+            app_pinned,
+            app_on_top,
+            ..Settings::default()
+        };
+        assert_eq!(with(false, false).app_window(), AppWindow::Hide);
+        assert_eq!(with(false, true).app_window(), AppWindow::Hide);
+        assert_eq!(with(true, false).app_window(), AppWindow::Behind);
+        assert_eq!(with(true, true).app_window(), AppWindow::OnTop);
     }
 
     #[test]
@@ -242,6 +291,7 @@ mod tests {
         for (name, switch) in [
             ("quickPinned", Switch::QuickPinned),
             ("appPinned", Switch::AppPinned),
+            ("appOnTop", Switch::AppOnTop),
             ("letGoWhenShort", Switch::LetGoWhenShort),
         ] {
             assert_eq!(Switch::named(name), Ok(switch));

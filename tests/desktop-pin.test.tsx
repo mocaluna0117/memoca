@@ -79,6 +79,40 @@ describe("the desktop app's ピン留め, in the settings page", () => {
     expect(checked()).toBe("false");
   });
 
+  test("an app of 0.4.18: Memoca's own window hidden, left behind, or on top", async () => {
+    let above = false;
+    (window.memocaShell as { appOnTop?: unknown }).appOnTop = {
+      get: vi.fn(async () => above),
+      set: vi.fn(async (on: boolean) => {
+        calls.push(`on top ${on}`);
+        above = on;
+        return above;
+      }),
+    };
+    // What Radix's Select asks of the page, which jsdom has not.
+    Element.prototype.scrollIntoView ??= () => {};
+    Element.prototype.hasPointerCapture ??= () => false;
+    Element.prototype.releasePointerCapture ??= () => {};
+    await act(async () => root.render(<DesktopPin />));
+    const trigger = document.querySelector<HTMLButtonElement>("#desktop-app-window")!;
+    expect(trigger.textContent).toBe("後ろに回る（ふつうのウィンドウ）");
+    expect(toggle("desktop-pin-app")).toBeNull();
+
+    await act(async () => {
+      trigger.focus();
+      trigger.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    });
+    const option = [...document.querySelectorAll<HTMLElement>('[role="option"]')].find(
+      (each) => each.textContent === "最前面に固定（ピン留め）",
+    )!;
+    await act(async () => {
+      option.focus();
+      option.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(calls).toEqual(["on top true", "app true"]);
+    expect(document.querySelector("#desktop-app-window")!.textContent).toBe("最前面に固定（ピン留め）");
+  });
+
   test("on a Mac, whether Memoca's own window is let go of while memory is short", async () => {
     await act(async () => root.render(<DesktopPin />));
     expect(checked("desktop-let-go")).toBe("true");
@@ -99,7 +133,7 @@ describe("the desktop app's ピン留め, in the settings page", () => {
     await act(async () => root.render(<DesktopPin />));
     expect(toggle()).not.toBeNull();
     expect(toggle("desktop-pin-app")).toBeNull();
-    expect(document.body.textContent).toContain("Memoca のウィンドウのピン留めは、アプリが新しい版に更新されると");
+    expect(document.body.textContent).toContain("Memoca のウィンドウの出し方は、アプリが新しい版に更新されると");
   });
 
   test("read again as the window comes to the front: changed from the menu meanwhile", async () => {

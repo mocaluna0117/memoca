@@ -5,7 +5,7 @@
 //! settings page (src/components/settings/desktop-hotkeys.tsx), at once, or
 //! in the file by hand, from the next start.
 
-use crate::settings::{Store, DEFAULT_APP_SHORTCUT, DEFAULT_SHORTCUT};
+use crate::settings::{AppWindow, Store, DEFAULT_APP_SHORTCUT, DEFAULT_SHORTCUT};
 use crate::{app_window, window};
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -88,9 +88,15 @@ fn on(app: &AppHandle, shortcut: Shortcut, wanted: &str, pressed: fn(&AppHandle)
     }
 }
 
-/// Memoca's own window out and in front, or, if it is the one in use, put away.
+/// Memoca's own window out and in front, or, if it is the one in use (or
+/// out pinned on top), put away.
 fn toggle_app(app: &AppHandle) {
-    if app_window::is_in_use(app) {
+    let on_top = app.state::<Store>().get().app_window() == AppWindow::OnTop;
+    if app_window::hotkey_hides(
+        app_window::is_in_use(app),
+        on_top,
+        on_top && app_window::is_out_here(app),
+    ) {
         app_window::hide(app);
     } else {
         app_window::open(app);

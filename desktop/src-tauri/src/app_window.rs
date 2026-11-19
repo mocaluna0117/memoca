@@ -14,7 +14,7 @@
 //! agent, bridge and WebView2 arguments, and so the same sign-in. Other
 //! sites open in the browser; files the page saves go to Downloads.
 
-use crate::settings::Store;
+use crate::settings::{AppWindow, Store};
 use crate::{activation, sign_in, window};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -232,6 +232,41 @@ fn bring_out(window: &WebviewWindow) {
     }
 }
 
+/// Whether the settings keep the window above the others.
+fn on_top(app: &AppHandle) -> bool {
+    app.state::<Store>().get().app_window() == AppWindow::OnTop
+}
+
+/// Keeps the window above the others, or not, as the settings now say
+/// (tray::set_switch): at once, out or put away.
+pub fn keep_on_top(app: &AppHandle) {
+    if let Some(window) = window(app) {
+        let _ = window.set_always_on_top(on_top(app));
+    }
+}
+
+/// Whether the window is out where it is seen: on a Mac, shown on the
+/// desktop (Space) in use, the app not hidden; elsewhere, shown. Here: on
+/// the main thread, for a Mac.
+pub fn is_out_here(app: &AppHandle) -> bool {
+    let Some(window) = window(app) else {
+        return false;
+    };
+    #[cfg(target_os = "macos")]
+    if let Some(seen) = activation::seen(&window) {
+        return seen.visible && seen.on_active_space && !seen.app_hidden && !seen.minimized;
+    }
+    window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(false)
+}
+
+/// Whether the hotkey puts the window away: in use; or pinned on top and
+/// out where it is seen, though another app is in use (one press, as the
+/// quick note pinned: not one to make it the one in use and another to
+/// put it away). One out on another desktop, or left behind, is brought.
+pub fn hotkey_hides(in_use: bool, on_top: bool, out_here: bool) -> bool {
+    in_use || (on_top && out_here)
+}
+
 /// How long after the window loses the keyboard it is looked at: for the
 /// system to settle which app (and window) has it.
 const SETTLE: std::time::Duration = std::time::Duration::from_millis(150);
@@ -428,6 +463,9 @@ fn create(app: &AppHandle, url: Url, shown: bool) -> tauri::Result<()> {
         // as well as making Memoca active: the folder clicked opens. (On a
         // Mac, WebKit lets such a click through only on a scrollbar.)
         .accept_first_mouse(true)
+        // Pinned on top, as the quick note's is (settings.rs): made so again
+        // when made again (for memory, on signing in).
+        .always_on_top(on_top(app))
         .on_navigation(move |url| {
             sign_in::on_navigation(&guard, LABEL, url);
             if is_app_page(url) {
@@ -536,6 +574,16 @@ mod tests {
         assert!(!is_app_page(
             &Url::parse("https://example.com/app").unwrap()
         ));
+    }
+
+    #[test]
+    fn the_hotkey_puts_away_the_window_in_use_or_pinned_on_top_at_one_press() {
+        assert!(hotkey_hides(true, false, true));
+        // On top, out here, another app in use: away at once.
+        assert!(hotkey_hides(false, true, true));
+        // Left behind, or on another desktop: brought out.
+        assert!(!hotkey_hides(false, false, true));
+        assert!(!hotkey_hides(false, true, false));
     }
 
     #[test]

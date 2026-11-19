@@ -1,7 +1,7 @@
 //! The menu bar icon: a click brings the window out under it, or puts it
 //! away; its menu (a right click) has the rest.
 
-use crate::settings::{Corner, Store, Switch};
+use crate::settings::{AppWindow, Corner, Store, Switch};
 use crate::updater::{self, VersionItem};
 use crate::{app_window, window};
 use std::sync::Mutex;
@@ -28,25 +28,52 @@ struct CornerItems(Vec<(Option<Corner>, CheckMenuItem<Wry>)>);
 /// The item that starts the app at login, ticked as the system has it.
 struct AtLogin(CheckMenuItem<Wry>);
 
-/// The items that keep a window out (ピン留め), ticked as the settings have them.
+/// How Memoca's own window takes another app clicked, as the menu offers it.
+const APP_WINDOWS: [(AppWindow, &str, &str); 3] = [
+    (AppWindow::Hide, "app-window:hide", "隠す（即席メモと同じ）"),
+    (AppWindow::Behind, "app-window:behind", "後ろに回る（ふつうのウィンドウ）"),
+    (AppWindow::OnTop, "app-window:on-top", "最前面に固定（ピン留め）"),
+];
+
+/// The items for the windows (ピン留め), ticked as the settings have them.
 struct PinItems {
     quick: CheckMenuItem<Wry>,
-    app: CheckMenuItem<Wry>,
+    app: Vec<(AppWindow, CheckMenuItem<Wry>)>,
 }
 
 /// Turns one of the settings on or off: from the menu, or from Memoca's
-/// settings page (commands::setting_set). A pin's item ticked as it now is.
+/// settings page (commands::setting_set). The menu ticked as it now is, and
+/// Memoca's own window above the others or not.
 pub fn set_switch(app: &AppHandle, switch: Switch, on: bool) {
     app.state::<Store>().update(|settings| switch.set(settings, on));
-    let Some(items) = app.try_state::<PinItems>() else {
-        return;
-    };
-    let item = match switch {
-        Switch::QuickPinned => &items.quick,
-        Switch::AppPinned => &items.app,
-        Switch::LetGoWhenShort => return,
-    };
-    let _ = item.set_checked(on);
+    match switch {
+        Switch::QuickPinned => {
+            if let Some(items) = app.try_state::<PinItems>() {
+                let _ = items.quick.set_checked(on);
+            }
+        }
+        Switch::AppPinned | Switch::AppOnTop => app_window_changed(app),
+        Switch::LetGoWhenShort => {}
+    }
+}
+
+/// Memoca's own window as the menu chooses it: hidden, left behind, or on top.
+fn set_app_window(app: &AppHandle, mode: AppWindow) {
+    app.state::<Store>().update(|settings| {
+        settings.app_pinned = mode != AppWindow::Hide;
+        settings.app_on_top = mode == AppWindow::OnTop;
+    });
+    app_window_changed(app);
+}
+
+fn app_window_changed(app: &AppHandle) {
+    let mode = app.state::<Store>().get().app_window();
+    if let Some(items) = app.try_state::<PinItems>() {
+        for (each, item) in &items.app {
+            let _ = item.set_checked(*each == mode);
+        }
+    }
+    app_window::keep_on_top(app);
 }
 
 /// The icon's clicks so far: when it was last right-clicked, and whether
@@ -97,21 +124,36 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let settings = app.state::<Store>().get();
     let show = MenuItem::with_id(app, "show", "即席メモを開く", true, None::<&str>)?;
     let memoca = MenuItem::with_id(app, "app", "Memoca を開く", true, None::<&str>)?;
-    let pin_quick =
-        CheckMenuItem::with_id(app, "pin", "即席メモ", true, settings.pinned, None::<&str>)?;
-    let pin_app = CheckMenuItem::with_id(
+    let pin_quick = CheckMenuItem::with_id(
         app,
-        "pin-app",
-        "Memoca のウィンドウ",
+        "pin",
+        "即席メモをピン留め（ほかをクリックしても隠さない）",
         true,
-        settings.app_pinned,
+        settings.pinned,
         None::<&str>,
     )?;
+    let app_windows = APP_WINDOWS
+        .iter()
+        .map(|(mode, id, label)| {
+            CheckMenuItem::with_id(
+                app,
+                *id,
+                *label,
+                true,
+                settings.app_window() == *mode,
+                None::<&str>,
+            )
+            .map(|item| (*mode, item))
+        })
+        .collect::<tauri::Result<Vec<_>>>()?;
     let pin = Submenu::with_items(
         app,
-        "ピン留め（ほかをクリックしても隠さない）",
+        "Memoca のウィンドウ（ほかをクリックしたとき）",
         true,
-        &[&pin_quick, &pin_app],
+        &app_windows
+            .iter()
+            .map(|(_, item)| item as &dyn IsMenuItem<Wry>)
+            .collect::<Vec<_>>(),
     )?;
     let corners = CORNERS
         .iter()
@@ -169,6 +211,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &show,
             &memoca,
             &PredefinedMenuItem::separator(app)?,
+            &pin_quick,
             &pin,
             &corner_menu,
             &hotkey,
@@ -187,7 +230,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     app.manage(AtLogin(at_login));
     app.manage(PinItems {
         quick: pin_quick,
-        app: pin_app,
+        app: app_windows,
     });
     app.manage(Clicks::default());
     app.manage(VersionItem(version));
@@ -246,7 +289,6 @@ fn chosen(app: &AppHandle, id: &str) {
         "show" => window::show(app, window::Place::Cursor),
         "app" => app_window::open(app),
         "pin" => set_switch(app, Switch::QuickPinned, !app.state::<Store>().get().pinned),
-        "pin-app" => set_switch(app, Switch::AppPinned, !app.state::<Store>().get().app_pinned),
         // Memoca's settings page, where they are changed at once (the file
         // may still be written by hand: docs/DESKTOP.md).
         "settings" => {
@@ -286,7 +328,9 @@ fn chosen(app: &AppHandle, id: &str) {
         }
         "quit" => app.exit(0),
         _ => {
-            if let Some((corner, _, _)) = CORNERS.iter().find(|(_, key, _)| *key == id) {
+            if let Some((mode, _, _)) = APP_WINDOWS.iter().find(|(_, key, _)| *key == id) {
+                set_app_window(app, *mode);
+            } else if let Some((corner, _, _)) = CORNERS.iter().find(|(_, key, _)| *key == id) {
                 app.state::<Store>()
                     .update(|settings| settings.hot_corner = *corner);
                 // One ticked: the one chosen.

@@ -115,6 +115,15 @@ export type MemocaShell = {
    * later, the vault closed): or kept made, to come out at once. On unless
    * chosen otherwise. Not before 0.4.17.
    */
+  /**
+   * Memoca's own window, kept out (`appPinned`), above the others as the
+   * quick note's pinned is: not left behind the app clicked. Off unless
+   * chosen. Not before 0.4.18.
+   */
+  appOnTop?: {
+    get(): Promise<boolean>;
+    set(on: boolean): Promise<boolean>;
+  };
   letGoWhenShort?: {
     get(): Promise<boolean>;
     set(on: boolean): Promise<boolean>;
