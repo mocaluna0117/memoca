@@ -15,6 +15,7 @@ import {
 } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { detectEdgePosition, multiColumnDropCursor } from "@blocknote/xl-multi-column";
+import { withoutColors } from "@/components/editor/colors";
 import { uncover } from "@/components/editor/stuck-toggles";
 
 /**
@@ -246,7 +247,9 @@ export function clipboardFor(
   const selection = new RangeSelection(doc.resolve(range.from), doc.resolve(range.to));
   const state = Object.create(view.state, { selection: { value: selection } }) as EditorState;
   const reading = Object.create(view, { state: { value: state } }) as EditorView;
-  return selectedFragmentToHTML(reading, editor);
+  const html = selectedFragmentToHTML(reading, editor);
+  // For other apps: no colours (see colors.ts).
+  return { ...html, externalHTML: withoutColors(html.externalHTML) };
 }
 
 /** Whether a toggle's children are shown, as its button has them on the screen. */

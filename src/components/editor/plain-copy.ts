@@ -13,6 +13,7 @@ import {
   rememberImageCopy,
   stitch,
 } from "@/components/editor/copy-image";
+import { withoutColors } from "@/components/editor/colors";
 import { clipboardFor, copyRange, cutRange, isOpenOnScreen } from "@/components/editor/toggles";
 import {
   blockSelectKey,
@@ -26,7 +27,8 @@ import { forThisSystem, plainTextBetween, plainTextOf } from "@/lib/plain-text";
  * Copying or cutting from a note gives apps that take plain text the text as
  * it reads (src/lib/plain-text.ts), in place of the Markdown BlockNote puts
  * there. What a note or a rich-text app pastes, BlockNote's HTML, is left as
- * it is.
+ * it is, but for the colours it writes inline (colors.ts): pasted into
+ * Gmail, text taken from a page in dark mode came out white on black.
  *
  * The text is read before the editor handles the event (on the way down),
  * which for a cut takes the selection away, and written after it (on the way
@@ -167,6 +169,14 @@ export function usePlainTextCopy(
       // Empty too: an image alone gives no text, where BlockNote wrote Markdown for it.
       if (text !== null && event.defaultPrevented) {
         event.clipboardData?.setData("text/plain", forThisSystem(text));
+      }
+      // Its HTML for other apps, without the colours it wrote inline (colors.ts).
+      if (event.defaultPrevented && inEditor(event)) {
+        const html = event.clipboardData?.getData("text/html");
+        if (html) {
+          const plain = withoutColors(html);
+          if (plain !== html) event.clipboardData?.setData("text/html", plain);
+        }
       }
       text = null;
     };

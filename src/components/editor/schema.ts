@@ -1,6 +1,7 @@
 import { BlockNoteSchema, defaultBlockSpecs, defaultStyleSpecs } from "@blocknote/core";
 import { ja as blocknoteJa } from "@blocknote/core/locales";
 import { locales as multiColumnLocales, withMultiColumn } from "@blocknote/xl-multi-column";
+import { inertColorStyleSpecs } from "@/components/editor/colors";
 import { fontSize } from "@/components/editor/font-size";
 import { memocaFileBlock } from "@/components/editor/pdf-file-block";
 import { tightStyleSpecs } from "@/components/editor/tight-marks";
@@ -8,14 +9,16 @@ import { tightStyleSpecs } from "@/components/editor/tight-marks";
 /**
  * BlockNote's blocks, with a file block that shows a PDF's pages (see
  * memocaFileBlock), a size for text (fontSize), bold, italic and strike
- * typed as Markdown has them (tightStyleSpecs), and columns: blocks side by
+ * typed as Markdown has them (tightStyleSpecs), colours of text kept but
+ * neither shown nor taken from pasted pages (inertColorStyleSpecs), and
+ * columns: blocks side by
  * side, in a row of two or more (BlockNote's multi-column, GPL-3.0). A
  * note's, and a template's made without an editor on screen (lib/templates).
  */
 export const SCHEMA = withMultiColumn(
   BlockNoteSchema.create({
     blockSpecs: { ...defaultBlockSpecs, file: memocaFileBlock() },
-    styleSpecs: { ...defaultStyleSpecs, ...tightStyleSpecs, fontSize },
+    styleSpecs: { ...defaultStyleSpecs, ...tightStyleSpecs, ...inertColorStyleSpecs, fontSize },
   }),
 );
 
