@@ -1,7 +1,7 @@
 "use client";
 
 import { useConvex, useMutation } from "convex/react";
-import { CircleHelp, Loader2, LogOut, Smartphone } from "lucide-react";
+import { CircleHelp, Download, Loader2, LogOut, Smartphone } from "lucide-react";
 import { useTheme } from "next-themes";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -245,6 +245,24 @@ export default function SettingsView() {
         </Section>
 
         <Separator />
+
+        {desktop ? null : (
+          <>
+            <Section
+              title="デスクトップ版"
+              description="Mac と Windows のアプリです。どのアプリを使っていても、ホットキーで即席メモを出せます。"
+            >
+              <Button variant="outline" className="gap-2" asChild>
+                <a href="/download" target="_blank" rel="noreferrer">
+                  <Download className="size-4" aria-hidden />
+                  ダウンロードのページを開く
+                </a>
+              </Button>
+            </Section>
+
+            <Separator />
+          </>
+        )}
 
         <Section title="ホーム画面に追加">
           {standalone ? (

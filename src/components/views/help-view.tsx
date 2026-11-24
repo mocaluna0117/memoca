@@ -351,7 +351,11 @@ export default function HelpView() {
 
         <Section id="desktop" title={title("desktop")}>
           <p>
-            Mac と Windows では、デスクトップ版も使えます。メニューバー（Windows はタスクバーの右下）に <Ico icon={Zap} /> が常にいて、どのアプリを使っていても、ホットキーで即席メモを出せます。
+            Mac と Windows では、デスクトップ版も使えます。メニューバー（Windows はタスクバーの右下）に <Ico icon={Zap} /> が常にいて、どのアプリを使っていても、ホットキーで即席メモを出せます。入れ方は
+            <a href="/download" target="_blank" rel="noreferrer" className="mx-1 underline">
+              ダウンロードのページ
+            </a>
+            にあります。
           </p>
           <ul className="list-disc space-y-1 pl-5">
             <li>
