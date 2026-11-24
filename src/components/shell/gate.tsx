@@ -37,7 +37,7 @@ export function AccountGate({ children }: { children: ReactNode }) {
           いまは新規登録を受け付けていません
         </h1>
         <p className="text-muted-foreground text-sm leading-relaxed">
-          無料枠の上限に達したため、登録は招待コードをお持ちの方だけになっています。
+          登録は、招待コードをお持ちの方だけになっています。
           {gate === "badInvite" ? (
             <span className="text-destructive mt-2 block">
               コードが正しくないか、有効期限が切れています。

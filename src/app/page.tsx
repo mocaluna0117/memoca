@@ -54,7 +54,14 @@ export default function LandingPage() {
       </header>
 
       <section className="flex flex-col items-start gap-6 py-16 sm:py-24">
-        <h1 className="max-w-2xl text-4xl leading-tight font-semibold tracking-tight text-balance sm:text-5xl">
+        {/* On one line, whatever the width: as large as the page lets it be
+            (its 15 characters, each 1em wide, within the page's padding), 3rem
+            at most. Made to fit lines it broke where it liked, a character
+            from its end (「どこでも開／く。」). */}
+        <h1
+          className="leading-tight font-semibold tracking-tight whitespace-nowrap"
+          style={{ fontSize: "min(3rem, calc((100vw - 4rem) / 15.5))" }}
+        >
           {t.app.tagline}
         </h1>
         <p className="text-muted-foreground max-w-xl text-base leading-relaxed">
@@ -67,6 +74,9 @@ export default function LandingPage() {
           </Button>
           <span className="text-muted-foreground text-sm">無料・広告なし</span>
         </div>
+        <Link href="/download" className="text-muted-foreground text-sm underline underline-offset-4 hover:text-foreground">
+          デスクトップ版（Mac・Windows）をダウンロード
+        </Link>
       </section>
 
       <section className="grid gap-x-8 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
@@ -80,6 +90,9 @@ export default function LandingPage() {
       </section>
 
       <footer className="text-muted-foreground mt-auto flex flex-wrap items-center gap-x-5 gap-y-2 pt-20 text-sm">
+        <Link href="/download" className="hover:text-foreground">
+          デスクトップ版
+        </Link>
         <Link href="/terms" className="hover:text-foreground">
           利用規約
         </Link>

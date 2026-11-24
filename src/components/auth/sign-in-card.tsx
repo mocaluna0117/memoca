@@ -82,8 +82,7 @@ export function SignInCard({ next }: { next: string }) {
 
       {status && !status.open ? (
         <p className="text-muted-foreground text-xs leading-relaxed">
-          いまは新規登録を受け付けていません（{status.userCount} / {status.maxUsers} 人）。
-          招待コードをお持ちの場合は、ログイン後に入力できます。
+          いまは新規登録を受け付けていません。招待コードをお持ちの場合は、ログイン後に入力できます。
         </p>
       ) : null}
     </div>
