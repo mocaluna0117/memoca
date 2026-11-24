@@ -212,10 +212,9 @@ export function useNotePlace(noteId: string, header: HTMLElement | null, hidden:
       frame = requestAnimationFrame(settle);
     };
     /** The note's lines on the screen: put back from now, or (its line gone) left at its top. */
-    const look = () => {
+    const begin = () => {
       const pane = body.current;
-      if (!pane || !pane.querySelector(".memoca-editor .bn-block-content")) return;
-      watching?.disconnect();
+      if (!pane) return;
       if (!shownLineOf(pane, place.block)) {
         stop();
         return;
@@ -224,7 +223,20 @@ export function useNotePlace(noteId: string, header: HTMLElement | null, hidden:
       rememberPlace(noteId, place);
       found = performance.now();
       for (const type of STOPPED_BY) window.addEventListener(type, byReader, true);
-      frame = requestAnimationFrame(settle);
+      settle();
+    };
+    /**
+     * Its lines there: put back as the next frame is drawn, before it is
+     * painted, once the editor has made all of them. Looked for at once, as
+     * they were, the whole note was laid out in the middle of its being made
+     * (its line's place read), and again for the frame: a long note took a
+     * good part of its opening to be laid out twice.
+     */
+    const look = () => {
+      const pane = body.current;
+      if (!pane || !pane.querySelector(".memoca-editor .bn-block-content")) return;
+      watching?.disconnect();
+      frame = requestAnimationFrame(begin);
     };
     // Not yet on the screen (loading, or locked): once it is.
     watching = new MutationObserver(look);

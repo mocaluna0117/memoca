@@ -18,7 +18,7 @@ import { useGoTo } from "@/lib/hooks/use-go-to";
 import { META } from "@/lib/db/meta";
 import { useVaultRecord } from "@/lib/vault/record";
 import { vault } from "@/lib/crypto/vault";
-import { flushAll } from "@/lib/sync/docs";
+import { flushAll, warmDoc } from "@/lib/sync/docs";
 import { watchVaultActivity } from "@/lib/vault/activity";
 import { startImeTrace } from "@/lib/debug/ime-trace";
 import { useEscapeHidesWindow } from "@/lib/desktop/escape-hides-window";
@@ -50,6 +50,18 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
   );
   // A reading dictionary kept on this device that is not to be kept goes.
   useEffect(() => void tidyYomi(), []);
+  // A note's row pressed: its document read from storage from then, before
+  // the click that opens it lands (lib/sync/docs).
+  useEffect(() => {
+    const pressed = (event: PointerEvent) => {
+      if (event.button !== 0 || !(event.target instanceof Element)) return;
+      const row = event.target.closest<HTMLElement>("[data-note-row], [data-tree-note]");
+      const noteId = row?.dataset.noteRow ?? row?.dataset.treeNote;
+      if (noteId) warmDoc(noteId);
+    };
+    document.addEventListener("pointerdown", pressed, { capture: true, passive: true });
+    return () => document.removeEventListener("pointerdown", pressed, { capture: true });
+  }, []);
   useEffect(
     () =>
       vault.onClosed((reason) =>

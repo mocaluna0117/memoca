@@ -531,6 +531,11 @@ export async function releaseDoc(noteId: string): Promise<void> {
   if (!handle) return;
   handle.refs -= 1;
   if (handle.refs > 0) return;
+  await closeUnheld(handle);
+}
+
+/** A document nobody holds: its last edits saved, then let go of, unless someone took it up meanwhile. */
+async function closeUnheld(handle: Handle): Promise<void> {
   if (handle.timer) clearTimeout(handle.timer);
   handle.timer = null;
   // If this fails, the document stays as it is, held by nobody, with the
@@ -547,7 +552,34 @@ export async function releaseDoc(noteId: string): Promise<void> {
   if (handle.refs > 0) return;
   handle.detach();
   handle.doc.destroy();
-  if (handles.get(noteId) === handle) handles.delete(noteId);
+  if (handles.get(handle.noteId) === handle) handles.delete(handle.noteId);
+}
+
+/** How long a document built ahead of time (warmDoc) waits for the editor before it is let go of. */
+export const WARM_MS = 30_000;
+
+/**
+ * Starts building a note's document from storage now, before its editor asks
+ * for it: as its row is pressed, or as it is chosen. Reading it then goes on
+ * while the screen is drawn for the note, rather than after: the editor's
+ * acquireDoc, which comes once the note pane is drawn (the note before taken
+ * down, the pane's header, its menus), takes it up as it is, or as it comes.
+ * One nobody takes up (a row pressed to drag it, say) is let go of after
+ * WARM_MS. One that cannot be read (a locked note the vault cannot open) is
+ * left: the editor says so, if it is opened.
+ */
+export function warmDoc(noteId: string): void {
+  if (handles.has(noteId) || opening.has(noteId)) return;
+  const pending = openHandle(noteId).finally(() => opening.delete(noteId));
+  opening.set(noteId, pending);
+  pending.then(
+    (handle) => {
+      setTimeout(() => {
+        if (handle.refs === 0 && handles.get(noteId) === handle) void closeUnheld(handle);
+      }, WARM_MS);
+    },
+    () => {},
+  );
 }
 
 export function openDoc(noteId: string): Y.Doc | undefined {

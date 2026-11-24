@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo } from "react";
 import { useSelectionStore } from "@/lib/store/selection";
+import { warmDoc } from "@/lib/sync/docs";
 import { moveWithinWorkspace } from "@/lib/workspace-route";
 
 export type Selection = {
@@ -61,6 +62,9 @@ export function useWorkspace() {
         // A folder is not the pinned notes.
         pinned: merged.folderId === null && merged.pinned,
       };
+      // The note's document read from storage from now, while the screen is
+      // drawn for it, not once its editor is (lib/sync/docs).
+      if (target.noteId && target.noteId !== useSelectionStore.getState().noteId) warmDoc(target.noteId);
       // State first, so the interface has already switched by the time the
       // next keystroke arrives.
       apply(target);

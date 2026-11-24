@@ -11,7 +11,7 @@ import {
   hasUnsavedEdits,
   openDoc,
   releaseDoc,
-  reloadDoc, PREVIEW_EVERY_MS } from "@/lib/sync/docs";
+  reloadDoc, PREVIEW_EVERY_MS, WARM_MS, warmDoc } from "@/lib/sync/docs";
 import { onAlert } from "@/lib/sync/alerts";
 import { bodyFragment, extractText } from "@/lib/sync/ydoc";
 import type { Note } from "@/lib/types";
@@ -114,6 +114,63 @@ describe("one live document per note", () => {
     expect(await saved()).toBe(before + 1);
     await releaseDoc("n1");
     expect(openDoc("n1")).toBeUndefined();
+  });
+});
+
+describe("a document built ahead of its editor (a row pressed, a note chosen)", () => {
+  /** Lets storage's reads and writes finish (setImmediate stays real). */
+  const settle = async () => {
+    for (let i = 0; i < 40; i += 1) await new Promise((resolve) => setImmediate(resolve));
+  };
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  test("is the one the editor then gets, read from storage once, whether it is ready or still being read", async () => {
+    const reads = vi.spyOn(db().notes, "get");
+    warmDoc("n1");
+    warmDoc("n1");
+    const doc = await acquireDoc("n1");
+    expect(openDoc("n1")).toBe(doc);
+    expect(reads).toHaveBeenCalledTimes(1);
+    // Built, then asked for.
+    await releaseDoc("n1");
+    warmDoc("n1");
+    await settle();
+    const again = await acquireDoc("n1");
+    expect(openDoc("n1")).toBe(again);
+    await releaseDoc("n1");
+    expect(openDoc("n1")).toBeUndefined();
+  });
+
+  test("nobody taking it up (a row pressed to drag it), it is let go of after a while; taken up, it is not", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    warmDoc("n1");
+    await settle();
+    expect(openDoc("n1")).toBeDefined();
+    await vi.advanceTimersByTimeAsync(WARM_MS);
+    await settle();
+    expect(openDoc("n1")).toBeUndefined();
+
+    warmDoc("n1");
+    await settle();
+    const doc = await acquireDoc("n1");
+    await vi.advanceTimersByTimeAsync(WARM_MS);
+    await settle();
+    expect(openDoc("n1")).toBe(doc);
+    expect(doc.isDestroyed).toBe(false);
+  });
+
+  test("an edit made in it before it is let go of is saved, not lost with it", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    warmDoc("n1");
+    await settle();
+    openDoc("n1")!.getText("t").insert(0, "先に開いた文書への編集");
+    await vi.advanceTimersByTimeAsync(WARM_MS);
+    await settle();
+    expect(openDoc("n1")).toBeUndefined();
+    expect((await stored()).getText("t").toString()).toBe("先に開いた文書への編集");
   });
 });
 

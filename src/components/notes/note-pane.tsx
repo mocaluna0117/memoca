@@ -160,6 +160,14 @@ export function NotePane({
   const [moving, setMoving] = useState(false);
   const [history, setHistory] = useState(false);
   const [applying, setApplying] = useState(false);
+  // Its dialogs drawn from the first time its menu (where they are opened
+  // from) is, and kept after (to close as they do): their lists read while
+  // the menu is looked at, not empty for a moment as one opens. Never
+  // opened, they were drawn again, closed, with each note opened (five times
+  // or so each), and the templates' and folders' lists in them read again
+  // with every save of the note being written.
+  const [menuOpen, setMenuOpen] = useState(false);
+  const dialogsOnce = useOpenedOnce(menuOpen || moving || history || applying);
 
   if (draft.noteId !== noteId) {
     setDraft({ noteId, value: note ? title : "", dirty: false });
@@ -395,7 +403,7 @@ export function NotePane({
         {note.locked ? <VaultBadge compact /> : null}
         <SyncBadge className="mr-1" />
 
-        <DropdownMenu>
+        <DropdownMenu onOpenChange={setMenuOpen}>
           <DropdownMenuTrigger asChild>
             <Button ref={menuTrigger} variant="ghost" size="icon" aria-label="メモの操作">
               <MoreHorizontal className="size-5" aria-hidden />
@@ -563,30 +571,41 @@ export function NotePane({
         )}
       </div>
 
-      <FolderPicker
-        open={moving}
-        onOpenChange={setMoving}
-        rootLabel={t.action.topLevel}
-        onPick={(folderId) => moveNoteTo(note, folderId, menuTrigger.current)}
-      />
-      <VersionHistory noteId={noteId} open={history} onOpenChange={setHistory} />
-      <TemplatePicker
-        open={applying}
-        onOpenChange={setApplying}
-        onPick={async (templateId) => {
-          try {
-            // Its title too, for a note with none yet.
-            await applyTemplate(noteId, templateId, { withTitle: draft.value.trim() === "" });
-          } catch (error) {
-            toast.error(
-              error instanceof TemplateUnavailableError
-                ? t.templates.unavailable
-                : "テンプレートを適用できませんでした。",
-            );
-          }
-        }}
-        onEdit={() => navigate({ folderId: TEMPLATES_FOLDER_ID, noteId: null })}
-      />
+      {dialogsOnce ? (
+        <FolderPicker
+          open={moving}
+          onOpenChange={setMoving}
+          rootLabel={t.action.topLevel}
+          onPick={(folderId) => moveNoteTo(note, folderId, menuTrigger.current)}
+        />
+      ) : null}
+      {dialogsOnce ? <VersionHistory noteId={noteId} open={history} onOpenChange={setHistory} /> : null}
+      {dialogsOnce ? (
+        <TemplatePicker
+          open={applying}
+          onOpenChange={setApplying}
+          onPick={async (templateId) => {
+            try {
+              // Its title too, for a note with none yet.
+              await applyTemplate(noteId, templateId, { withTitle: draft.value.trim() === "" });
+            } catch (error) {
+              toast.error(
+                error instanceof TemplateUnavailableError
+                  ? t.templates.unavailable
+                  : "テンプレートを適用できませんでした。",
+              );
+            }
+          }}
+          onEdit={() => navigate({ folderId: TEMPLATES_FOLDER_ID, noteId: null })}
+        />
+      ) : null}
     </div>
   );
+}
+
+/** Whether `open` has ever been true: from then on, it stays so. */
+function useOpenedOnce(open: boolean): boolean {
+  const [once, setOnce] = useState(open);
+  if (open && !once) setOnce(true);
+  return once || open;
 }
