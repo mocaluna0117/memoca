@@ -7,6 +7,7 @@ import {
   type CollisionDetection,
   DndContext,
   type DragEndEvent,
+  type DragMoveEvent,
   DragOverlay,
   type DragStartEvent,
   MouseSensor,
@@ -99,6 +100,43 @@ class ReleasingMouseSensor extends MouseSensor {
   }
 }
 
+/**
+ * How far a mouse goes with its button down before a row is dragged, in CSS
+ * pixels: less, and it is a click. Raised from 6: on a Mac trackpad a pressed
+ * click rolls that far, and the folder or note then did not open (the drag,
+ * dropped where it began, was no click), and had to be clicked again.
+ */
+export const MOUSE_DRAG_PX = 10;
+/**
+ * A drag by a mouse that never went further than this from where it began
+ * was a click that moved, not a move: taken back, and clicked. Less than half
+ * a row, so no drag that would have moved something by a place is lost; a
+ * real drag goes much further, and the move dialogs are there too.
+ */
+export const CLICK_SLOP_PX = 16;
+
+/** Whether a drag that has ended was a click that moved a little (see CLICK_SLOP_PX). */
+export function clickAfterAll(event: Pick<DragEndEvent, "activatorEvent">, farthest: number): boolean {
+  const pressed = event.activatorEvent;
+  // A finger's hold is a gesture of its own (a note's menu, say).
+  if (!pressed || "touches" in pressed || pressed.type.startsWith("touch")) return false;
+  return farthest < CLICK_SLOP_PX;
+}
+
+/**
+ * Clicks what the mouse was pressed on. Once dnd-kit is done with it: it
+ * swallows clicks for 50 ms after a drag (the browser's own one among them).
+ */
+function clickWhatWasPressed(pressed: Event | null) {
+  const target = pressed?.target;
+  const button =
+    target instanceof Element ? target.closest<HTMLElement>("button, a[href], [role='button']") : null;
+  if (!button) return;
+  setTimeout(() => {
+    if (button.isConnected) button.click();
+  }, 80);
+}
+
 const Owners = createContext<Map<string, { current: DragHandlers }> | null>(null);
 
 /** Whose drag this is, by what it carries. */
@@ -113,6 +151,8 @@ const ownerOf = (active: Active | null | undefined) =>
 export function WorkspaceDnd({ children }: { children: ReactNode }) {
   const [owners] = useState(() => new Map<string, { current: DragHandlers }>());
   const [active, setActive] = useState<Active | null>(null);
+  /** How far the drag under way has gone from where it started, at the most. */
+  const farthest = useRef(0);
   const handlersOf = (of: Active | null | undefined) => {
     const owner = ownerOf(of);
     return owner === undefined ? undefined : owners.get(owner)?.current;
@@ -121,9 +161,10 @@ export function WorkspaceDnd({ children }: { children: ReactNode }) {
   // A finger held down first, so that one moving a list scrolls it, and held
   // past the time a swipe opens the folder drawer (drawer-swipe.ts), so that
   // the two never both start; a mouse moved a little way, so a click is a
-  // click. Folders are dragged by a mouse only (their rows say so).
+  // click (see MOUSE_DRAG_PX). Folders are dragged by a mouse only (their
+  // rows say so).
   const sensors = useSensors(
-    useSensor(ReleasingMouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(ReleasingMouseSensor, { activationConstraint: { distance: MOUSE_DRAG_PX } }),
     useSensor(TouchSensor, { activationConstraint: { delay: HOLD_MS + 50, tolerance: 8 } }),
   );
 
@@ -146,12 +187,22 @@ export function WorkspaceDnd({ children }: { children: ReactNode }) {
           screenReaderInstructions: { draggable: "ドラッグして移動します。" },
         }}
         onDragStart={(event) => {
+          farthest.current = 0;
           setActive(event.active);
           handlersOf(event.active)?.onDragStart?.(event);
         }}
+        onDragMove={(event: DragMoveEvent) => {
+          farthest.current = Math.max(farthest.current, Math.hypot(event.delta.x, event.delta.y));
+        }}
         onDragEnd={(event) => {
           setActive(null);
-          handlersOf(event.active)?.onDragEnd?.(event);
+          const handlers = handlersOf(event.active);
+          if (clickAfterAll(event, farthest.current)) {
+            handlers?.onDragCancel?.();
+            clickWhatWasPressed(event.activatorEvent);
+            return;
+          }
+          handlers?.onDragEnd?.(event);
         }}
         onDragCancel={(event) => {
           setActive(null);
