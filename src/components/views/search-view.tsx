@@ -1,15 +1,23 @@
 "use client";
 
-import { Languages, Loader2, Lock, Search as SearchIcon } from "lucide-react";
-import { useState } from "react";
+import { History, Languages, Loader2, Lock, Search as SearchIcon, X } from "lucide-react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { toast } from "sonner";
 import { MobileHeader } from "@/components/shell/app-shell";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { useSearch } from "@/lib/hooks/use-search";
 import { useWorkspace } from "@/lib/hooks/workspace";
 import { useYomi } from "@/lib/hooks/use-yomi";
+import {
+  forgetSearch,
+  forgetSearchHistory,
+  rememberSearch,
+  searchHistorySnapshot,
+  subscribeSearchHistory,
+} from "@/lib/search/history";
 import { lockedSearchNote } from "@/lib/search/rows";
 import { isKanaQuery } from "@/lib/search/yomi";
 import { requestVault } from "@/lib/store/vault-gate";
@@ -36,9 +44,15 @@ function Highlighted({ snippet }: { snippet: SearchHit["snippet"] }) {
   return <>{pieces}</>;
 }
 
+/** No searches kept: as the page is drawn on the server, and for its first draw here. */
+const NO_HISTORY: readonly string[] = [];
+
 export default function SearchView() {
   const { navigate } = useWorkspace();
   const [query, setQuery] = useState("");
+  const field = useRef<HTMLInputElement>(null);
+  // The searches made last on this device (lib/search/history), offered while the field is empty.
+  const history = useSyncExternalStore(subscribeSearchHistory, searchHistorySnapshot, () => NO_HISTORY);
   const { hits, total, locked } = useSearch(query);
   const yomi = useYomi();
   const lockedNote = lockedSearchNote(locked);
@@ -79,8 +93,13 @@ export default function SearchView() {
               aria-hidden
             />
             <Input
+              ref={field}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
+              // Enter: this search kept, as one made (a note opened from it is too).
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && !event.nativeEvent.isComposing) rememberSearch(query);
+              }}
               placeholder="メモ名・フォルダ名・本文から探す"
               aria-label="検索"
               autoFocus
@@ -133,6 +152,50 @@ export default function SearchView() {
         ) : null}
 
         <ScrollArea className="mt-3 min-h-0 flex-1">
+          {query.trim().length === 0 && history.length > 0 ? (
+            <section aria-labelledby="search-history" className="pb-2">
+              <div className="flex items-center justify-between gap-2">
+                <h2 id="search-history" className="text-muted-foreground text-xs font-medium">
+                  最近の検索
+                </h2>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-muted-foreground h-7 text-xs"
+                  onClick={() => forgetSearchHistory()}
+                >
+                  すべて消す
+                </Button>
+              </div>
+              <ul className="divide-y">
+                {history.map((entry) => (
+                  <li key={entry} className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setQuery(entry);
+                        field.current?.focus();
+                      }}
+                      className="hover:bg-accent/50 flex min-w-0 flex-1 items-center gap-2 px-1 py-2.5 text-left text-sm"
+                    >
+                      <History className="text-muted-foreground size-4 shrink-0" aria-hidden />
+                      <span className="truncate">{entry}</span>
+                    </button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="text-muted-foreground size-8 shrink-0"
+                      aria-label={`「${entry}」を履歴から消す`}
+                      onClick={() => forgetSearch(entry)}
+                    >
+                      <X className="size-4" aria-hidden />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
+
           {query.trim().length > 0 && hits.length === 0 ? (
             <p className="text-muted-foreground py-16 text-center text-sm">
               {t.empty.noResults}
@@ -144,7 +207,11 @@ export default function SearchView() {
               <li key={hit.noteId}>
                 <button
                   type="button"
-                  onClick={() => navigate({ folderId: null, pinned: false, noteId: hit.noteId })}
+                  onClick={() => {
+                    // This search kept, as one made.
+                    rememberSearch(query);
+                    navigate({ folderId: null, pinned: false, noteId: hit.noteId });
+                  }}
                   className="hover:bg-accent/50 flex w-full flex-col gap-1 px-1 py-3 text-left"
                 >
                   <span className="flex items-center gap-1.5 text-sm font-medium">
