@@ -16,6 +16,15 @@ export type NewsItem = {
 
 export const NEWS: readonly NewsItem[] = [
   {
+    id: "2026-11-25-download-page",
+    date: "2026-11-25",
+    title: "デスクトップ版のダウンロードのページを用意しました",
+    details: [
+      "Mac 版と Windows 版のダウンロードと、初めて開くときの手順を、1 つのページにまとめました。いつも最新の版をダウンロードできます。",
+      "トップページ、設定の「デスクトップ版」、使い方の「デスクトップ版」から開けます。",
+    ],
+  },
+  {
     id: "2026-11-25-search-history",
     date: "2026-11-25",
     title: "検索に「最近の検索」を出すように",
