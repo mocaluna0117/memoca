@@ -137,6 +137,21 @@ function clickWhatWasPressed(pressed: Event | null) {
   }, 80);
 }
 
+/**
+ * How a drag starts: a finger held down first, so that one moving a list
+ * scrolls it, and held past the time a swipe opens the folder drawer
+ * (drawer-swipe.ts), so that the two never both start; a mouse moved a
+ * little way, so a click is a click (see MOUSE_DRAG_PX). Folders are dragged
+ * by a mouse only (their rows say so).
+ *
+ * Made once, here: given anew with each draw of the workspace, they made
+ * dnd-kit's sensors anew, and with them the context every row that can be
+ * dragged or dropped on reads, and every row of the note list (300 of them,
+ * with their tooltips and menus) was drawn again each time a note opened.
+ */
+const MOUSE_OPTIONS = { activationConstraint: { distance: MOUSE_DRAG_PX } };
+const TOUCH_OPTIONS = { activationConstraint: { delay: HOLD_MS + 50, tolerance: 8 } };
+
 const Owners = createContext<Map<string, { current: DragHandlers }> | null>(null);
 
 /** Whose drag this is, by what it carries. */
@@ -158,14 +173,10 @@ export function WorkspaceDnd({ children }: { children: ReactNode }) {
     return owner === undefined ? undefined : owners.get(owner)?.current;
   };
 
-  // A finger held down first, so that one moving a list scrolls it, and held
-  // past the time a swipe opens the folder drawer (drawer-swipe.ts), so that
-  // the two never both start; a mouse moved a little way, so a click is a
-  // click (see MOUSE_DRAG_PX). Folders are dragged by a mouse only (their
-  // rows say so).
+  // The same options each time (see MOUSE_OPTIONS): new ones were new sensors.
   const sensors = useSensors(
-    useSensor(ReleasingMouseSensor, { activationConstraint: { distance: MOUSE_DRAG_PX } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: HOLD_MS + 50, tolerance: 8 } }),
+    useSensor(ReleasingMouseSensor, MOUSE_OPTIONS),
+    useSensor(TouchSensor, TOUCH_OPTIONS),
   );
 
   const announcements: Announcements = {
