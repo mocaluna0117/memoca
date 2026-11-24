@@ -1,8 +1,9 @@
 import { ConvexError, v } from "convex/values";
-import { components, internal } from "./_generated/api";
+import { internal } from "./_generated/api";
 import type { Doc, Id } from "./_generated/dataModel";
 import { type MutationCtx, internalMutation, mutation, query } from "./_generated/server";
 import { authComponent } from "./auth";
+import { removeAccount } from "./lib/account";
 import { nearLimit } from "./lib/budget";
 import { DEFAULTS } from "./lib/constants";
 import { openSeq } from "./lib/seq";
@@ -236,25 +237,7 @@ export const deleteAccount = mutation({
   args: {},
   handler: async (ctx) => {
     const user = await requireUser(ctx);
-    const authId = user.authId;
-    await ctx.db.patch(user._id, { authId: `deleted:${authId}` });
-    const config = await ctx.db
-      .query("appConfig")
-      .withIndex("by_key", (q) => q.eq("key", "global"))
-      .unique();
-    if (config) {
-      await ctx.db.patch(config._id, { userCount: Math.max(0, config.userCount - 1) });
-    }
-    for (const model of ["session", "account"] as const) {
-      await ctx.runMutation(components.betterAuth.adapter.deleteMany, {
-        input: { model, where: [{ field: "userId", value: authId }] },
-        paginationOpts: { numItems: 100, cursor: null },
-      });
-    }
-    await ctx.runMutation(components.betterAuth.adapter.deleteOne, {
-      input: { model: "user", where: [{ field: "_id", value: authId }] },
-    });
-    await ctx.scheduler.runAfter(0, internal.users.purgeAccount, { userId: user._id });
+    await removeAccount(ctx, user);
     return { status: "scheduled" as const };
   },
 });

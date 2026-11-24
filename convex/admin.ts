@@ -1,8 +1,9 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { internal } from "./_generated/api";
 import { internalMutation, mutation, query } from "./_generated/server";
+import { isRemoved, removeAccount } from "./lib/account";
 import { DEFAULTS } from "./lib/constants";
-import { requireAdmin } from "./lib/user";
+import { hasAdminAccess, requireAdmin } from "./lib/user";
 
 const CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
@@ -20,7 +21,8 @@ export const overview = query({
       .query("appConfig")
       .withIndex("by_key", (q) => q.eq("key", "global"))
       .unique();
-    const users = await ctx.db.query("users").take(200);
+    // The newest first: those who signed up last are the ones looked for.
+    const users = await ctx.db.query("users").order("desc").take(200);
     const invites = await ctx.db.query("inviteCodes").take(100);
     return {
       config: {
@@ -34,6 +36,7 @@ export const overview = query({
       /** What everyone has stored, all told. */
       usedBytes: users.reduce((sum, u) => sum + u.usedBytes + u.reservedBytes, 0),
       users: users.map((u) => ({
+        id: u._id,
         email: u.email,
         name: u.name ?? null,
         role: u.role,
@@ -41,6 +44,10 @@ export const overview = query({
         usedBytes: u.usedBytes,
         reservedBytes: u.reservedBytes,
         createdAt: u.createdAt,
+        /** Taken out (removeAccount), its rows still being purged. */
+        removed: isRemoved(u),
+        /** An admin, by role or ADMIN_EMAILS: not one to take out from here. */
+        admin: hasAdminAccess(u),
       })),
       invites: invites.map((i) => ({
         code: i.code,
@@ -116,22 +123,31 @@ export const applyDefaultQuota = internalMutation({
 export const createInvite = mutation({
   args: {
     uses: v.number(),
+    /** Good for this many days from now; null, for good. Ignored when `expiresAt` is given. */
     expiresInDays: v.union(v.number(), v.null()),
+    /** Good until this moment (ms), chosen on the admin screen: the end of a day there. */
+    expiresAt: v.optional(v.number()),
     memo: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const admin = await requireAdmin(ctx);
+    const now = Date.now();
+    if (args.expiresAt !== undefined && !(Number.isFinite(args.expiresAt) && args.expiresAt > now)) {
+      throw new ConvexError({ code: "BAD_EXPIRY", message: "期限は、いまより先の日時にしてください。" });
+    }
     const code = randomCode();
     await ctx.db.insert("inviteCodes", {
       code,
       createdBy: admin._id,
-      usesLeft: Math.min(Math.max(args.uses, 1), 100),
+      usesLeft: Math.min(Math.max(Math.floor(args.uses) || 1, 1), 100),
       expiresAt:
-        args.expiresInDays === null
-          ? null
-          : Date.now() + args.expiresInDays * 24 * 60 * 60 * 1000,
-      memo: args.memo,
-      createdAt: Date.now(),
+        args.expiresAt !== undefined
+          ? args.expiresAt
+          : args.expiresInDays === null
+            ? null
+            : now + args.expiresInDays * 24 * 60 * 60 * 1000,
+      memo: args.memo?.trim() || undefined,
+      createdAt: now,
     });
     return code;
   },
@@ -149,18 +165,45 @@ export const revokeInvite = mutation({
   },
 });
 
-/** Updates one person's storage allowance from the admin screen. */
+/** The most one person may be given, whatever is typed: 100 GB. */
+const MAX_QUOTA_BYTES = 100 * 1024 * 1024 * 1024;
+
+/**
+ * One person's storage allowance, set from the admin screen. Set to exactly
+ * the default, it is the default's again: it follows the next change of it
+ * (applyDefaultQuota). Less than they use already, nothing is deleted:
+ * nothing more can be added until they are under it again.
+ */
 export const setUserQuota = mutation({
-  args: { email: v.string(), quotaBytes: v.number() },
+  args: { userId: v.id("users"), quotaBytes: v.number() },
   handler: async (ctx, args) => {
     await requireAdmin(ctx);
-    const target = await ctx.db
-      .query("users")
-      .withIndex("by_email", (q) => q.eq("email", args.email))
-      .unique();
-    if (!target) return { status: "notFound" as const };
-    await ctx.db.patch(target._id, { quotaBytes: Math.max(0, args.quotaBytes) });
+    if (!Number.isFinite(args.quotaBytes) || args.quotaBytes < 0 || args.quotaBytes > MAX_QUOTA_BYTES) {
+      throw new ConvexError({ code: "BAD_QUOTA", message: "容量は 0 から 100 GB のあいだで指定してください。" });
+    }
+    const target = await ctx.db.get("users", args.userId);
+    if (!target || isRemoved(target)) return { status: "notFound" as const };
+    await ctx.db.patch("users", target._id, { quotaBytes: Math.round(args.quotaBytes) });
     return { status: "ok" as const };
+  },
+});
+
+/**
+ * Takes someone's account out, from the admin screen, as they can from their
+ * own settings (removeAccount): signed out on every device, their notes and
+ * files deleted, counted out of the sign-up limit. Never one's own (that is
+ * for the settings, which also clear this device), nor an admin's.
+ */
+export const removeUser = mutation({
+  args: { userId: v.id("users") },
+  handler: async (ctx, { userId }) => {
+    const admin = await requireAdmin(ctx);
+    const target = await ctx.db.get("users", userId);
+    if (!target || isRemoved(target)) return { status: "gone" as const };
+    if (target._id === admin._id) return { status: "self" as const };
+    if (hasAdminAccess(target)) return { status: "admin" as const };
+    await removeAccount(ctx, target);
+    return { status: "scheduled" as const };
   },
 });
 
