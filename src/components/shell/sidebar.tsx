@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   CircleHelp,
@@ -24,6 +23,7 @@ import { SyncBadge } from "@/components/shell/sync-badge";
 import { VaultBadge } from "@/components/vault/vault-badge";
 import { QuotaBar } from "@/components/shell/quota-bar";
 import { UnreadDot } from "@/components/shell/unread-dot";
+import { ViewLink } from "@/components/shell/view-link";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -98,9 +98,9 @@ export function Sidebar({
     <div data-app-sidebar className="flex h-full min-h-0 flex-col overflow-hidden">
       <div className="flex items-center justify-between gap-2 px-3 py-3">
         {/* Every note's list, as no folder is chosen (there is no row for it). */}
-        <Link href="/app" data-app-name className="text-sm font-semibold tracking-tight">
+        <ViewLink href="/app" data-app-name className="text-sm font-semibold tracking-tight">
           {t.app.name}
-        </Link>
+        </ViewLink>
         {/* The close control shares the header row so it can never sit on top
             of the sync badge, and it moves down with the safe-area padding. */}
         <div className="flex items-center gap-1">
@@ -236,7 +236,7 @@ export function Sidebar({
           return (
             <Tooltip key={href}>
               <TooltipTrigger asChild>
-                <Link
+                <ViewLink
                   href={href}
                   onClick={onNavigate}
                   aria-current={here ? "page" : undefined}
@@ -254,7 +254,7 @@ export function Sidebar({
                       <UnreadDot count={unreadNews} className="absolute -top-1 -right-1.5" />
                     ) : null}
                   </span>
-                </Link>
+                </ViewLink>
               </TooltipTrigger>
               <TooltipContent side="top">
                 {unread ? `${label}（未読 ${unreadNews} 件）` : label}

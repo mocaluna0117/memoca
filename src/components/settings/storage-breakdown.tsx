@@ -3,7 +3,6 @@
 import { useConvex } from "convex/react";
 import { useLiveQuery } from "dexie-react-hooks";
 import { File, Film, Image as ImageIcon, Lock, RefreshCw } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@convex/_generated/api";
@@ -25,6 +24,7 @@ import { LOCKED_LABEL, useNoteTitle } from "@/lib/hooks/use-decrypted";
 import { noteName } from "@/lib/note-name";
 import { useOnline } from "@/lib/hooks/use-online";
 import { t } from "@/lib/i18n/ja";
+import { useGoTo } from "@/lib/hooks/use-go-to";
 import {
   type Breakdown,
   type Figures,
@@ -230,7 +230,7 @@ export function StorageBreakdown({ account, live, admin }: { account: string; li
 
 /** One of the largest files, and where it is; opens its note, or the trash. */
 function LargeFileRow({ file }: { file: LargeFile }) {
-  const router = useRouter();
+  const goTo = useGoTo();
   const ids = [...new Set([...file.usedBy, file.noteId])];
   const notes = useLiveQuery(
     async () => new Map((await db().notes.bulkGet(ids)).map((note, index) => [ids[index]!, note])),
@@ -284,7 +284,7 @@ function LargeFileRow({ file }: { file: LargeFile }) {
       {target ? (
         <button
           type="button"
-          onClick={() => router.push(target)}
+          onClick={() => goTo(target)}
           className="hover:bg-accent/50 flex w-full items-center gap-3 px-3 py-2 text-left text-xs"
         >
           {body}

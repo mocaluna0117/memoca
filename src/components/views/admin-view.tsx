@@ -20,7 +20,7 @@ const MB = 1024 * 1024;
  */
 const FREE_FILE_STORAGE = 1024 * MB;
 
-export default function AdminPage() {
+export default function AdminView() {
   const overview = useQuery(api.admin.overview);
   const setConfig = useMutation(api.admin.setConfig);
   const createInvite = useMutation(api.admin.createInvite);

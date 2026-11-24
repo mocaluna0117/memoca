@@ -101,7 +101,7 @@ function TrashRow({ entry }: { entry: TrashEntry }) {
   );
 }
 
-export default function TrashPage() {
+export default function TrashView() {
   const entries = useTrash();
   const client = useConvex();
   const { me } = useSync();

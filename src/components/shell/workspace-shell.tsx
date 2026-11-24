@@ -1,6 +1,5 @@
 "use client";
 
-import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect } from "react";
 import { toast } from "sonner";
 import { OpenNoteFromQuickWindow, QuickNoteShortcut } from "@/components/notes/quick-entry";
@@ -15,6 +14,7 @@ import { VaultDialog } from "@/components/vault/vault-dialog";
 import { VaultRecordSync } from "@/components/vault/vault-record-sync";
 import { recoveryKeyState } from "@/components/vault/recovery-settings";
 import { getMeta, setMeta } from "@/lib/db";
+import { useGoTo } from "@/lib/hooks/use-go-to";
 import { META } from "@/lib/db/meta";
 import { useVaultRecord } from "@/lib/vault/record";
 import { vault } from "@/lib/crypto/vault";
@@ -29,7 +29,7 @@ import { tidyYomi } from "@/lib/search/yomi";
  * folder, and finishing a cascade that an earlier session left half done.
  */
 export function WorkspaceShell({ children }: { children: ReactNode }) {
-  const router = useRouter();
+  const goTo = useGoTo();
 
   // Kept hidden by the desktop shell: a new version loaded out of sight.
   useShellRefresh();
@@ -81,12 +81,12 @@ export function WorkspaceShell({ children }: { children: ReactNode }) {
               : "リカバリーキーの保管を確認してください",
             {
               duration: 10_000,
-              action: { label: "設定を開く", onClick: () => router.push("/app/settings") },
+              action: { label: "設定を開く", onClick: () => goTo("/app/settings") },
             },
           );
         })();
       }),
-    [router],
+    [goTo],
   );
 
   // A phone can suspend or kill a backgrounded app without warning. Writing

@@ -3,6 +3,7 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo } from "react";
 import { useSelectionStore } from "@/lib/store/selection";
+import { moveWithinWorkspace } from "@/lib/workspace-route";
 
 export type Selection = {
   /** null = all notes (or, `pinned`, the pinned ones), otherwise a folder id. */
@@ -65,14 +66,11 @@ export function useWorkspace() {
       apply(target);
 
       const href = hrefFor(target);
-      // The whole workspace is one route, so this is a URL change and nothing
-      // more. Going through the router would make Next fetch the route
-      // payload, which fails with no network and throws away the editor.
-      if (typeof window !== "undefined" && window.location.pathname === "/app") {
-        if (options.replace) window.history.replaceState(null, "", href);
-        else window.history.pushState(null, "", href);
-        return;
-      }
+      // The whole workspace is one route, its other pages (search, say)
+      // included, so this is a URL change and nothing more. Going through the
+      // router would make Next fetch the route payload, which fails with no
+      // network, throws away the editor, and waited on the server.
+      if (moveWithinWorkspace(href, options)) return;
       if (options.replace) router.replace(href);
       else router.push(href);
     },

@@ -20,7 +20,7 @@ function byDay(items: readonly NewsItem[]): [string, NewsItem[]][] {
   return [...days.entries()];
 }
 
-export default function NewsPage() {
+export default function NewsView() {
   // Those not seen when the page was opened stay marked new while it is open,
   // though they are seen from then on.
   const joinedAt = useSync().me?.createdAt;

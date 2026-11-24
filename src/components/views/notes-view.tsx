@@ -125,7 +125,7 @@ function usePhoneScroll(noteId: string | null, listKey: string) {
   }, [noteId, listKey]);
 }
 
-export default function AppPage() {
+export default function NotesView() {
   return (
     <Suspense
       fallback={

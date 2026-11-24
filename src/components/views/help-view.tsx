@@ -27,10 +27,10 @@ import {
   TriangleAlert,
   Zap,
 } from "lucide-react";
-import Link from "next/link";
 import type { ReactNode } from "react";
 import { SHOW_WELCOME } from "@/lib/guide";
 import { MobileHeader } from "@/components/shell/app-shell";
+import { ViewLink } from "@/components/shell/view-link";
 import { Button } from "@/components/ui/button";
 import { useClientValue } from "@/lib/hooks/use-client-value";
 import { t } from "@/lib/i18n/ja";
@@ -124,7 +124,7 @@ const BADGE: { icon: LucideIcon; said: string; means: string }[] = [
  * where it does, and each button drawn as it is on the screen. Opened from
  * the sidebar's ？, the settings and the welcome.
  */
-export default function HelpPage() {
+export default function HelpView() {
   const mod = useClientValue(modOf, "⌘");
   return (
     <div className="flex flex-1 flex-col">
@@ -409,9 +409,9 @@ export default function HelpPage() {
               <dt className="font-medium">新しくなったことを知りたい</dt>
               <dd className="text-foreground/80">
                 サイドバーの下の <Ico icon={Megaphone} />（
-                <Link href="/app/news" className="underline">
+                <ViewLink href="/app/news" className="underline">
                   お知らせ
-                </Link>
+                </ViewLink>
                 ）にまとめています。この使い方は、<Ico icon={CircleHelp} /> からいつでも開けます。
               </dd>
             </div>

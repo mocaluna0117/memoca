@@ -3,7 +3,6 @@
 import { useConvex, useMutation } from "convex/react";
 import { CircleHelp, Loader2, LogOut, Smartphone } from "lucide-react";
 import { useTheme } from "next-themes";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -46,6 +45,7 @@ import { resetLocalData } from "@/lib/db";
 import { DesktopHotkeys } from "@/components/settings/desktop-hotkeys";
 import { DesktopPin } from "@/components/settings/desktop-pin";
 import { StylePicker } from "@/components/settings/style-picker";
+import { ViewLink } from "@/components/shell/view-link";
 import { turnOff } from "@/lib/notify/push";
 import { t } from "@/lib/i18n/ja";
 
@@ -73,7 +73,7 @@ function Section({
   );
 }
 
-export default function SettingsPage() {
+export default function SettingsView() {
   const router = useRouter();
   const { me } = useSync();
   // The storage figures apart: they move with every push, and only this
@@ -129,10 +129,10 @@ export default function SettingsPage() {
         <Section title={t.nav.help} description="よく使う機能の説明です。はじめの案内も、もう一度見られます。">
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" className="gap-2" asChild>
-              <Link href="/app/help">
+              <ViewLink href="/app/help">
                 <CircleHelp className="size-4" aria-hidden />
                 使い方を見る
-              </Link>
+              </ViewLink>
             </Button>
             <Button variant="ghost" onClick={() => window.dispatchEvent(new Event(SHOW_WELCOME))}>
               はじめの案内をもう一度見る

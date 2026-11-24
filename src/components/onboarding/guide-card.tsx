@@ -2,7 +2,7 @@
 
 import { useLiveQuery } from "dexie-react-hooks";
 import { CircleCheck, Sparkles } from "lucide-react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { type MouseEvent, type ReactNode, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { db } from "@/lib/db";
@@ -18,6 +18,7 @@ import {
   storedGuide,
 } from "@/lib/guide";
 import { useClientValue } from "@/lib/hooks/use-client-value";
+import { useGoTo } from "@/lib/hooks/use-go-to";
 import { useKeyboardInset } from "@/lib/hooks/use-keyboard-inset";
 import { type MemocaShell, SHELL_HIDDEN } from "@/lib/quick/shell";
 import { cn } from "@/lib/utils";
@@ -214,7 +215,7 @@ export function GuideCard({
   onStart: () => void;
   onEnd: () => void;
 }) {
-  const router = useRouter();
+  const goTo = useGoTo();
   const pathname = usePathname();
   const keys = useKeys(shell, state.step);
   const inset = useKeyboardInset();
@@ -427,7 +428,7 @@ export function GuideCard({
                 label: "設定を開く",
                 run: () => {
                   setGuide({ flow, step: "hotkey", at: Date.now(), asked });
-                  router.push("/app/settings#hotkeys");
+                  goTo("/app/settings#hotkeys");
                 },
               }
             : { label: "つぎへ", run: () => go("finish") },
@@ -446,7 +447,7 @@ export function GuideCard({
               {mac ? "⌘・⌃・⌥" : "Ctrl・Alt"} のどれかといっしょに）。
             </p>
           ),
-          primary: onSettings ? undefined : { label: "設定を開く", run: () => router.push("/app/settings#hotkeys") },
+          primary: onSettings ? undefined : { label: "設定を開く", run: () => goTo("/app/settings#hotkeys") },
           secondary: next("finish"),
         };
       }
@@ -474,7 +475,7 @@ export function GuideCard({
             label: "使い方を見る",
             run: () => {
               onEnd();
-              router.push("/app/help");
+              goTo("/app/help");
             },
           },
           extra: flow === "web" ? <PracticeButton onOpen={onEnd} /> : null,
@@ -497,7 +498,7 @@ export function GuideCard({
           }
         : {
             body: <p>続きは、Memoca のメモの画面です。</p>,
-            primary: windowed ? undefined : { label: "メモの画面へ", run: () => router.push("/app") },
+            primary: windowed ? undefined : { label: "メモの画面へ", run: () => goTo("/app") },
           };
     }
     return where === "quick"
@@ -592,7 +593,7 @@ function Key({ children }: { children: ReactNode }) {
 
 /** The note made to try things in, when the account has it: opened from the last card. */
 function PracticeButton({ onOpen }: { onOpen: () => void }) {
-  const router = useRouter();
+  const goTo = useGoTo();
   const practice = useLiveQuery(
     () =>
       db()
@@ -608,7 +609,7 @@ function PracticeButton({ onOpen }: { onOpen: () => void }) {
       onMouseDown={keepFocus}
       onClick={() => {
         onOpen();
-        router.push(`/app?n=${practice.noteId}`);
+        goTo(`/app?n=${practice.noteId}`);
       }}
     >
       練習用のメモを開く

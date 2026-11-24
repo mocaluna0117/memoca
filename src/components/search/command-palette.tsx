@@ -1,7 +1,6 @@
 "use client";
 
 import { FilePlus2, FolderPlus, Lock, Search, Settings, Trash2, Zap } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   Command,
@@ -25,6 +24,7 @@ import { useSearch } from "@/lib/hooks/use-search";
 import { lockedSearchNote } from "@/lib/search/rows";
 import { actionsFor } from "@/lib/search/palette-actions";
 import { useWorkspace } from "@/lib/hooks/workspace";
+import { useGoTo } from "@/lib/hooks/use-go-to";
 import { createFolder, setNotePinned } from "@/lib/sync/mutations";
 import { t } from "@/lib/i18n/ja";
 import { NoteName } from "@/components/search/note-name";
@@ -37,7 +37,7 @@ import { NoteName } from "@/components/search/note-name";
  */
 export function CommandPalette() {
   const { createNoteIn } = useLockActions();
-  const router = useRouter();
+  const goTo = useGoTo();
   const openQuickNote = useOpenQuickNote();
   const { selection, navigate } = useWorkspace();
   const [open, setOpen] = useState(false);
@@ -154,7 +154,7 @@ export function CommandPalette() {
                   {shown.has("search") ? (
                     <CommandItem
                       value="search"
-                      onSelect={() => run(() => router.push("/app/search"))}
+                      onSelect={() => run(() => goTo("/app/search"))}
                     >
                       <Search className="size-4 opacity-70" aria-hidden />
                       {t.nav.search}
@@ -163,7 +163,7 @@ export function CommandPalette() {
                   {shown.has("trash") ? (
                     <CommandItem
                       value="trash"
-                      onSelect={() => run(() => router.push("/app/trash"))}
+                      onSelect={() => run(() => goTo("/app/trash"))}
                     >
                       <Trash2 className="size-4 opacity-70" aria-hidden />
                       {t.nav.trash}
@@ -172,7 +172,7 @@ export function CommandPalette() {
                   {shown.has("settings") ? (
                     <CommandItem
                       value="settings"
-                      onSelect={() => run(() => router.push("/app/settings"))}
+                      onSelect={() => run(() => goTo("/app/settings"))}
                     >
                       <Settings className="size-4 opacity-70" aria-hidden />
                       {t.nav.settings}

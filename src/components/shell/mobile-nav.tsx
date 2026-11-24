@@ -1,9 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { FileText, Search, Settings, Zap } from "lucide-react";
 import type { Ref } from "react";
+import { ViewLink } from "@/components/shell/view-link";
 import { useKeyboard } from "@/lib/hooks/use-keyboard-inset";
 import { t } from "@/lib/i18n/ja";
 import { cn } from "@/lib/utils";
@@ -40,7 +40,7 @@ export function MobileNav({ ref }: { ref?: Ref<HTMLElement> }) {
           const active = href === "/app" ? pathname === "/app" : pathname.startsWith(href);
           return (
             <li key={href}>
-              <Link
+              <ViewLink
                 href={href}
                 data-guide={href === "/quick" ? "open-quick" : undefined}
                 className={cn(
@@ -53,7 +53,7 @@ export function MobileNav({ ref }: { ref?: Ref<HTMLElement> }) {
                   aria-hidden
                 />
                 {label}
-              </Link>
+              </ViewLink>
             </li>
           );
         })}

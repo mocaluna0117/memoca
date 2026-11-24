@@ -1,7 +1,6 @@
 "use client";
 
 import { Languages, Loader2, Lock, Search as SearchIcon } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { MobileHeader } from "@/components/shell/app-shell";
@@ -9,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { useSearch } from "@/lib/hooks/use-search";
+import { useWorkspace } from "@/lib/hooks/workspace";
 import { useYomi } from "@/lib/hooks/use-yomi";
 import { lockedSearchNote } from "@/lib/search/rows";
 import { isKanaQuery } from "@/lib/search/yomi";
@@ -36,8 +36,8 @@ function Highlighted({ snippet }: { snippet: SearchHit["snippet"] }) {
   return <>{pieces}</>;
 }
 
-export default function SearchPage() {
-  const router = useRouter();
+export default function SearchView() {
+  const { navigate } = useWorkspace();
   const [query, setQuery] = useState("");
   const { hits, total, locked } = useSearch(query);
   const yomi = useYomi();
@@ -144,7 +144,7 @@ export default function SearchPage() {
               <li key={hit.noteId}>
                 <button
                   type="button"
-                  onClick={() => router.push(`/app?n=${hit.noteId}`)}
+                  onClick={() => navigate({ folderId: null, pinned: false, noteId: hit.noteId })}
                   className="hover:bg-accent/50 flex w-full flex-col gap-1 px-1 py-3 text-left"
                 >
                   <span className="flex items-center gap-1.5 text-sm font-medium">

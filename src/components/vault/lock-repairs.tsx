@@ -2,11 +2,11 @@
 
 import { useConvex } from "convex/react";
 import { useLiveQuery } from "dexie-react-hooks";
-import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { useSyncEngine, useSyncStatusStore } from "@/components/providers/sync-provider";
 import { vault } from "@/lib/crypto/vault";
+import { useGoTo } from "@/lib/hooks/use-go-to";
 import type { SyncStatus } from "@/lib/sync/engine";
 import { repairLocks, sealedNameFolders } from "@/lib/vault/reconcile";
 import { NO_PASS_YET, type RepairSchedule, repairDue, settled } from "@/lib/vault/repair-schedule";
@@ -28,7 +28,7 @@ const REPAIR_AFTER_MS = 2_000;
 export function LockRepairs() {
   const client = useConvex();
   const engine = useSyncEngine();
-  const router = useRouter();
+  const goTo = useGoTo();
   // Followed, not drawn with: each change of it is looked at as it comes.
   const statusStore = useSyncStatusStore();
   const sealedNames = useLiveQuery(async () => (await sealedNameFolders()).length, [], 0);
@@ -73,23 +73,23 @@ export function LockRepairs() {
       copiesWarned.current = true;
       toast.warning(
         `ロックしたメモに、ほかのメモからコピーした画像が ${report.copiesTooLarge} 件あり、容量が足りないため暗号化できていません。不要なファイルを削除すると、自動で暗号化します。`,
-        { action: { label: "設定を開く", onClick: () => router.push("/app/settings") } },
+        { action: { label: "設定を開く", onClick: () => goTo("/app/settings") } },
       );
     }
     if (report.plainCopiesTooLarge > 0 && !plainCopiesWarned.current) {
       plainCopiesWarned.current = true;
       toast.warning(
         `ロックしたメモからコピーした画像が ${report.plainCopiesTooLarge} 件あり、容量が足りないため、コピー先のメモに保存できていません。不要なファイルを削除すると、自動で保存します。`,
-        { action: { label: "設定を開く", onClick: () => router.push("/app/settings") } },
+        { action: { label: "設定を開く", onClick: () => goTo("/app/settings") } },
       );
     }
     if (report.unreadable > unreadableSeen.current) {
       toast.warning(`この金庫の鍵では開けないメモが ${report.unreadable} 件あります`, {
-        action: { label: "設定を開く", onClick: () => router.push("/app/settings") },
+        action: { label: "設定を開く", onClick: () => goTo("/app/settings") },
       });
     }
     unreadableSeen.current = Math.max(unreadableSeen.current, report.unreadable);
-  }, [client, engine, router]);
+  }, [client, engine, goTo]);
 
   // One pass at a time: asked for again meanwhile, it runs once more after,
   // rather than joining the pass under way and showing its report again.
