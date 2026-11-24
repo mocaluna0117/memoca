@@ -35,11 +35,28 @@ export const EXPORT_EVENT = "memoca:export";
 /**
  * How the percent shown is shared out between the steps of making a PDF,
  * by about how long each takes: waiting for the note's images and PDFs,
- * loading what draws it, drawing its pages, and writing the file. A
- * page is drawn, then encoded, in about these shares of its time.
+ * loading what draws it, copying the note into a picture (once, the whole
+ * of it), drawing its pages from that, and writing the file. A page is
+ * drawn, then encoded, in about these shares of its time.
  */
-const STEPS = { waiting: 10, starting: 4, pages: 84, writing: 2 } as const;
-const PAGE_STEPS = { drawing: 6, encoding: 4 } as const;
+const STEPS = { waiting: 8, starting: 2, copying: 20, pages: 68, writing: 2 } as const;
+const PAGE_STEPS = { drawing: 3, encoding: 7 } as const;
+/**
+ * Safari and Firefox draw a picture of a page before the images in it are
+ * ready, and leave them out: a blank in the PDF, and nothing says so. A
+ * sheet with images is drawn again this long after, once for each of them,
+ * as modern-screenshot does (its fixSvgXmlDecode); then for as long as one
+ * of them is still all one colour (not drawn yet), or the sheet came out
+ * otherwise than the time before, up to {@link LATE_IMAGES_MS}. On a busy
+ * Mac an image took longer than two draws, and two draws alike without it
+ * were taken for done.
+ */
+const REDRAW_MS = 100;
+const LATE_IMAGES_MS = 5_000;
+const DRAWS_IMAGES_LATE =
+  typeof navigator !== "undefined" &&
+  ((navigator.userAgent.includes("AppleWebKit") && !navigator.userAgent.includes("Chrome")) ||
+    navigator.userAgent.includes("Firefox"));
 
 /** Classes that show what is selected or being edited, not the note. */
 const TRANSIENT = ["ProseMirror-selectednode", "memoca-selected-media", "ProseMirror-focused"];
@@ -80,9 +97,10 @@ export async function noteToPdf({
   const { signal } = cancel;
   const cover = showExportCover({ onCancel: () => cancel.abort() });
   const progress = trackProgress((percent) => cover.set(percent));
-  const [waiting, starting, pages, writing] = progress.whole.split(
+  const [waiting, starting, copying, pages, writing] = progress.whole.split(
     STEPS.waiting,
     STEPS.starting,
+    STEPS.copying,
     STEPS.pages,
     STEPS.writing,
   );
@@ -96,7 +114,7 @@ export async function noteToPdf({
     await frame();
     await frame();
     starting.to(0.25);
-    const pdf = await draw(body, titleField, title, { starting, pages, writing }, signal);
+    const pdf = await draw(body, titleField, title, { starting, copying, pages, writing }, signal);
     progress.finish();
     return pdf;
   } finally {
@@ -317,14 +335,43 @@ function titleHeight(title: string, field: HTMLElement | null, width: number): n
   return drawTitle(ctx, title, field, width);
 }
 
+/** Where an image of the note is, in pixels from its top left. */
+type ImageBox = { top: number; bottom: number; left: number; right: number };
+
+/** Where each image of the note is. */
+function imagesOf(body: HTMLElement): ImageBox[] {
+  const origin = body.getBoundingClientRect();
+  return [...body.querySelectorAll("img, canvas, video")]
+    .filter((element) => !element.closest(NOT_OF_THE_NOTE))
+    .map((element) => element.getBoundingClientRect())
+    .filter((box) => box.height > 0 && box.width > 0)
+    .map((box) => ({
+      top: box.top - origin.top,
+      bottom: box.bottom - origin.top,
+      left: box.left - origin.left,
+      right: box.right - origin.left,
+    }));
+}
+
+/** How many of the images are on each sheet, a part of one counting. */
+export function imagesOnSheets(
+  images: readonly (readonly [number, number])[],
+  slices: readonly (readonly [number, number])[],
+): number[] {
+  return slices.map(([from, to]) => images.filter(([top, bottom]) => bottom > from && top < to).length);
+}
+
+/** A control character or lone surrogate, which would make the picture's XML unreadable. */
+const UNREADABLE = /[\u0000-\u0008\v\f\u000E-\u001F\uD800-\uDFFF\uFFFE\uFFFF]/gu;
+
 async function draw(
   body: HTMLElement,
   field: HTMLElement | null,
   title: string,
-  progress: { starting: ProgressPart; pages: ProgressPart; writing: ProgressPart },
+  progress: { starting: ProgressPart; copying: ProgressPart; pages: ProgressPart; writing: ProgressPart },
   signal: AbortSignal,
 ): Promise<Blob> {
-  const { createContext, destroyContext, domToCanvas } = await import("modern-screenshot");
+  const { createContext, destroyContext, domToForeignObjectSvg, loadMedia } = await import("modern-screenshot");
   signal.throwIfAborted();
   progress.starting.to(0.5);
   const width = Math.round(body.getBoundingClientRect().width);
@@ -337,11 +384,24 @@ async function draw(
   const { breaks, end } = breaksOf(body);
   const links = linksOf(body);
   const slices = paginate(breaks, end, { first: sheet - heading, rest: sheet });
-  progress.starting.to(0.75);
+  const images = imagesOf(body);
+  const imagesOnSheet = imagesOnSheets(
+    images.map(({ top, bottom }) => [top, bottom] as const),
+    slices,
+  );
+  const height = Math.max(1, Math.ceil(Math.max(end, body.getBoundingClientRect().height)));
+  progress.starting.to(1);
 
+  // The note copied into a picture once, the whole of it: each sheet is cut
+  // from it. Copied again for each sheet, as it was, the copying (every
+  // element's style read, every image put in) was done once a sheet, and
+  // each sheet drawn the whole note again; Safari then drew each sheet once
+  // more for every image of the note (see DRAWS_IMAGES_LATE). A long note
+  // with many images took a quarter of an hour on a Mac.
   const context = await createContext(body, {
-    scale,
     width,
+    height,
+    style: { margin: "0" } as Partial<CSSStyleDeclaration>,
     filter: (node) => !(node instanceof Element && node.matches(NOT_OF_THE_NOTE)),
     onCloneEachNode: (cloned) => {
       if (!(cloned instanceof HTMLElement)) return;
@@ -353,48 +413,134 @@ async function draw(
         for (const size of ["width", "height", "inline-size", "block-size"]) cloned.style.removeProperty(size);
       }
     },
+    // Its fonts and images taken in, each fetched once.
+    progress: (done, total) => progress.copying.to(total > 0 ? (done / total) * 0.9 : 0),
     timeout: 30_000,
   });
-  progress.starting.to(1);
-  // A page each, as long as one another: each draws the whole note again.
+  let picture: HTMLImageElement;
+  try {
+    const svg = await domToForeignObjectSvg(context);
+    signal.throwIfAborted();
+    const xml = new XMLSerializer().serializeToString(svg).replace(UNREADABLE, "");
+    picture = await loadMedia(`data:image/svg+xml;charset=utf-8,${encodeURIComponent(xml)}`, {
+      timeout: 30_000,
+    });
+  } finally {
+    destroyContext(context);
+  }
+  progress.copying.to(1);
+
+  // A page each, as long as one another.
   const sheets = progress.pages.split(...slices.map(() => 1));
   const pages: PageImage[] = [];
   let paper: [number, number, number] | null = null;
-  try {
-    for (const [index, [from, to]] of slices.entries()) {
-      signal.throwIfAborted();
-      const [drawing, encoding] = sheets[index].split(PAGE_STEPS.drawing, PAGE_STEPS.encoding);
-      const top = index === 0 ? heading : 0;
-      const height = Math.max(1, to - from);
-      context.height = height;
-      context.style = { transform: `translateY(${-from}px)`, margin: "0" } as Partial<CSSStyleDeclaration>;
-      // Its fonts and images taken in (the first page's fetched), then the whole drawn.
-      context.progress = (done, total) => drawing.to(total > 0 ? (done / total) / 2 : 0);
-      const slice = await domToCanvas(context);
-      drawing.to(1);
-      paper ??= paperOf(slice);
-
-      const page = document.createElement("canvas");
-      page.width = Math.round(width * scale);
-      page.height = Math.round((top + height) * scale);
-      const ctx = page.getContext("2d")!;
-      ctx.fillStyle = `rgb(${paper.join(" ")})`;
-      ctx.fillRect(0, 0, page.width, page.height);
-      ctx.scale(scale, scale);
-      if (index === 0) drawTitle(ctx, title, field, width);
-      ctx.drawImage(slice, 0, top, width, height);
-      const image = await encode(page, (top + height) / pixelsPerPoint, encoding);
-      image.links = linksOnSheet(links, [from, to], { top, pixelsPerPoint, margin: MARGIN });
-      pages.push(image);
-      slice.width = 0;
-      page.width = 0;
+  for (const [index, [from, to]] of slices.entries()) {
+    signal.throwIfAborted();
+    const [drawing, encoding] = sheets[index].split(PAGE_STEPS.drawing, PAGE_STEPS.encoding);
+    const top = index === 0 ? heading : 0;
+    const sliceHeight = Math.max(1, to - from);
+    const slice = document.createElement("canvas");
+    slice.width = Math.round(width * scale);
+    slice.height = Math.max(1, Math.round(sliceHeight * scale));
+    const sliceCtx = slice.getContext("2d")!;
+    const drawSlice = () => {
+      sliceCtx.clearRect(0, 0, slice.width, slice.height);
+      sliceCtx.drawImage(picture, 0, from, width, sliceHeight, 0, 0, slice.width, slice.height);
+    };
+    drawSlice();
+    const late = DRAWS_IMAGES_LATE ? imagesOnSheet[index] : 0;
+    if (late > 0) {
+      const here = images.filter(({ top, bottom }) => bottom > from && top < to);
+      const notDrawn = () =>
+        here.some((box) =>
+          isOneColour(regionOf(slice, box, { from, to, scale })),
+        );
+      const started = performance.now();
+      let drawn = lookOf(slice);
+      for (let draw = 1; performance.now() - started < LATE_IMAGES_MS; draw++) {
+        await sleep(REDRAW_MS + draw);
+        drawSlice();
+        drawing.to(Math.min(0.9, draw / (late + 1)));
+        const now = lookOf(slice);
+        if (draw >= late && now === drawn && !notDrawn()) break;
+        drawn = now;
+      }
     }
-  } finally {
-    destroyContext(context);
+    drawing.to(1);
+    paper ??= paperOf(slice);
+
+    const page = document.createElement("canvas");
+    page.width = Math.round(width * scale);
+    page.height = Math.round((top + sliceHeight) * scale);
+    const ctx = page.getContext("2d")!;
+    ctx.fillStyle = `rgb(${paper.join(" ")})`;
+    ctx.fillRect(0, 0, page.width, page.height);
+    ctx.scale(scale, scale);
+    if (index === 0) drawTitle(ctx, title, field, width);
+    ctx.drawImage(slice, 0, top, width, sliceHeight);
+    const image = await encode(page, (top + sliceHeight) / pixelsPerPoint, encoding);
+    image.links = linksOnSheet(links, [from, to], { top, pixelsPerPoint, margin: MARGIN });
+    pages.push(image);
+    slice.width = 0;
+    page.width = 0;
   }
   const pdf = writePdf(pages, { title, paper: paper ?? [255, 255, 255] });
   progress.writing.to(1);
   return pdf;
+}
+
+/**
+ * The part of a drawn sheet an image is on, read back small (8 by 8): the
+ * sheet is the slice [from, to) of the note, drawn `scale` times as large.
+ */
+function regionOf(
+  slice: HTMLCanvasElement,
+  box: ImageBox,
+  { from, to, scale }: { from: number; to: number; scale: number },
+): Uint8ClampedArray {
+  // Inside its edges, clear of a rounded corner or a border.
+  const inset = 4;
+  const x = (box.left + inset) * scale;
+  const y = (Math.max(box.top, from) - from + inset) * scale;
+  const width = Math.max(1, (box.right - box.left - inset * 2) * scale);
+  const height = Math.max(1, (Math.min(box.bottom, to) - Math.max(box.top, from) - inset * 2) * scale);
+  const small = document.createElement("canvas");
+  small.width = 8;
+  small.height = 8;
+  const ctx = small.getContext("2d")!;
+  ctx.drawImage(slice, x, y, width, height, 0, 0, 8, 8);
+  const data = ctx.getImageData(0, 0, 8, 8).data;
+  small.width = 0;
+  return data;
+}
+
+/**
+ * Whether pixels (RGBA) are all one colour, give or take a little: where an
+ * image is, it has not been drawn yet. An image of one flat colour is taken
+ * for one not drawn, and only waited for, up to LATE_IMAGES_MS.
+ */
+export function isOneColour(pixels: Uint8ClampedArray | Uint8Array, tolerance = 6): boolean {
+  for (let at = 4; at < pixels.length; at++) {
+    if (Math.abs(pixels[at]! - pixels[at % 4]!) > tolerance) return false;
+  }
+  return true;
+}
+
+/**
+ * What a drawn sheet looks like, as a number that changes with it: read from
+ * a copy an eighth of its size, so as not to read the whole picture back.
+ */
+function lookOf(canvas: HTMLCanvasElement): number {
+  const small = document.createElement("canvas");
+  small.width = Math.max(1, canvas.width >> 3);
+  small.height = Math.max(1, canvas.height >> 3);
+  const ctx = small.getContext("2d")!;
+  ctx.drawImage(canvas, 0, 0, small.width, small.height);
+  const data = ctx.getImageData(0, 0, small.width, small.height).data;
+  let hash = 0;
+  for (let at = 0; at < data.length; at++) hash = (Math.imul(hash, 31) + data[at]!) | 0;
+  small.width = 0;
+  return hash;
 }
 
 /**

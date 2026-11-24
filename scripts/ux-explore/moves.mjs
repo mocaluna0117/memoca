@@ -2,9 +2,9 @@
 // and forward): how long until the page is drawn, and which requests went
 // to our server for it. --latency=400 makes every request to the server
 // wait that long, as from Japan to Vercel's function in iad1 (Chromium only).
-//   UX_BASE=http://localhost:3100 node scripts/ux-explore/moves.mjs [--latency=400] [--engine=webkit]
+//   UX_BASE=http://localhost:3100 node scripts/ux-explore/moves.mjs [--latency=400] [--engine=webkit] [--notes=300]
 import { chromium, webkit } from "@playwright/test";
-import { BASE, createNote, openApp, signUp } from "./lib.mjs";
+import { BASE, createNote, openApp, seedNotes, signUp } from "./lib.mjs";
 
 const args = Object.fromEntries(
   process.argv.slice(2).map((arg) => {
@@ -19,6 +19,8 @@ const context = await browser.newContext({ viewport: { width: 1280, height: 900 
 const page = await context.newPage();
 await signUp(page);
 await openApp(page);
+// --notes=300: that many more on this device (seedNotes), as a list and an index of a real size.
+if (args.notes) await seedNotes(page, Number(args.notes));
 await createNote(page, "買い物リスト", "牛乳と卵を買う");
 await createNote(page, "旅行の計画", "京都に行く");
 

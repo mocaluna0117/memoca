@@ -145,3 +145,47 @@ describe("a note's links in its PDF", async () => {
     expect(second).toEqual([{ url: "https://b.example/", x: 40, y: 40, width: 25, height: 5 }]);
   });
 });
+
+describe("the images on each sheet, for Safari to draw it again once for each", async () => {
+  const { imagesOnSheets } = await import("@/lib/export/note-pdf");
+
+  test("an image counts on each sheet it is on, a part of it included; one between two sheets on both", () => {
+    const slices: [number, number][] = [
+      [0, 1000],
+      [1000, 2000],
+      [2000, 2600],
+    ];
+    expect(
+      imagesOnSheets(
+        [
+          [100, 400],
+          [500, 900],
+          [950, 1200],
+          [1999, 2001],
+        ],
+        slices,
+      ),
+    ).toEqual([3, 2, 1]);
+  });
+
+  test("none, for a note of text alone; none on a sheet an image only touches", () => {
+    expect(imagesOnSheets([], [[0, 1000]])).toEqual([0]);
+    expect(imagesOnSheets([[800, 1000]], [[0, 1000], [1000, 2000]])).toEqual([1, 0]);
+  });
+});
+
+describe("an image not drawn yet, told by its place on the sheet being all one colour", async () => {
+  const { isOneColour } = await import("@/lib/export/note-pdf");
+  const pixels = (...colours: [number, number, number, number][]) => new Uint8ClampedArray(colours.flat());
+
+  test("the paper alone, or nothing at all, is one colour, give or take a little", () => {
+    expect(isOneColour(pixels([255, 255, 255, 255], [255, 255, 255, 255], [253, 254, 255, 255]))).toBe(true);
+    expect(isOneColour(pixels([0, 0, 0, 0], [0, 0, 0, 0]))).toBe(true);
+  });
+
+  test("a picture is not: a photo's colours, a screenshot's text, or one see-through only in part", () => {
+    expect(isOneColour(pixels([29, 78, 216, 255], [245, 158, 11, 255]))).toBe(false);
+    expect(isOneColour(pixels([255, 255, 255, 255], [255, 255, 255, 255], [17, 24, 39, 255]))).toBe(false);
+    expect(isOneColour(pixels([0, 0, 0, 0], [0, 0, 0, 255]))).toBe(false);
+  });
+});

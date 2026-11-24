@@ -140,9 +140,9 @@ export async function pasteData(page, types) {
   }, types);
 }
 
-/** Pastes a generated picture (photo: gradient with grain; screen: text on white). */
-export async function pastePicture(page, { width, height, kind, name = "写真.png" }) {
-  await editor(page).click();
+/** Pastes a generated picture (photo: gradient with grain; screen: text on white). `click: false` pastes at the caret. */
+export async function pastePicture(page, { width, height, kind, name = "写真.png", click = true }) {
+  if (click) await editor(page).click();
   await editor(page).evaluate(async (target, options) => {
     const canvas = document.createElement("canvas");
     canvas.width = options.width;
