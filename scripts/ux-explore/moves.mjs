@@ -2,7 +2,7 @@
 // and forward): how long until the page is drawn, and which requests went
 // to our server for it. --latency=400 makes every request to the server
 // wait that long, as from Japan to Vercel's function in iad1 (Chromium only).
-//   UX_BASE=http://localhost:3100 node scripts/ux-explore/moves.mjs [--latency=400] [--engine=webkit] [--notes=300]
+//   UX_BASE=http://localhost:3100 node scripts/ux-explore/moves.mjs [--latency=400] [--engine=webkit] [--notes=300] [--slow=4]
 import { chromium, webkit } from "@playwright/test";
 import { BASE, createNote, openApp, seedNotes, signUp } from "./lib.mjs";
 
@@ -18,6 +18,11 @@ const browser = await (ENGINE === "webkit" ? webkit : chromium).launch();
 const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
 const page = await context.newPage();
 await signUp(page);
+// --slow=4: the CPU that many times slower (Chromium only).
+if (args.slow) {
+  const cdp = await context.newCDPSession(page);
+  await cdp.send("Emulation.setCPUThrottlingRate", { rate: Number(args.slow) });
+}
 await openApp(page);
 // --notes=300: that many more on this device (seedNotes), as a list and an index of a real size.
 if (args.notes) await seedNotes(page, Number(args.notes));
@@ -58,6 +63,17 @@ async function step(name, act, ready) {
 }
 
 const nav = page.locator("aside nav");
+// A note opened from the list beside it, the notes page as it is: the editor's part alone.
+await step(
+  "list → another note",
+  () =>
+    page
+      .locator("[data-tree-note], #note-list-pane button")
+      .filter({ hasText: "買い物リスト", visible: true })
+      .first()
+      .click(),
+  () => page.locator('[contenteditable="true"]', { hasText: "牛乳と卵を買う" }).first().waitFor(),
+);
 await step(
   "sidebar → 検索",
   () => nav.getByRole("link", { name: "検索" }).click(),
