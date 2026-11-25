@@ -61,7 +61,12 @@ export function traceIme(entry: Entry) {
 
 type SomeProp = (name: string, f?: (prop: unknown) => unknown) => unknown;
 /** As much of ProseMirror's view as is read; `dom` is the editor's element. */
-type Viewish = { composing: boolean; someProp: SomeProp; dom?: Element };
+type Viewish = {
+  composing: boolean;
+  someProp: SomeProp;
+  dom?: Element;
+  state?: { selection: { empty: boolean; from: number; to: number } };
+};
 type Editorish = {
   view: Viewish;
   on(event: "transaction", handler: (props: { transaction: Transaction }) => void): void;
@@ -108,6 +113,18 @@ function where(): Entry {
     selStart: plain ? plain.selectionStart : null,
     selEnd: plain ? plain.selectionEnd : null,
     readOnly: plain ? plain.readOnly : null,
+  };
+}
+
+/** The page's selection and the editor's, in counts only: whether each is a caret, and how much it covers. */
+function selections(): Entry {
+  const page = document.getSelection();
+  const own = watched?.view.state?.selection;
+  return {
+    domCollapsed: page ? page.isCollapsed : null,
+    domSelLen: page && !page.isCollapsed ? page.toString().length : 0,
+    pmEmpty: own ? own.empty : null,
+    pmSelLen: own ? own.to - own.from : null,
   };
 }
 
@@ -230,6 +247,10 @@ export function startImeTrace({
       });
     } else if (event instanceof CompositionEvent) {
       entry.dataLen = event.data?.length ?? null;
+      // Whether the page's selection and the editor's are carets as a word
+      // begins, and how much each covers: a word begun over a range the
+      // editor did not have took the line it reached into (ime-commit).
+      Object.assign(entry, selections());
     }
     Object.assign(entry, where());
     entry.pmComposing = watched?.view.composing ?? null;

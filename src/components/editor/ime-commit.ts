@@ -1,6 +1,7 @@
 import { createExtension } from "@blocknote/core";
 import type { Node } from "prosemirror-model";
-import { type EditorState, TextSelection, type Transaction } from "prosemirror-state";
+import { type EditorState, Plugin, TextSelection, type Transaction } from "prosemirror-state";
+import type { EditorView } from "prosemirror-view";
 import { traceIme } from "@/lib/debug/ime-trace";
 
 /** A repair that finds the editor still composing waits this long, this many times. */
@@ -108,6 +109,50 @@ export function composedTakenOut(state: EditorState, composed: string): Transact
   return tr.setSelection(TextSelection.create(tr.doc, start));
 }
 
+/**
+ * A word begun with the caret in a line, over a range of the page that
+ * reaches out of it: the caret put back where the editor has it, for the
+ * word to be written there. True when it was.
+ *
+ * In the Mac desktop app, the first word typed in a Todo's item just made
+ * by Enter began, each time in the record (2026-11-25), over two
+ * characters: from the end of the item Enter was pressed in to the caret.
+ * WebKit selects what the input method asks to have replaced as it begins
+ * one; the page's selection after Enter was a caret still. ProseMirror
+ * deletes a range a composition begins over (endComposition), which joined
+ * the new item to the one above, and the word went there.
+ *
+ * Only when the editor has a caret, the range running from it out of its
+ * line: one the person selected is the editor's selection already, and
+ * typing over it still replaces it.
+ */
+export function caretKeptForComposition(view: EditorView): boolean {
+  const { selection } = view.state;
+  if (!(selection instanceof TextSelection) || !selection.empty) return false;
+  const page = view.dom.ownerDocument.getSelection();
+  if (!page || page.isCollapsed || !page.anchorNode || !page.focusNode) return false;
+  if (!view.dom.contains(page.anchorNode) || !view.dom.contains(page.focusNode)) return false;
+  let anchor: number;
+  let head: number;
+  try {
+    anchor = view.posAtDOM(page.anchorNode, page.anchorOffset);
+    head = view.posAtDOM(page.focusNode, page.focusOffset);
+  } catch {
+    return false;
+  }
+  const caret = selection.head;
+  const from = Math.min(anchor, head);
+  const to = Math.max(anchor, head);
+  const { $from } = selection;
+  if (caret < from || caret > to) return false;
+  if (from >= $from.start() && to <= $from.end()) return false;
+  // How far it reached, before and after the caret, in counts only.
+  traceIme({ type: "ime:start-range", back: caret - from, forward: to - caret, chars: page.toString().length });
+  const at = view.domAtPos(caret);
+  page.collapse(at.node, at.offset);
+  return true;
+}
+
 /** The ids of every block in a document. */
 function idsOf(doc: Node): Set<string> {
   const ids = new Set<string>();
@@ -142,6 +187,19 @@ export const imeCommit = createExtension(({ editor }) => {
         return true;
       },
     },
+    prosemirrorPlugins: [
+      new Plugin({
+        props: {
+          handleDOMEvents: {
+            // Before ProseMirror's own, which deletes the range (WebKit's only).
+            compositionstart: (view) => {
+              if (/Apple/.test(navigator.vendor)) caretKeptForComposition(view);
+              return false;
+            },
+          },
+        },
+      }),
+    ],
     mount({ dom, signal }) {
       // WebKit's only: elsewhere a word is committed in its own line.
       if (!/Apple/.test(navigator.vendor)) return;

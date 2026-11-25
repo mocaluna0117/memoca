@@ -1,7 +1,14 @@
 import { BlockNoteEditor } from "@blocknote/core";
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, test } from "vitest";
-import { composedTakenOut, imeCommit, settleWord, strayLine } from "@/components/editor/ime-commit";
+import type { EditorView } from "prosemirror-view";
+import {
+  caretKeptForComposition,
+  composedTakenOut,
+  imeCommit,
+  settleWord,
+  strayLine,
+} from "@/components/editor/ime-commit";
 
 const line = (id: string, children: unknown[] = []) => ({ id, content: [], children });
 /** Lines there before the composition started: none but "a". */
@@ -144,5 +151,80 @@ describe("a word being written when the next line is clicked", () => {
       editor.unmount();
       host.remove();
     }
+  });
+});
+
+describe("a word begun over a range reaching out of the caret's line", () => {
+  /** Checklist items, the editor with imeCommit mounted; run, then let go of. */
+  async function withItems(lines: string[], run: (view: EditorView, host: HTMLElement) => void | Promise<void>) {
+    const editor = BlockNoteEditor.create({ extensions: [imeCommit()], trailingBlock: false });
+    const host = document.createElement("div");
+    document.body.append(host);
+    editor.mount(host);
+    try {
+      editor.replaceBlocks(
+        editor.document,
+        lines.map((line) => ({ type: "checkListItem" as const, content: line })),
+      );
+      await run(editor.prosemirrorView!, host);
+      return editor.document.map((block) =>
+        (block.content as { text: string }[]).map((part) => part.text).join(""),
+      );
+    } finally {
+      editor.unmount();
+      host.remove();
+    }
+  }
+  const textAt = (view: EditorView, text: string) => {
+    let found = -1;
+    view.state.doc.descendants((node, pos) => {
+      if (found < 0 && node.isTextblock && node.textContent === text) found = pos + 1;
+      return found < 0;
+    });
+    return found;
+  };
+  const line = (host: HTMLElement, text: string) =>
+    [...host.querySelectorAll(".bn-inline-content")].find((p) => p.textContent === text)!;
+  const compose = (view: EditorView) =>
+    view.dom.dispatchEvent(new CompositionEvent("compositionstart", { data: "", bubbles: true }));
+
+  test("keeps the new item Enter made: the caret put back in it, nothing deleted", async () => {
+    // As the Mac desktop app's record had it: Enter at the end of an item,
+    // and the first word typed in the new one begun over the page's range
+    // from the end of the item above to the caret, the editor's a caret.
+    const lines = await withItems(["上の項目", "下の項目"], (view, host) => {
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, textAt(view, "上の項目") + 4)));
+      view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+      expect(view.state.selection.$from.parent.textContent).toBe("");
+      const above = line(host, "上の項目");
+      const made = above.closest(".bn-block-outer")!.nextElementSibling!.querySelector(".bn-inline-content")!;
+      getSelection()!.setBaseAndExtent(made, 0, above.firstChild!, 4);
+      compose(view);
+      expect(getSelection()!.isCollapsed).toBe(true);
+      expect(view.state.selection.empty).toBe(true);
+      expect(view.state.selection.$from.parent.textContent).toBe("");
+    });
+    expect(lines).toEqual(["上の項目", "", "下の項目"]);
+  });
+
+  test("leaves a selection the editor has to be typed over, as before", async () => {
+    const lines = await withItems(["上の項目", "下の項目"], (view, host) => {
+      const from = textAt(view, "上の項目") + 2;
+      const to = textAt(view, "下の項目") + 2;
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, from, to)));
+      getSelection()!.setBaseAndExtent(line(host, "上の項目").firstChild!, 2, line(host, "下の項目").firstChild!, 2);
+      compose(view);
+    });
+    expect(lines).toEqual(["上の項目"]);
+  });
+
+  test("leaves a range within the caret's line to the input method", async () => {
+    await withItems(["上の項目"], (view, host) => {
+      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, textAt(view, "上の項目") + 4)));
+      const text = line(host, "上の項目").firstChild!;
+      getSelection()!.setBaseAndExtent(text, 4, text, 3);
+      expect(caretKeptForComposition(view)).toBe(false);
+      expect(getSelection()!.isCollapsed).toBe(false);
+    });
   });
 });
