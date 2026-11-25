@@ -1,6 +1,6 @@
 import { createExtension } from "@blocknote/core";
 import type { Node } from "prosemirror-model";
-import { type EditorState, Plugin, TextSelection, type Transaction } from "prosemirror-state";
+import { type EditorState, Plugin, Selection, TextSelection, type Transaction } from "prosemirror-state";
 import type { EditorView } from "prosemirror-view";
 import { traceIme } from "@/lib/debug/ime-trace";
 
@@ -132,25 +132,59 @@ export function caretKeptForComposition(view: EditorView): boolean {
   const page = view.dom.ownerDocument.getSelection();
   if (!page || page.isCollapsed || !page.anchorNode || !page.focusNode) return false;
   if (!view.dom.contains(page.anchorNode) || !view.dom.contains(page.focusNode)) return false;
-  let anchor: number;
-  let head: number;
+  const caret = selection.head;
+  // Where each end is, by the kind of node it is in: what WebKit selected, in the record.
+  const ends = {
+    anchorIn: kindOf(page.anchorNode),
+    anchorOffset: page.anchorOffset,
+    focusIn: kindOf(page.focusNode),
+    focusOffset: page.focusOffset,
+    chars: page.toString().length,
+  };
+  let from: number;
+  let to: number;
   try {
-    anchor = view.posAtDOM(page.anchorNode, page.anchorOffset);
-    head = view.posAtDOM(page.focusNode, page.focusOffset);
+    const anchor = view.posAtDOM(page.anchorNode, page.anchorOffset, 1);
+    const head = view.posAtDOM(page.focusNode, page.focusOffset, 1);
+    // An end between blocks, or by a tick box, taken out to the nearest
+    // place in text: its start back, its end on. A range from the item
+    // above up to the new item's block (its due button, its tick box)
+    // reaches the caret at the block's start all the same.
+    const { doc } = view.state;
+    const out = (pos: number, dir: 1 | -1) => {
+      const $pos = doc.resolve(pos);
+      if ($pos.parent.inlineContent) return pos;
+      const found = Selection.findFrom($pos, dir, true);
+      return found ? (dir > 0 ? found.from : found.to) : pos;
+    };
+    from = out(Math.min(anchor, head), -1);
+    to = out(Math.max(anchor, head), 1);
   } catch {
+    traceIme({ type: "ime:start-range", kept: false, why: "unread", ...ends });
     return false;
   }
-  const caret = selection.head;
-  const from = Math.min(anchor, head);
-  const to = Math.max(anchor, head);
   const { $from } = selection;
-  if (caret < from || caret > to) return false;
-  if (from >= $from.start() && to <= $from.end()) return false;
+  const reaches = from < to && from <= caret && caret <= to;
+  const outOfLine = from < $from.start() || to > $from.end();
   // How far it reached, before and after the caret, in counts only.
-  traceIme({ type: "ime:start-range", back: caret - from, forward: to - caret, chars: page.toString().length });
+  const counts = { back: caret - from, forward: to - caret, ...ends };
+  if (!reaches || !outOfLine) {
+    traceIme({ type: "ime:start-range", kept: false, why: reaches ? "in-line" : "elsewhere", ...counts });
+    return false;
+  }
+  traceIme({ type: "ime:start-range", kept: true, ...counts });
   const at = view.domAtPos(caret);
   page.collapse(at.node, at.offset);
   return true;
+}
+
+/** A node as a short name, as the record has them: its tag, and its block kind or its first class. */
+function kindOf(node: globalThis.Node): string {
+  if (node.nodeType === globalThis.Node.TEXT_NODE) return "#text";
+  const element = node as Element;
+  const kind = element.getAttribute?.("data-node-type") ?? element.getAttribute?.("data-content-type");
+  const cls = element.classList?.[0];
+  return `${element.nodeName.toLowerCase()}${kind ? `[${kind}]` : cls ? `.${cls}` : ""}`;
 }
 
 /** The ids of every block in a document. */

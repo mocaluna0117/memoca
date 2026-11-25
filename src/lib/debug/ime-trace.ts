@@ -285,9 +285,21 @@ export function startImeTrace({
   });
 
   // What the editor itself did: each transaction's steps, by kind and size,
-  // whether it came from the Yjs document, and where it left the caret.
+  // whether it came from the Yjs document, and where it left the caret. One
+  // that only moved the selection, where it left it: a word begun over a
+  // range the editor read from the page shows there.
   const onTransaction = ({ transaction }: { transaction: Transaction }) => {
-    if (!transaction.docChanged) return;
+    if (!transaction.docChanged) {
+      if (!transaction.selectionSet) return;
+      push({
+        type: "pm:selection",
+        composing: watched?.view.composing ?? null,
+        composition: (transaction.getMeta("composition") as number | undefined) ?? null,
+        ...caretAfter(transaction),
+        selLen: transaction.selection.to - transaction.selection.from,
+      });
+      return;
+    }
     const sync = transaction.getMeta("y-sync$") as { isChangeOrigin?: boolean } | undefined;
     push({
       type: "pm:transaction",

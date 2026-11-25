@@ -2,6 +2,7 @@ import { BlockNoteEditor } from "@blocknote/core";
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, test } from "vitest";
 import type { EditorView } from "prosemirror-view";
+import * as Y from "yjs";
 import {
   caretKeptForComposition,
   composedTakenOut,
@@ -9,6 +10,8 @@ import {
   settleWord,
   strayLine,
 } from "@/components/editor/ime-commit";
+import { todoDue } from "@/components/editor/todo-due";
+import { DUE_MAP } from "@/lib/quick/todo-due";
 
 const line = (id: string, children: unknown[] = []) => ({ id, content: [], children });
 /** Lines there before the composition started: none but "a". */
@@ -157,7 +160,11 @@ describe("a word being written when the next line is clicked", () => {
 describe("a word begun over a range reaching out of the caret's line", () => {
   /** Checklist items, the editor with imeCommit mounted; run, then let go of. */
   async function withItems(lines: string[], run: (view: EditorView, host: HTMLElement) => void | Promise<void>) {
-    const editor = BlockNoteEditor.create({ extensions: [imeCommit()], trailingBlock: false });
+    const dues = new Y.Doc().getMap<string>(DUE_MAP);
+    const editor = BlockNoteEditor.create({
+      extensions: [imeCommit(), todoDue({ map: dues, onPick: () => {} })],
+      trailingBlock: false,
+    });
     const host = document.createElement("div");
     document.body.append(host);
     editor.mount(host);
@@ -166,6 +173,9 @@ describe("a word begun over a range reaching out of the caret's line", () => {
         editor.document,
         lines.map((line) => ({ type: "checkListItem" as const, content: line })),
       );
+      // The first with a due: the Todo's buttons at the items' starts.
+      dues.set(editor.document[0]!.id, "2026-11-25");
+      await new Promise((resolve) => setTimeout(resolve, 0));
       await run(editor.prosemirrorView!, host);
       return editor.document.map((block) =>
         (block.content as { text: string }[]).map((part) => part.text).join(""),
@@ -188,24 +198,49 @@ describe("a word begun over a range reaching out of the caret's line", () => {
   const compose = (view: EditorView) =>
     view.dom.dispatchEvent(new CompositionEvent("compositionstart", { data: "", bubbles: true }));
 
-  test("keeps the new item Enter made: the caret put back in it, nothing deleted", async () => {
-    // As the Mac desktop app's record had it: Enter at the end of an item,
-    // and the first word typed in the new one begun over the page's range
-    // from the end of the item above to the caret, the editor's a caret.
-    const lines = await withItems(["上の項目", "下の項目"], (view, host) => {
-      view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, textAt(view, "上の項目") + 4)));
-      view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
-      expect(view.state.selection.$from.parent.textContent).toBe("");
-      const above = line(host, "上の項目");
-      const made = above.closest(".bn-block-outer")!.nextElementSibling!.querySelector(".bn-inline-content")!;
-      getSelection()!.setBaseAndExtent(made, 0, above.firstChild!, 4);
-      compose(view);
-      expect(getSelection()!.isCollapsed).toBe(true);
-      expect(view.state.selection.empty).toBe(true);
-      expect(view.state.selection.$from.parent.textContent).toBe("");
-    });
-    expect(lines).toEqual(["上の項目", "", "下の項目"]);
-  });
+  /**
+   * Where WebKit's range may start, in the new item (its line, its content
+   * with the tick box, its block, its outer wrapper), and end, in the item
+   * above (in its text, after its text, after its content).
+   */
+  const inNew: Record<string, (made: Element) => [Node, number]> = {
+    line: (made) => [made.querySelector(".bn-inline-content")!, 0],
+    content: (made) => [made.querySelector(".bn-block-content")!, 0],
+    block: (made) => [made.querySelector(".bn-block")!, 0],
+    outer: (made) => [made, 0],
+  };
+  const inAbove: Record<string, (above: Element) => [Node, number]> = {
+    text: (above) => [above.querySelector(".bn-inline-content")!.firstChild!, 4],
+    line: (above) => [above.querySelector(".bn-inline-content")!, 1],
+    content: (above) => {
+      const content = above.querySelector(".bn-block-content")!;
+      return [content, content.childNodes.length];
+    },
+  };
+  const ends = Object.keys(inNew).flatMap((start) => Object.keys(inAbove).map((end) => [start, end]));
+
+  test.each(ends)(
+    "keeps the new item Enter made, the range from its %s to the %s of the item above: the caret put back, nothing deleted",
+    async (start, end) => {
+      // As the Mac desktop app's record had it: Enter at the end of an item
+      // (one with a due: its button at the new item's start too), and the
+      // first word typed in the new one begun over the page's range from
+      // the caret to the end of the item above, the editor's a caret.
+      const lines = await withItems(["上の項目", "下の項目"], (view, host) => {
+        view.dispatch(view.state.tr.setSelection(TextSelection.create(view.state.doc, textAt(view, "上の項目") + 4)));
+        view.dom.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+        expect(view.state.selection.$from.parent.textContent).toBe("");
+        const above = line(host, "上の項目").closest(".bn-block-outer")!;
+        const made = above.nextElementSibling!;
+        getSelection()!.setBaseAndExtent(...inNew[start]!(made), ...inAbove[end]!(above));
+        compose(view);
+        expect(getSelection()!.isCollapsed).toBe(true);
+        expect(view.state.selection.empty).toBe(true);
+        expect(view.state.selection.$from.parent.textContent).toBe("");
+      });
+      expect(lines).toEqual(["上の項目", "", "下の項目"]);
+    },
+  );
 
   test("leaves a selection the editor has to be typed over, as before", async () => {
     const lines = await withItems(["上の項目", "下の項目"], (view, host) => {
