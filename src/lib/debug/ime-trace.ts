@@ -54,7 +54,7 @@ const FROM_LOAD = "memoca:ime-trace";
 /** Where ime-commit's entries go while the record is kept; nowhere otherwise. */
 let sink: ((entry: Entry) => void) | null = null;
 
-/** An entry from the editor's own parts (ime-commit), when the record is kept. */
+/** An entry from the editor's own parts (ime-commit, stray-selection), when the record is kept. */
 export function traceIme(entry: Entry) {
   sink?.(entry);
 }
@@ -248,8 +248,8 @@ export function startImeTrace({
     } else if (event instanceof CompositionEvent) {
       entry.dataLen = event.data?.length ?? null;
       // Whether the page's selection and the editor's are carets as a word
-      // begins, and how much each covers: a word begun over a range the
-      // editor did not have took the line it reached into (ime-commit).
+      // begins, and how much each covers: a range WebKit took on from a
+      // press it never saw let go of shows there (stray-selection).
       Object.assign(entry, selections());
     }
     Object.assign(entry, where());
@@ -286,8 +286,8 @@ export function startImeTrace({
 
   // What the editor itself did: each transaction's steps, by kind and size,
   // whether it came from the Yjs document, and where it left the caret. One
-  // that only moved the selection, where it left it: a word begun over a
-  // range the editor read from the page shows there.
+  // that only moved the selection, where it left it: a range WebKit took
+  // on from a press it never saw let go of shows there, every 50 ms.
   const onTransaction = ({ transaction }: { transaction: Transaction }) => {
     if (!transaction.docChanged) {
       if (!transaction.selectionSet) return;

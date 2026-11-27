@@ -20,6 +20,8 @@ export type Doings = {
   downFocused: boolean | null;
   moveButtons: number | null;
   moveAt: number;
+  /** The press whose autoscroll was stopped (its downAt): once a press. */
+  stoppedFor: number;
 };
 
 const doingsOf = new WeakMap<Document, Doings>();
@@ -28,9 +30,10 @@ const doingsOf = new WeakMap<Document, Doings>();
 const MOVES = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"]);
 const MODIFIERS = new Set(["Shift", "Meta", "Alt", "Control", "CapsLock", "Fn"]);
 
-/** Shift with a move, or ⌘A (Ctrl+A): a selection the person made with the keys. */
+/** Shift with a move (a Mac's ⌃⇧A/E/F/B/N/P too), or ⌘A (Ctrl+A): a selection the person made with the keys. */
 const selectsWithKeys = (event: KeyboardEvent) =>
   (event.shiftKey && MOVES.has(event.key)) ||
+  (event.shiftKey && event.ctrlKey && /^[aefbnp]$/i.test(event.key)) ||
   ((event.metaKey || event.ctrlKey) && !event.altKey && event.key.toLowerCase() === "a");
 
 /** What the person did on this page, watched from the first editor on it for as long as the page is there. */
@@ -46,6 +49,7 @@ function watch(doc: Document): Doings {
     downFocused: null,
     moveButtons: null,
     moveAt: 0,
+    stoppedFor: -1,
   };
   doingsOf.set(doc, doings);
   const options = { capture: true, passive: true } as const;
@@ -153,10 +157,84 @@ export function strayRange(view: EditorView, doings: Doings): { back: number; fo
 }
 
 /**
+ * A box's display, and another that has WebKit build the box again, laid
+ * out as it was: the one put on and taken off at once, before anything is
+ * drawn.
+ */
+const OTHER_DISPLAY: Record<string, string> = {
+  block: "flow-root",
+  "flow-root": "block",
+  flex: "inline-flex",
+  "inline-flex": "flex",
+  grid: "inline-grid",
+  "inline-grid": "grid",
+};
+
+const scrolls = (overflow: string) => overflow === "auto" || overflow === "scroll" || overflow === "overlay";
+
+/** The boxes that scroll, from this node out, short of the page itself. */
+function scrollersFrom(node: globalThis.Node | null, found: Set<HTMLElement>): void {
+  const doc = node?.ownerDocument;
+  let box = node instanceof Element ? node : (node?.parentElement ?? null);
+  for (; box && box !== doc?.body && box !== doc?.documentElement; box = box.parentElement) {
+    if (!(box instanceof HTMLElement)) continue;
+    const style = getComputedStyle(box);
+    if (
+      (scrolls(style.overflowY) && box.scrollHeight > box.clientHeight) ||
+      (scrolls(style.overflowX) && box.scrollWidth > box.clientWidth)
+    ) {
+      found.add(box);
+    }
+  }
+}
+
+/**
+ * WebKit's selection autoscroll stopped: the box it scrolls (one that
+ * scrolls around these nodes) built again, which stops it, where it was
+ * scrolled to kept. How many were.
+ *
+ * Only put back (see {@link strayRange}), the selection was taken on again
+ * every 50 ms for as long as the press was held, which ends a word being
+ * written with the input method, as WebKit ends one whose selection moves.
+ */
+function stopAutoscroll(nodes: (globalThis.Node | null)[]): number {
+  const boxes = new Set<HTMLElement>();
+  for (const node of nodes) scrollersFrom(node, boxes);
+  let stopped = 0;
+  for (const box of boxes) {
+    const other = OTHER_DISPLAY[getComputedStyle(box).display];
+    if (!other) continue;
+    const { scrollTop, scrollLeft } = box;
+    const own = box.style.display;
+    box.style.display = other;
+    void box.offsetHeight;
+    box.style.display = own;
+    void box.offsetHeight;
+    box.scrollTop = scrollTop;
+    box.scrollLeft = scrollLeft;
+    stopped += 1;
+  }
+  return stopped;
+}
+
+/** What held the press, for the record: whether its let go came, how long ago, the page in use as it came, the last move's buttons. */
+function pressNote(doings: Doings) {
+  const now = performance.now();
+  return {
+    sinceDown: doings.downAt ? Math.round(now - doings.downAt) : null,
+    upSeen: doings.upAt >= doings.downAt && doings.downAt > 0,
+    downFocused: doings.downFocused,
+    moveButtons: doings.moveButtons,
+    sinceMove: doings.moveAt ? Math.round(now - doings.moveAt) : null,
+  };
+}
+
+/**
  * The page's selection put back to the editor's caret, as WebKit takes it
  * on from a press it never saw let go of (see {@link strayRange}): as it
  * changes, before the editor reads it, and again as a key comes or a word
- * begins, before either takes it. Typing then goes on at the caret; the
+ * begins, before either takes it; and the autoscroll that takes it on
+ * stopped (see stopAutoscroll). Typing then goes on at the caret; the
  * press ends with the next click.
  */
 export const straySelection = createExtension(({ editor }) => {
@@ -167,25 +245,31 @@ export const straySelection = createExtension(({ editor }) => {
     const stray = strayRange(view, doings);
     if (!stray) return false;
     const page = view.dom.ownerDocument.getSelection()!;
+    const ends = [page.anchorNode, page.focusNode, view.dom];
     const caret = view.domAtPos(view.state.selection.head);
     page.collapse(caret.node, caret.offset);
+    // And the autoscroll that took it on stopped, once a press.
+    let stopped: number | null = null;
+    if (doings.stoppedFor !== doings.downAt) {
+      doings.stoppedFor = doings.downAt;
+      stopped = stopAutoscroll(ends);
+    }
     if (loggedFor !== doings.typedAt) {
       loggedFor = doings.typedAt;
-      // What held the press, in the record: whether its let go came, how
-      // long ago, the page in use as it came, the buttons the last move had.
-      const now = performance.now();
-      traceIme({
-        type: "stray-range",
-        at,
-        ...stray,
-        sinceDown: doings.downAt ? Math.round(now - doings.downAt) : null,
-        upSeen: doings.upAt >= doings.downAt && doings.downAt > 0,
-        downFocused: doings.downFocused,
-        moveButtons: doings.moveButtons,
-        sinceMove: doings.moveAt ? Math.round(now - doings.moveAt) : null,
-      });
+      traceIme({ type: "stray-range", at, ...stray, stopped, ...pressNote(doings) });
     }
     return true;
+  };
+  /**
+   * Typing begun with a press not let go of, as far as the page was told:
+   * its autoscroll stopped at once, before it takes the selection on (and
+   * ends the word being written, with the input method).
+   */
+  const heldOn = (view: EditorView, at: string): void => {
+    const doings = watch(view.dom.ownerDocument);
+    if (!onHere() || doings.downAt <= doings.upAt || doings.stoppedFor === doings.downAt) return;
+    doings.stoppedFor = doings.downAt;
+    traceIme({ type: "stuck-press", at, stopped: stopAutoscroll([view.dom]), ...pressNote(doings) });
   };
   return {
     key: "memocaStraySelection",
@@ -196,6 +280,7 @@ export const straySelection = createExtension(({ editor }) => {
             // Before ProseMirror's own, which deletes a range a word begins over.
             compositionstart: (view) => {
               putBack(view, "compositionstart");
+              heldOn(view, "compositionstart");
               return false;
             },
           },
@@ -225,6 +310,7 @@ export const straySelection = createExtension(({ editor }) => {
           const current = view();
           if (current && event.target instanceof globalThis.Node && current.dom.contains(event.target)) {
             putBack(current, "keydown");
+            if (!MODIFIERS.has(event.key)) heldOn(current, "keydown");
           }
         },
         { capture: true, signal },

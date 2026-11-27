@@ -42,27 +42,46 @@ const textEnd = (page: Page, text: string) =>
     return { x: rect.right, y: rect.top + rect.height / 2 };
   });
 
-test("a press WebKit never saw let go of: Enter's new item kept, and every character typed into it", async ({
+test("a press WebKit never saw let go of: Enter's new item kept, every character typed into it, the selection left still", async ({
   page,
 }) => {
   await longTodo(page);
+  await line(page, "item30").scrollIntoViewIfNeeded();
   // As the Mac desktop app's records had it (2026-11-25, 2026-11-28): the
   // caret put at the end of an item by a press that moved a little and was
   // never let go of, the pointer left there.
-  const end = await textEnd(page, "second");
+  const end = await textEnd(page, "item30");
   await page.mouse.move(end.x + 15, end.y);
   await page.mouse.down();
   await page.mouse.move(end.x + 17, end.y, { steps: 2 });
   await page.waitForTimeout(200);
+  const pane = page.locator("[data-quick-pane]");
+  const scrolled = await pane.evaluate((box) => box.scrollTop);
+  expect(scrolled).toBeGreaterThan(0);
   await page.keyboard.press("Enter");
-  // WebKit's selection autoscroll, every 50 ms, a few times over.
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(200);
+  // WebKit's selection autoscroll, which took the selection on every 50 ms, stopped.
+  const changes = await page.evaluate(async () => {
+    let count = 0;
+    const counted = () => {
+      count += 1;
+    };
+    document.addEventListener("selectionchange", counted);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    document.removeEventListener("selectionchange", counted);
+    return count;
+  });
+  expect(changes).toBe(0);
   for (const character of "abcdefghijklmnopqrstuvwx") {
     await page.keyboard.type(character);
     await page.waitForTimeout(80);
   }
   await page.mouse.up();
-  expect((await lines(page)).slice(0, 4)).toEqual(["first", "second", "abcdefghijklmnopqrstuvwx", "third"]);
+  const all = await lines(page);
+  const at = all.indexOf("item30");
+  expect(all.slice(at, at + 3)).toEqual(["item30", "abcdefghijklmnopqrstuvwx", "item31"]);
+  // Where the pane was scrolled to, kept as the autoscroll was stopped.
+  expect(Math.abs((await pane.evaluate((box) => box.scrollTop)) - scrolled)).toBeLessThan(60);
 });
 
 test("a selection made by dragging over the text, or with Shift and an arrow after typing, is kept", async ({
