@@ -62,6 +62,7 @@ import { fromTitle, linesAbove } from "@/components/editor/line-above";
 import { linesBelow } from "@/components/editor/line-below";
 import { mediaKeys, selectMedia } from "@/components/editor/select-media";
 import { imeCommit } from "@/components/editor/ime-commit";
+import { straySelection } from "@/components/editor/stray-selection";
 import { onTitleEnter } from "@/components/editor/title-enter";
 import { stuckToggles } from "@/components/editor/stuck-toggles";
 import { computeDropPosition, toggles } from "@/components/editor/toggles";
@@ -317,6 +318,7 @@ function EditorSurface({
           linesAbove(),
           linesBelow(),
           imeCommit(),
+          straySelection(),
           noteLinkInput(),
           findInNote(),
           caretAboveKeyboard,

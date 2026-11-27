@@ -24,6 +24,7 @@ import {
 } from "react";
 import * as Y from "yjs";
 import { imeCommit } from "@/components/editor/ime-commit";
+import { straySelection } from "@/components/editor/stray-selection";
 import { listKeys } from "@/components/editor/list-keys";
 import { DISABLED_EXTENSIONS } from "@/components/editor/quotes";
 import { DICTIONARY, SCHEMA } from "@/components/editor/schema";
@@ -419,6 +420,7 @@ const TodoEditor = memo(function TodoEditor({
           japaneseChecks,
           listKeys(),
           imeCommit(),
+          straySelection(),
           todoDue({ map: doc.getMap<string>(DUE_MAP), onPick: (id, at) => setPicking({ id, at }) }),
         ],
         domAttributes: { editor: { "aria-label": t.quick.todoField } },

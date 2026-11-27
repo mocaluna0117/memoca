@@ -31,6 +31,7 @@ import { paintFrame, settleRefusedBlock, showUploadPreview } from "@/components/
 import type * as Y from "yjs";
 import { MemocaFormattingToolbar } from "@/components/editor/image-crop";
 import { imeCommit } from "@/components/editor/ime-commit";
+import { straySelection } from "@/components/editor/stray-selection";
 import { japaneseLists } from "@/components/editor/japanese-lists";
 import { usePlainTextCopy } from "@/components/editor/plain-copy";
 import { type LinesAnchor, type LinesTaken, linesForTodo, putBackLines, removeLines } from "@/lib/quick/move-lines";
@@ -164,6 +165,7 @@ export const QuickEditor = memo(function QuickEditor({
           // Backspace under an image selects it before it goes.
           mediaKeys(),
           imeCommit(),
+          straySelection(),
         ],
         domAttributes: {
           editor: { "aria-label": t.quick.field, "aria-keyshortcuts": SAVE_KEYS },
